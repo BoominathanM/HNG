@@ -13,7 +13,7 @@ import {
   ExportOutlined, WalletOutlined, UserOutlined,
   PhoneOutlined, FileTextOutlined, DollarCircleOutlined,
   AlertFilled, ExperimentOutlined, CalendarOutlined,
-  GiftOutlined, AppstoreOutlined, ThunderboltFilled,
+  GiftOutlined, AppstoreOutlined, ThunderboltFilled, ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -24,6 +24,7 @@ import { buildDispatchGroupedProducts, summarizeDispatchVerification } from '../
 import {
   useGetDispatchesQuery,
   useGetTodaysDispatchesQuery,
+  useGetPendingDispatchesQuery,
   useGetCompanySettingsQuery,
   useUploadDispatchLRMutation,
   useConfirmDispatchMutation,
@@ -211,6 +212,96 @@ const exportCSV = (data, filename) => {
   URL.revokeObjectURL(url);
 };
 
+const downloadCSVRows = (rows, filename) => {
+  const csv = rows.map((r) => r.map(csvCell).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+};
+
+// Pending Dispatches export — hotel-wise sections (each with its own Partial Dispatch
+// Count / Pending Dispatch Count summary), then every order under that hotel with the
+// SAME per-bucket pending breakdown (Personalized Kit / Separate Kit / Separate Product)
+// the on-screen Balance column shows, plus full order/contact details. The generic
+// exportCSV above only ever wrote 5 columns and dropped the balance data entirely.
+const exportPendingDispatchCSV = (orders, filename) => {
+  const rows = [];
+  rows.push(['Pending Dispatches Report']);
+  rows.push([`Generated: ${new Date().toLocaleString('en-IN')}`]);
+  rows.push([]);
+
+  const entries = orders.map((o) => {
+    const { products } = buildDispatchGroupedProducts({
+      items: o.items, kitOrders: o.kitOrders, orderItems: o.orderItems,
+      boxes: o.boxes, kitDispatch: o.kitDispatch, packagingIncludes: o.packagingIncludes,
+    });
+    return { order: o, summary: summarizeDispatchVerification(products) };
+  });
+
+  // "Partial Dispatch Count" = orders currently sitting in a Partially Dispatched state
+  // (already had one round go out); "Pending Dispatch Count" = total units across those
+  // orders still left to ship — the two numbers answer different questions, so both are
+  // reported rather than collapsing to a single order count.
+  const totalHotels = new Set(orders.map((o) => o.client || 'Unknown')).size;
+  const totalPartial = entries.filter((x) => x.order.status === 'Partially Dispatched').length;
+  const totalPendingUnits = entries.reduce((s, x) => s + x.summary.overall.pending, 0);
+
+  rows.push(['Overall Summary']);
+  rows.push(['Total Hotels', totalHotels]);
+  rows.push(['Total Pending Orders', entries.length]);
+  rows.push(['Partial Dispatch Count (orders)', totalPartial]);
+  rows.push(['Pending Dispatch Count (units still to ship)', totalPendingUnits]);
+  rows.push([]);
+
+  const byHotel = new Map();
+  entries.forEach((x) => {
+    const key = x.order.client || 'Unknown';
+    if (!byHotel.has(key)) byHotel.set(key, []);
+    byHotel.get(key).push(x);
+  });
+
+  const orderHeaders = [
+    'Order ID', 'Status', 'Emergency', 'Delivery Date', 'Created Date', 'Destination',
+    'Location', 'Sales Person', 'Transport', 'Payment Status', 'Boxes', 'Weight',
+    'Personalized Kit Total', 'Personalized Kit Dispatched', 'Personalized Kit Pending',
+    'Separate Kit Total', 'Separate Kit Dispatched', 'Separate Kit Pending',
+    'Separate Product Total', 'Separate Product Dispatched', 'Separate Product Pending',
+    'Overall Total Qty', 'Overall Dispatched Qty', 'Overall Pending Qty',
+    'Phone', 'Address',
+  ];
+
+  byHotel.forEach((hotelEntries, hotelName) => {
+    const hotelPartial = hotelEntries.filter((x) => x.order.status === 'Partially Dispatched').length;
+    const hotelPendingUnits = hotelEntries.reduce((s, x) => s + x.summary.overall.pending, 0);
+    rows.push([`Hotel: ${hotelName}`]);
+    rows.push(['Total Orders', hotelEntries.length, 'Partial Dispatch Count', hotelPartial, 'Pending Dispatch Count', hotelPendingUnits]);
+    rows.push(orderHeaders);
+    hotelEntries.forEach(({ order: o, summary }) => {
+      const address = [o.shippingAddress, o.shippingCity, o.shippingState, o.shippingPincode]
+        .filter((p) => p && p !== '—')
+        .join(', ') || o.destination || '';
+      rows.push([
+        o.id, o.status, o.isEmergency ? 'Yes' : 'No',
+        o.deliveryDate ? new Date(o.deliveryDate).toLocaleDateString('en-IN') : '—',
+        o.createdAt ? new Date(o.createdAt).toLocaleDateString('en-IN') : '—',
+        o.destination || '—',
+        (o.city && o.state) ? `${o.city}, ${o.state}` : (o.city || o.state || '—'),
+        o.salesPerson || '—', o.transport || '—', o.payment || '—', o.boxes || 0, o.weight || '—',
+        summary.personalizedKit.total, summary.personalizedKit.dispatched, summary.personalizedKit.pending,
+        summary.separateKit.total, summary.separateKit.dispatched, summary.separateKit.pending,
+        summary.separateProduct.total, summary.separateProduct.dispatched, summary.separateProduct.pending,
+        summary.overall.total, summary.overall.dispatched, summary.overall.pending,
+        o.phone || '—', address,
+      ]);
+    });
+    rows.push([]);
+  });
+
+  downloadCSVRows(rows, filename);
+};
+
 // Pickup expenses loaded from API
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -224,6 +315,7 @@ export default function Dispatch() {
   const { filterTabs, activeKeyFor } = useTabAccess('Dispatch Team');
   const { requireAccess } = usePageAccess('Dispatch Team');
   const [dispatchSubTab, setDispatchSubTab] = useState('all');
+  const [pendingSearch, setPendingSearch] = useState('');
   const [paymentFilter, setPaymentFilter] = useState('All');
   const [dispatchStatusFilter, setDispatchStatusFilter] = useState(null);
   const [dispatchPage, setDispatchPage] = useState(1);
@@ -272,6 +364,11 @@ export default function Dispatch() {
     : (dispatchStatusFilter ? { status: dispatchStatusFilter } : {});
   const { data: dispatchData } = useGetDispatchesQuery({ page: dispatchPage, limit: dispatchPageSize, ...dispatchStatusParams });
   const { data: todaysDispatchData } = useGetTodaysDispatchesQuery();
+  // Orders with at least one confirmed dispatch round that's still 'Partial Dispatch' —
+  // i.e. some kit/product quantity was left undispatched. Resolved server-side (not just
+  // filtered from the current "All Orders" page) so nothing partial is missed behind
+  // pagination.
+  const { data: pendingDispatchData } = useGetPendingDispatchesQuery();
   const [uploadLR] = useUploadDispatchLRMutation();
   const [confirmDispatch] = useConfirmDispatchMutation();
 
@@ -354,6 +451,7 @@ export default function Dispatch() {
 
   const dispatchOrders = useMemo(() => (dispatchData?.data || []).map(normalizeDispatch), [dispatchData]);
   const todayDispatchOrders = useMemo(() => (todaysDispatchData?.data || []).map(normalizeDispatch), [todaysDispatchData]);
+  const pendingDispatchOrdersRaw = useMemo(() => (pendingDispatchData?.data || []).map(normalizeDispatch), [pendingDispatchData]);
 
   // Transport records (real Transport collection, created on LR upload).
   const { data: transportRaw } = useGetTransportsQuery();
@@ -1026,6 +1124,14 @@ export default function Dispatch() {
   // Today's Dispatch Order — sourced from the backend's dedicated /dispatch/today
   // endpoint, which filters on the order's tentative delivery date (expectedDeliveryDate).
   const todayOrders = sortEmergencyFirst(applyFilters(todayDispatchOrders));
+  // Pending Dispatches — orders left with a Partial Dispatch balance (the "Balance"
+  // column's per-kit/product pending counts). Own lightweight search (order/client/
+  // destination only) rather than the shared filtersRow, since Payment/Status/Date
+  // filters there don't apply cleanly to a list that's already scoped to one status.
+  const pendingDispatchOrders = sortEmergencyFirst(pendingDispatchOrdersRaw.filter((o) => {
+    const q = pendingSearch.toLowerCase();
+    return !q || (o.id || '').toLowerCase().includes(q) || (o.client || '').toLowerCase().includes(q) || (o.destination || '').toLowerCase().includes(q);
+  }));
 
   // Expandable config for all orders table
   const expandable = {
@@ -1206,6 +1312,76 @@ export default function Dispatch() {
                   },
                 ]}
               />
+            ),
+          },
+          {
+            key: 'pending_dispatch',
+            label: (
+              <Space>
+                <ClockCircleOutlined />
+                Pending Dispatches
+                {pendingDispatchOrders.length > 0 && (
+                  <Tag style={{ borderRadius: 20, background: '#d9770622', color: '#d97706', border: '1px solid #d9770644', fontSize: 11 }}>
+                    {pendingDispatchOrders.length}
+                  </Tag>
+                )}
+              </Space>
+            ),
+            children: (
+              <div>
+                <div style={{ marginBottom: 12 }}>
+                  <Text strong style={{ color: textColor }}>Orders Still Pending After Partial Dispatch</Text>
+                  <Text type="secondary" style={{ display: 'block', fontSize: 12 }}>Orders with at least one round already dispatched, but some kit/product quantity still left to go — see the Balance column for what's remaining</Text>
+                </div>
+                <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                  <Input
+                    prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                    placeholder="Search orders, clients, destinations..."
+                    allowClear
+                    value={pendingSearch}
+                    onChange={(e) => setPendingSearch(e.target.value)}
+                    style={{ flex: 1, minWidth: 200, maxWidth: 320, borderRadius: 8 }}
+                  />
+                </div>
+                <Card
+                  title={<Space><ClockCircleOutlined style={{ color: '#d97706' }} /><Text strong style={{ color: textColor }}>Pending Dispatches</Text></Space>}
+                  extra={
+                    <Button
+                      size="small"
+                      icon={<ExportOutlined />}
+                      style={{ color: '#B11E6A', borderColor: '#B11E6A' }}
+                      onClick={() => exportPendingDispatchCSV(pendingDispatchOrders, `pending-dispatches-${new Date().toLocaleDateString('en-IN').replace(/\//g, '-')}.csv`)}
+                    >
+                      Export All
+                    </Button>
+                  }
+                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  styles={{ body: { padding: 0 } }}
+                >
+                  <div className="table-responsive" style={{ padding: '4px' }}>
+                    {pendingDispatchOrders.length === 0 ? (
+                      <div style={{ textAlign: 'center', padding: '32px', color: isDark ? '#aaa' : '#888' }}>
+                        <ClockCircleOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block', color: '#d9770655' }} />
+                        No pending dispatches — no order currently has a leftover balance from a partial dispatch.
+                      </div>
+                    ) : (
+                      <Table
+                        dataSource={pendingDispatchOrders}
+                        columns={buildColumns(false)}
+                        expandable={expandable}
+                        rowKey="key"
+                        pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                        size="small"
+                        scroll={{ x: 'max-content' }}
+                        onRow={(record) => ({
+                          onClick: () => navigate(`/dispatch/${record.key}`),
+                          style: { cursor: 'pointer' },
+                        })}
+                      />
+                    )}
+                  </div>
+                </Card>
+              </div>
             ),
           },
           {

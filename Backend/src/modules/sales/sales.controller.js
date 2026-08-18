@@ -539,29 +539,110 @@ async function upsertPartyByName(clientName, createdBy) {
   return party._id;
 }
 
-// Deduct ordered quantities from Inventory when an Order is created (both lead→order
-// conversion and direct/sample orders), so stock reflects goods committed to the order.
-// Kit items: `item.qty` on a kit row is the component qty PER KIT (see Kit.products), so the
-// actual quantity consumed is item.qty × (number of kits ordered), taken from the matching
-// order.kitOrders[].overallQty (per kitId) or the legacy single-kit order.kitOverallQty.
-async function deductInventoryForOrder(order, userId) {
-  const items = Array.isArray(order.items) ? order.items : [];
+// Resolves the ACTUAL total quantity a single order item row consumes from inventory —
+// item.qty × (kit count), or just item.qty for a non-kit row. Kit items: item.qty on a kit
+// row is the component qty PER KIT (see Kit.products), so the real consumption is item.qty ×
+// (number of kits ordered), taken from the matching order.kitOrders[].overallQty (per kitId)
+// or the legacy single-kit order.kitOverallQty. Factored out so both a full order-creation
+// deduction and a delta-only re-deduction (qty raised after creation — see
+// deductInventoryDeltaForOrder) use the exact identical formula.
+function resolveItemConsumedQty(it, order) {
+  const perUnitQty = Number(it.qty) || 0;
+  if (perUnitQty <= 0) return 0;
+  if (!it.isKit) return perUnitQty;
+  // Sample orders (convertLeadToSample / convertOrderToSample on the frontend) force every
+  // product row's qty to 1 ("one sample unit") but still carry over the source order/lead's
+  // original kitOrders/kitOverallQty — so the multiplier must NOT apply here, or a 1-unit
+  // sample would wrongly deduct the full original kit-count worth of components.
+  if (order.orderCategory === 'SAMPLE') return perUnitQty;
   const kitOrders = Array.isArray(order.kitOrders) ? order.kitOrders : [];
-  for (const it of items) {
-    const perUnitQty = Number(it.qty) || 0;
-    if (perUnitQty <= 0) continue;
-    let qty = perUnitQty;
-    if (it.isKit) {
-      // Sample orders (convertLeadToSample / convertOrderToSample on the frontend) force every
-      // product row's qty to 1 ("one sample unit") but still carry over the source order/lead's
-      // original kitOrders/kitOverallQty — so the multiplier must NOT apply here, or a 1-unit
-      // sample would wrongly deduct the full original kit-count worth of components.
-      const kitCount = order.orderCategory === 'SAMPLE'
-        ? 1
-        : (Number(kitOrders.find((o) => o && o.kitId && o.kitId === it.kitId)?.overallQty) || Number(order.kitOverallQty) || 0);
-      if (kitCount <= 0) continue; // unknown kit count — skip rather than guess
-      qty = perUnitQty * kitCount;
-    }
+  const kitCount = Number(kitOrders.find((o) => o && o.kitId && o.kitId === it.kitId)?.overallQty) || Number(order.kitOverallQty) || 0;
+  if (kitCount <= 0) return 0; // unknown kit count — skip rather than guess
+  return perUnitQty * kitCount;
+}
+
+// Draws down up to `qty` units from an item's FIFO purchase-batch ledger (oldest
+// purchaseDate first), mutating batch.remainingQty in place. Returns the StockMovement
+// segments actually consumed (sums to exactly `qty`, since callers never pass more than
+// item.currentStock). Any amount not covered by batch history (legacy stock never recorded
+// as a batch) is attributed to the item's current vendor with no specific purchase date,
+// same convention as before. Shared by deductInventoryQty (order deduction) and
+// backfillPendingDeductionsForItem (auto-payoff on restock) so this FIFO logic lives in
+// exactly one place.
+function consumeFromBatches(item, qty) {
+  const segments = [];
+  let remaining = qty;
+  const batches = (item.purchaseBatches || [])
+    .filter((b) => b.remainingQty > 0)
+    .sort((a, b) => new Date(a.purchaseDate) - new Date(b.purchaseDate));
+  for (const batch of batches) {
+    if (remaining <= 0) break;
+    const take = Math.min(batch.remainingQty, remaining);
+    batch.remainingQty -= take;
+    remaining -= take;
+    segments.push({ qty: take, vendorId: batch.vendorId, vendorName: batch.vendorName, purchaseDate: batch.purchaseDate });
+  }
+  if (remaining > 0) segments.push({ qty: remaining, vendorId: item.vendorId });
+  item.markModified('purchaseBatches');
+  return segments;
+}
+
+// Writes one StockMovement OUT row per FIFO segment consumed (see consumeFromBatches),
+// running qtyBefore/qtyAfter down from the item's stock level immediately before this
+// particular deduction started.
+async function writeOutMovements(item, qtyBeforeDeduction, segments, order, userId) {
+  let runningAfter = qtyBeforeDeduction;
+  for (const seg of segments) {
+    runningAfter -= seg.qty;
+    await StockMovement.create({
+      itemId: item._id,
+      movementType: 'OUT',
+      qty: seg.qty,
+      qtyBefore: runningAfter + seg.qty,
+      qtyAfter: Math.max(0, runningAfter),
+      referenceType: 'Order',
+      referenceId: order._id,
+      referenceCode: order.orderCode,
+      vendorId: seg.vendorId || undefined,
+      vendorName: seg.vendorName,
+      purchaseDate: seg.purchaseDate,
+      partyId: order.clientPartyId || undefined,
+      partyName: order.clientName,
+      approvalStatus: 'Approved',
+      approvedBy: userId,
+      createdBy: userId,
+    });
+  }
+}
+
+// Recomputes and persists order.hasPendingStockDeduction from its items' deductedQty vs
+// what they actually require (resolveItemConsumedQty) — called after any deduction (full,
+// delta, or restock backfill) touches an item's deductedQty.
+async function recomputeOrderStockPendingFlag(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  order.hasPendingStockDeduction = items.some((it) => resolveItemConsumedQty(it, order) > (Number(it.deductedQty) || 0));
+  order.markModified('items');
+  await order.save({ validateBeforeSave: false });
+}
+
+// Core FIFO deduction + StockMovement + low-stock-notify logic, shared by full order-creation
+// deduction (deductInventoryForOrder) and delta-only re-deduction (deductInventoryDeltaForOrder,
+// for when an already-created order's qty is raised later). `rows` is [{ item: <order item
+// row>, qty: <exact amount to deduct for this row> }] — qty is already resolved by the caller
+// (full consumed qty at creation, or just the increase on a later edit) so this function
+// doesn't need to know which case it's in.
+//
+// Insufficient-stock orders are still allowed through: only what's actually available is
+// deducted now (deductNow = min(qty, currentStock)); any shortfall is tracked on the order
+// item's deductedQty (which stays below what resolveItemConsumedQty says is required) rather
+// than being silently absorbed. backfillPendingDeductionsForItem pays the shortfall off later,
+// the moment this item is restocked from any source.
+async function deductInventoryQty(rows, order, userId) {
+  let orderItemsChanged = false;
+  for (const row of rows) {
+    const it = row.item;
+    const qty = row.qty;
+    if (!(qty > 0)) continue;
     try {
       let item = null;
       if (it.itemId) item = await InventoryItem.findOne({ _id: it.itemId, deletedAt: null });
@@ -574,82 +655,81 @@ async function deductInventoryForOrder(order, userId) {
       }
       if (!item) continue;
       const qtyBefore = item.currentStock;
-      item.currentStock = Math.max(0, qtyBefore - qty);
+      const deductNow = Math.min(qty, qtyBefore);
+      if (deductNow > 0) {
+        item.currentStock = qtyBefore - deductNow;
+        const segments = consumeFromBatches(item, deductNow);
+        await item.save({ validateBeforeSave: false });
+        await writeOutMovements(item, qtyBefore, segments, order, userId);
 
-      // Draw down the oldest purchaseDate batches first (FIFO across vendors), so an older
-      // vendor's stock is always used up before a newer purchase — one StockMovement per
-      // vendor batch touched, so Stock History shows the correct vendor next to each qty.
-      const segments = [];
-      let remaining = qty;
-      const batches = (item.purchaseBatches || [])
-        .filter((b) => b.remainingQty > 0)
-        .sort((a, b) => new Date(a.purchaseDate) - new Date(b.purchaseDate));
-      for (const batch of batches) {
-        if (remaining <= 0) break;
-        const take = Math.min(batch.remainingQty, remaining);
-        batch.remainingQty -= take;
-        remaining -= take;
-        segments.push({ qty: take, vendorId: batch.vendorId, vendorName: batch.vendorName, purchaseDate: batch.purchaseDate });
+        if (item.minStock > 0 && item.currentStock < item.minStock) {
+          const isOut = item.currentStock === 0;
+          notifyRoles({ modules: ['Inventory', 'Purchase'], type: 'low_stock', title: isOut ? 'Out of Stock' : 'Low Stock Alert', message: `${item.itemName} — ${item.currentStock}/${item.minStock} ${item.unit || 'units'} remaining (Order ${order.orderCode})`, link: '/inventory' }).catch(() => {});
+        }
       }
-      // No batch history (legacy stock) or batches ran short — attribute the rest to the
-      // item's current vendor with no specific purchase date, same as pre-batch behavior.
-      if (remaining > 0) segments.push({ qty: remaining, vendorId: item.vendorId });
-      item.markModified('purchaseBatches');
-      await item.save({ validateBeforeSave: false });
+      row.item.deductedQty = (Number(row.item.deductedQty) || 0) + deductNow;
+      orderItemsChanged = true;
 
-      let runningAfter = qtyBefore;
-      for (const seg of segments) {
-        runningAfter -= seg.qty;
-        await StockMovement.create({
-          itemId: item._id,
-          movementType: 'OUT',
-          qty: seg.qty,
-          qtyBefore: runningAfter + seg.qty,
-          qtyAfter: Math.max(0, runningAfter),
-          referenceType: 'Order',
-          referenceId: order._id,
-          referenceCode: order.orderCode,
-          vendorId: seg.vendorId || undefined,
-          vendorName: seg.vendorName,
-          purchaseDate: seg.purchaseDate,
-          partyId: order.clientPartyId || undefined,
-          partyName: order.clientName,
-          approvalStatus: 'Approved',
-          approvedBy: userId,
-          createdBy: userId,
-        });
-      }
-      if (item.minStock > 0 && item.currentStock < item.minStock) {
-        const isOut = item.currentStock === 0;
-        notifyRoles({ modules: ['Inventory', 'Purchase'], type: 'low_stock', title: isOut ? 'Out of Stock' : 'Low Stock Alert', message: `${item.itemName} — ${item.currentStock}/${item.minStock} ${item.unit || 'units'} remaining (Order ${order.orderCode})`, link: '/inventory' }).catch(() => {});
+      if (deductNow < qty) {
+        notifyRoles({ modules: ['Inventory', 'Purchase'], type: 'low_stock', title: 'Order Stock Shortfall', message: `${item.itemName} — order ${order.orderCode} is short ${qty - deductNow} ${item.unit || 'units'}. Will auto-deduct once restocked; task assignment is blocked for this product until then.`, link: '/inventory' }).catch(() => {});
       }
     } catch (err) {
       console.error(`Inventory deduction failed for order ${order.orderCode}, item "${it.itemName || it.name}":`, err.message);
     }
   }
+  if (orderItemsChanged) {
+    await recomputeOrderStockPendingFlag(order).catch((err) => {
+      console.error(`Failed to update hasPendingStockDeduction for order ${order.orderCode}:`, err.message);
+    });
+  }
+}
+
+// Deduct ordered quantities from Inventory when an Order is created (both lead→order
+// conversion and direct/sample orders), so stock reflects goods committed to the order.
+async function deductInventoryForOrder(order, userId) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const rows = items.map((it) => ({ item: it, qty: resolveItemConsumedQty(it, order) }));
+  await deductInventoryQty(rows, order, userId);
+}
+
+// Deducts only the INCREASE in consumed qty per item between the order's pre-edit and
+// post-edit state — for when an already-created order's quantity is raised later (Sales'
+// own order-edit form, or Billing's Edit Pricing). Never called for a decrease: qty can only
+// go up (findOrderQuantityDecreases / applyOrderPriceEdit's own floor checks already reject
+// any request that would lower it), so every delta here is >= 0. Items are matched by array
+// position — both callers only mutate qty/price/gst on existing rows in place, never
+// add/remove/reorder, so old/new items stay index-parallel. Neither deduction function has an
+// "already deducted" flag, so this must compute the DELTA, never re-run the full amount.
+async function deductInventoryDeltaForOrder(existingOrder, updatedOrder, userId) {
+  const oldItems = Array.isArray(existingOrder.items) ? existingOrder.items : [];
+  const newItems = Array.isArray(updatedOrder.items) ? updatedOrder.items : [];
+  // Matched by orderItemKey (itemId, falling back to name+category) — the SAME business key
+  // findOrderQuantityDecreases already matches on — rather than array index. Billing's Edit
+  // Pricing never adds/removes/reorders rows, so index would work there, but Sales' own
+  // order-edit form CAN (product list is fully rebuilt on save), and this function is shared
+  // by both callers. Getting inventory wrong is worse than the cosmetic risk syncDispatch-
+  // RecordQuantities already accepts by matching on index.
+  const oldQtyByKey = new Map(oldItems.map((it) => [orderItemKey(it), resolveItemConsumedQty(it, existingOrder)]));
+  const rows = [];
+  newItems.forEach((newIt) => {
+    const oldQty = oldQtyByKey.get(orderItemKey(newIt)) || 0;
+    const newQty = resolveItemConsumedQty(newIt, updatedOrder);
+    const delta = newQty - oldQty;
+    if (delta > 0) rows.push({ item: newIt, qty: delta });
+  });
+  await deductInventoryQty(rows, updatedOrder, userId);
 }
 
 // ─── MATERIAL STOCK DEDUCTION (packing materials tracked in Inventory > Material Stocks) ──
 // Name/size resolution lives in utils/materialStockMatch.js, shared with
 // tasks.controller.js's Today's Checklist readiness check, so "is this in stock" can never
-// disagree with what actually gets deducted here.
-async function deductMaterialStockForOrder(order) {
-  const items = Array.isArray(order.items) ? order.items : [];
-  const kitOrders = Array.isArray(order.kitOrders) ? order.kitOrders : [];
-  for (const it of items) {
+// disagree with what actually gets deducted here. Same full/delta split as inventory above.
+async function deductMaterialStockQty(rows, order) {
+  for (const row of rows) {
+    const it = row.item;
+    const qty = row.qty;
     if (String(it.sticker || '').trim().toUpperCase() !== 'YES') continue;
-
-    const perUnitQty = Number(it.qty) || 0;
-    if (perUnitQty <= 0) continue;
-    let qty = perUnitQty;
-    if (it.isKit) {
-      const kitCount = order.orderCategory === 'SAMPLE'
-        ? 1
-        : (Number(kitOrders.find((o) => o && o.kitId && o.kitId === it.kitId)?.overallQty) || Number(order.kitOverallQty) || 0);
-      if (kitCount <= 0) continue; // unknown kit count — skip rather than guess
-      qty = perUnitQty * kitCount;
-    }
-
+    if (!(qty > 0)) continue;
     try {
       const stocks = await MaterialStock.find().sort('purchaseDate');
       const target = resolveMaterialStock(it, stocks);
@@ -662,6 +742,95 @@ async function deductMaterialStockForOrder(order) {
     }
   }
 }
+
+async function deductMaterialStockForOrder(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const rows = items.map((it) => ({ item: it, qty: resolveItemConsumedQty(it, order) }));
+  await deductMaterialStockQty(rows, order);
+}
+
+// Delta counterpart of deductMaterialStockForOrder — same reasoning as deductInventoryDeltaForOrder.
+async function deductMaterialStockDeltaForOrder(existingOrder, updatedOrder) {
+  const oldItems = Array.isArray(existingOrder.items) ? existingOrder.items : [];
+  const newItems = Array.isArray(updatedOrder.items) ? updatedOrder.items : [];
+  // Same orderItemKey matching as deductInventoryDeltaForOrder — see its comment.
+  const oldQtyByKey = new Map(oldItems.map((it) => [orderItemKey(it), resolveItemConsumedQty(it, existingOrder)]));
+  const rows = [];
+  newItems.forEach((newIt) => {
+    const oldQty = oldQtyByKey.get(orderItemKey(newIt)) || 0;
+    const newQty = resolveItemConsumedQty(newIt, updatedOrder);
+    const delta = newQty - oldQty;
+    if (delta > 0) rows.push({ item: newIt, qty: delta });
+  });
+  await deductMaterialStockQty(rows, updatedOrder);
+}
+// Exported for reuse by billing.controller.js's applyOrderPriceEdit (Billing's "Edit Pricing"
+// quantity-increase support) — same delta deduction needed regardless of which module
+// triggered the qty change.
+exports.deductInventoryDeltaForOrder = deductInventoryDeltaForOrder;
+exports.deductMaterialStockDeltaForOrder = deductMaterialStockDeltaForOrder;
+// Exported so utils/taskQuantity.js's checkStockDeductionGate can compute "how much does this
+// order item actually require" with the EXACT same formula deductedQty is measured against —
+// using a different formula there would make the gate's pending math disagree with reality.
+exports.resolveItemConsumedQty = resolveItemConsumedQty;
+
+// Returns true if `it` (an order item row) refers to the given InventoryItem — same matching
+// rule deductInventoryQty itself uses when resolving an item (itemId first, else exact
+// case-insensitive name match), kept in sync so backfill pays off the same rows deduction drew from.
+function orderItemMatchesInventoryItem(it, item) {
+  if (it.itemId) return String(it.itemId) === String(item._id);
+  const name = (it.itemName || it.name || '').trim().toLowerCase();
+  return !!name && name === (item.itemName || '').trim().toLowerCase();
+}
+
+// Auto-payoff: called after ANY stock-increasing event (Purchase receive, Local Purchase,
+// Inventory Add-Item merge, Bulk→Filled conversion, Stock Movement/Stock-Check approval).
+// Finds orders still owed inventory for this item (hasPendingStockDeduction, oldest order
+// first — first-come-first-served) and deducts as much of their shortfall as the newly
+// arrived stock allows, exactly like a normal order deduction (same FIFO batches, same
+// StockMovement trail), just retroactive. Safe to call after every restock even when there's
+// nothing pending — it's a no-op query in that case.
+async function backfillPendingDeductionsForItem(itemId, userId) {
+  const item = await InventoryItem.findOne({ _id: itemId, deletedAt: null });
+  if (!item || !(item.currentStock > 0)) return;
+
+  const pendingOrders = await Order.find({
+    deletedAt: null,
+    hasPendingStockDeduction: true,
+    status: { $ne: 'Cancelled' },
+  }).sort({ createdAt: 1 });
+
+  for (const order of pendingOrders) {
+    if (!(item.currentStock > 0)) break;
+    try {
+      let orderChanged = false;
+      for (const it of order.items || []) {
+        if (!(item.currentStock > 0)) break;
+        if (!orderItemMatchesInventoryItem(it, item)) continue;
+        const required = resolveItemConsumedQty(it, order);
+        const pending = required - (Number(it.deductedQty) || 0);
+        if (pending <= 0) continue;
+
+        const take = Math.min(pending, item.currentStock);
+        if (take <= 0) break;
+        const qtyBefore = item.currentStock;
+        item.currentStock = qtyBefore - take;
+        const segments = consumeFromBatches(item, take);
+        await writeOutMovements(item, qtyBefore, segments, order, userId);
+        it.deductedQty = (Number(it.deductedQty) || 0) + take;
+        orderChanged = true;
+      }
+      if (orderChanged) {
+        await recomputeOrderStockPendingFlag(order);
+      }
+    } catch (err) {
+      console.error(`Backfill deduction failed for order ${order.orderCode}, item "${item.itemName}":`, err.message);
+    }
+  }
+
+  await item.save({ validateBeforeSave: false });
+}
+exports.backfillPendingDeductionsForItem = backfillPendingDeductionsForItem;
 
 exports.convertToOrder = asyncHandler(async (req, res, next) => {
   const negotiation = await Negotiation.findById(req.params.id);
@@ -1016,6 +1185,10 @@ async function syncDispatchRecordQuantities(orderId, existingOrder, patch) {
 
   if (dirty) await dispatch.save();
 }
+// Exported for reuse by billing.controller.js's applyOrderPriceEdit (Billing's "Edit Pricing"
+// quantity-increase support) — same DispatchRecord resync needed whenever a linked order's
+// qty is raised after dispatch started, regardless of which module triggered the qty change.
+exports.syncDispatchRecordQuantities = syncDispatchRecordQuantities;
 
 exports.updateOrder = asyncHandler(async (req, res, next) => {
   const existingForQtyCheck = await Order.findOne({ _id: req.params.id, deletedAt: null }).lean();
@@ -1039,6 +1212,17 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
   if (Array.isArray(req.body.items) || Array.isArray(req.body.kitOrders)) {
     await syncDispatchRecordQuantities(order._id, existingForQtyCheck, req.body).catch((err) => {
       console.error(`Dispatch qty resync failed for order ${order.orderCode}:`, err.message);
+    });
+    // Inventory/material stock is only ever deducted ONCE, in full, at order creation
+    // (deductInventoryForOrder/deductMaterialStockForOrder) — raising a qty afterward
+    // previously left the increase completely undeducted. Uses the freshly-saved `order`
+    // (not req.body) as the "new" side so every field the qty formula needs (orderCategory,
+    // kitOverallQty, etc.) is guaranteed present even if the patch didn't include it.
+    await deductInventoryDeltaForOrder(existingForQtyCheck, order, req.user._id).catch((err) => {
+      console.error(`Inventory delta deduction failed for order ${order.orderCode}:`, err.message);
+    });
+    await deductMaterialStockDeltaForOrder(existingForQtyCheck, order).catch((err) => {
+      console.error(`Material stock delta deduction failed for order ${order.orderCode}:`, err.message);
     });
   }
   // If this update recorded a payment (paidAmount / balance / paymentCollection),

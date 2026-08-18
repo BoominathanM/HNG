@@ -230,6 +230,38 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, total: dispatches.length, data: dispatches });
 });
 
+// Pending Dispatches — dispatch records that have had at least one round confirmed
+// (status 'Confirmed') but are still 'Partial Dispatch' i.e. some kit/product quantity
+// remains unshipped. Order stays open here until the final round flips it to
+// 'Full Dispatch' (see confirmDispatch's fullyDispatched check), at which point it drops
+// off this list and shows as 'Dispatched' instead — same completeness rule the "Balance"
+// column already uses, just surfaced as its own list instead of buried in "All Orders".
+exports.getPendingDispatches = asyncHandler(async (req, res) => {
+  const visibleIds = await visibleOrderIds(req.user);
+  const filter = { status: 'Confirmed', dispatchType: 'Partial Dispatch' };
+  if (visibleIds) filter.orderId = { $in: visibleIds };
+
+  const dispatches = await DispatchRecord.find(filter)
+    .populate({
+      path: 'orderId',
+      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes splitDates kitOverallQty',
+      populate: [
+        { path: 'leadId', select: 'leadType' },
+        { path: 'assignedTo', select: 'fullName' },
+      ],
+    })
+    .sort('-partialDispatchAt')
+    .lean();
+
+  await Promise.all(dispatches.map(async (d) => {
+    d.orderPaymentStatus = d.orderId?._id
+      ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending')
+      : 'Pending';
+  }));
+  await attachOrderTasks(dispatches);
+  res.status(200).json({ success: true, total: dispatches.length, data: dispatches });
+});
+
 exports.getDispatch = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id)
     .populate({

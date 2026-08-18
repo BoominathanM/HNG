@@ -60,6 +60,7 @@ import {
   useGetKitsQuery,
   useGetPartiesQuery,
   useGetPartyOrdersQuery,
+  useGetConsumptionForecastQuery,
   useCreatePartyMutation,
   useGetOrdersByHotelNameQuery,
   useGetRemindersQuery,
@@ -3255,6 +3256,7 @@ export default function Sales() {
   const [gstAddApiLoading, setGstAddApiLoading] = useState(false);
   const [gstAddApiError, setGstAddApiError] = useState(null);
   const [expandedPartyKeys, setExpandedPartyKeys] = useState([]);
+  const [expandedForecastKeys, setExpandedForecastKeys] = useState([]);
   const [verifyGstinTrigger] = useLazyVerifyGstinQuery();
 
   // Fetch GST details for order-detail view (uses backend proxy via gstverify.co.in)
@@ -3358,6 +3360,7 @@ export default function Sales() {
     ...(complaintDateRange ? { startDate: complaintDateRange[0], endDate: complaintDateRange[1] } : {}),
   });
   const { data: partiesRaw } = useGetPartiesQuery();
+  const { data: forecastRaw } = useGetConsumptionForecastQuery();
   const { data: remindersRaw } = useGetRemindersQuery();
   // Scoped to the selected Category so the "Old Hotel/Hospital" name list only ever
   // shows names that belong to that category (existing pre-feature leads default to 'Hotel').
@@ -3902,6 +3905,11 @@ export default function Sales() {
         splitDates: o.splitDates || [],
         isEmergency: o.isEmergency || false,
         isUrgent: o.isUrgent || false,
+        // True when at least one item's stock hasn't fully been deducted from Inventory yet
+        // (order taken/edited while stock was short) — set/cleared server-side by
+        // deductInventoryQty / backfillPendingDeductionsForItem. Drives the "Stock Pending"
+        // badge and the Task Management assignment gate.
+        hasPendingStockDeduction: o.hasPendingStockDeduction || false,
         // Per-product emergency-dispatch requests for this order (one entry per Task
         // that raised "Emergency Dispatch" in Task Management), most recent first.
         emergencyRequests: emergencyRequestsByOrder[o._id] || [],
@@ -6153,6 +6161,9 @@ export default function Sales() {
           {record.orderCategory === 'SAMPLE' && (
             <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>Sample</Tag>
           )}
+          {record.hasPendingStockDeduction && (
+            <Tag color="warning" style={{ fontSize: 10, margin: 0, padding: '0 4px', lineHeight: '16px' }}>Stock Pending</Tag>
+          )}
         </Space>
       ),
     },
@@ -6416,6 +6427,28 @@ export default function Sales() {
           <Tooltip title="Mark Resolved"><Button size="small" icon={<CheckOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }} onClick={(e) => { e.stopPropagation(); handleComplaintStatus(r, 'Resolved'); }} /></Tooltip>
         </Space>
       ),
+    },
+  ];
+
+  const forecastColumns = [
+    { title: 'Hotel / Company', dataIndex: 'hotelName', width: 190, render: (v) => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Sales Person', dataIndex: 'salesPerson', width: 130, render: v => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+    { title: 'Rooms', dataIndex: 'numRooms', width: 80, render: v => <Text style={{ fontSize: 13 }}>{v ?? '—'}</Text> },
+    { title: 'Occupancy', dataIndex: 'generalOccupancy', width: 100, render: v => <Text style={{ fontSize: 13 }}>{v != null ? `${v}%` : '—'}</Text> },
+    { title: 'Last Ordered', dataIndex: 'lastOrderDate', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{v ? fmtDateTimeShort(v) : '—'}</Text> },
+    {
+      title: 'Days Remaining', width: 130,
+      render: (_, r) => {
+        const d = r.mostUrgent?.daysRemaining;
+        return <Text style={{ fontSize: 13 }}>{d == null ? '—' : `${Math.max(0, Math.round(d))} day(s)`}</Text>;
+      },
+    },
+    {
+      title: 'Status', width: 130,
+      render: (_, r) => {
+        const status = r.mostUrgent?.status || 'Insufficient Data';
+        return <Tag color={FORECAST_STATUS_COLORS[status] || '#ccc'} style={{ fontSize: 12 }}>{status}</Tag>;
+      },
     },
   ];
 
@@ -8003,6 +8036,11 @@ export default function Sales() {
                   {(o.isUrgent || o.isEmergency) && (
                     <Tag color="error" icon={<AlertFilled />} style={{ borderRadius: 20, fontSize: 12, fontWeight: 700, padding: '2px 10px' }}>
                       Emergency Order
+                    </Tag>
+                  )}
+                  {o.hasPendingStockDeduction && (
+                    <Tag color="warning" style={{ borderRadius: 20, fontSize: 12, fontWeight: 700, padding: '2px 10px' }}>
+                      Stock Pending
                     </Tag>
                   )}
                   <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{o.oid}</Tag>
@@ -14944,6 +14982,36 @@ export default function Sales() {
               ),
             },
             {
+              key: 'forecast',
+              label: 'Consumption Forecast',
+              children: (
+                <div className="table-responsive" style={{ padding: '0 4px 4px' }}>
+                  <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, fontSize: 12, color: '#888' }}>
+                    Estimated from each hotel's own order history (frequency × quantity). When a product has only
+                    one order on record, it's estimated from Rooms × Occupancy% × 1 unit/room/day instead.
+                  </div>
+                  <Table
+                    dataSource={filtered((forecastRaw?.data || []).map(h => ({ ...h, key: h.partyId })), ['hotelName'])}
+                    columns={forecastColumns}
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                    size="small"
+                    rowKey="key"
+                    scroll={{ x: 'max-content' }}
+                    style={{ cursor: 'pointer' }}
+                    expandable={{
+                      expandedRowKeys: expandedForecastKeys,
+                      onExpandedRowsChange: setExpandedForecastKeys,
+                      expandRowByClick: true,
+                      showExpandColumn: false,
+                      expandedRowRender: (record) => (
+                        <ExpandedConsumptionForecast products={record.products} />
+                      ),
+                    }}
+                  />
+                </div>
+              ),
+            },
+            {
               key: 'complaints',
               label: 'Complaints',
               children: (
@@ -15453,6 +15521,63 @@ const ORDER_STATUS_COLORS = {
   'Payment Pending': '#fa8c16', Completed: '#52c41a',
   Dispatched: '#1890ff', Closed: '#aaa', Cancelled: '#ff4d4f',
 };
+
+const FORECAST_STATUS_COLORS = {
+  'Reorder Now': '#ff4d4f',
+  'Reorder Soon': '#fa8c16',
+  'Sufficient Stock': '#52c41a',
+  'Insufficient Data': '#aaa',
+};
+
+function ExpandedConsumptionForecast({ products = [] }) {
+  if (!products.length) {
+    return (
+      <div style={{ padding: '16px 24px', color: '#aaa', fontSize: 13 }}>
+        No order history found for this hotel yet.
+      </div>
+    );
+  }
+
+  const fmtDate = (v) => v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+  const fmtNum = (v) => v == null ? '—' : Math.round(v).toLocaleString();
+
+  return (
+    <div style={{ padding: '8px 24px 16px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+      <div style={{ fontSize: 12, color: '#888', marginBottom: 10, fontWeight: 600, letterSpacing: 0.3 }}>
+        {products.length} PRODUCT{products.length !== 1 ? 'S' : ''} TRACKED
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {products.map((p, i) => (
+          <div
+            key={p.itemName || i}
+            style={{
+              display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12,
+              background: '#fff', borderRadius: 8, padding: '10px 14px',
+              border: '1px solid #f0f0f0', fontSize: 13,
+            }}
+          >
+            <Text strong style={{ width: 160, flexShrink: 0 }}>{p.itemName}</Text>
+            <Text style={{ width: 150, flexShrink: 0, color: '#888', fontSize: 12 }}>
+              Last: {fmtNum(p.lastOrderQty)} on {fmtDate(p.lastOrderDate)}
+            </Text>
+            <Text style={{ width: 160, flexShrink: 0, color: '#888', fontSize: 12 }}>
+              Est. {fmtNum(p.estimatedDailyConsumption)}/day · {fmtNum(p.estimatedMonthlyConsumption)}/mo
+            </Text>
+            <Text style={{ width: 110, flexShrink: 0, fontSize: 12 }}>
+              {p.daysRemaining == null ? '—' : `${Math.max(0, Math.round(p.daysRemaining))} day(s) left`}
+            </Text>
+            <Text style={{ width: 130, flexShrink: 0, color: '#888', fontSize: 12 }}>
+              Est. out: {fmtDate(p.estimatedStockOutDate)}
+            </Text>
+            <Tag color={FORECAST_STATUS_COLORS[p.status] || '#ccc'} style={{ fontSize: 12, marginLeft: 'auto' }}>
+              {p.status}
+            </Tag>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function ExpandedPartyOrders({ hotelName, onView, onEdit }) {
   const { data, isLoading } = useGetOrdersByHotelNameQuery(hotelName, { skip: !hotelName });

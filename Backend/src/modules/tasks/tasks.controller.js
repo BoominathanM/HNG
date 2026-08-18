@@ -9,7 +9,7 @@ const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { computeTaskEstimate, computeRating } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
-const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
+const { checkTaskQuantityOverflow, checkStockDeductionGate } = require('../../utils/taskQuantity');
 const aiService = require('../../services/aiService');
 
 // Notification recipients for a task — every assignee when it has multiple
@@ -752,6 +752,15 @@ async function computeSuggestedTasks() {
         needsDesign: !!designType,
         needsPrinting: needsPrintStep,
         stockReady, stickerReady, printingReady,
+        // Whether THIS order's own allocation has actually been pulled from Inventory yet
+        // (order.items[idx].deductedQty vs requiredQty) — distinct from stockReady above,
+        // which only reflects CURRENT live stock levels. A product can show stockReady:true
+        // (there's enough in Inventory right now) while stockDeducted is still false (this
+        // order hasn't been given its share yet — some other pending order is ahead of it in
+        // the FIFO backfill queue). Assignment is actually blocked server-side
+        // (checkStockDeductionGate, utils/taskQuantity.js) on stockDeducted, not stockReady.
+        stockDeducted: (Number(it.deductedQty) || 0) >= requiredQty,
+        pendingDeductionQty: Math.max(0, requiredQty - (Number(it.deductedQty) || 0)),
         // Own-print-gate (Stickering, or Box/Frosted Ziplock/Butter Paper packing when
         // this item needs printing) — see stickerPrintingReady comment above.
         // itemPrintingStatus is passed through so the UI can show the actual status in
@@ -978,6 +987,9 @@ exports.createTask = asyncHandler(async (req, res, next) => {
       requiredQty: req.body.requiredQty,
     });
     if (overflowMsg) return next(new AppError(overflowMsg, 409));
+
+    const stockMsg = await checkStockDeductionGate({ orderId, productIndex });
+    if (stockMsg) return next(new AppError(stockMsg, 409));
   }
 
   // Prevent duplicate Kit Packing task per order

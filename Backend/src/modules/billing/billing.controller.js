@@ -11,6 +11,7 @@ const { notifyRoles } = require('../../utils/notify');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
 const { computeRecordBuckets, computeCompositionGrandTotal, r2 } = require('../../utils/orderCalc');
 const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
+const { syncDispatchRecordQuantities, deductInventoryDeltaForOrder, deductMaterialStockDeltaForOrder } = require('../sales/sales.controller');
 const Kit = require('../../models/Kit');
 
 // ─── Price/GST edit helpers (updateInvoicePricing) ────────────────────────────
@@ -61,11 +62,13 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
   }
 
   const editedByKey = new Map();
+  let qtyChanged = false;
   for (let i = 0; i < existingRows.length; i++) {
     const oldRow = existingRows[i];
     const newRow = reqProducts[i] || {};
     const oldRate = Number(oldRow.rate ?? oldRow.price) || 0;
     const oldGst = Number(oldRow.gst) || 0;
+    const oldQty = Number(oldRow.qty) || 0;
     const newRate = Number(newRow.rate);
     const newGst = Number(newRow.gst);
     const label = oldRow.itemName || oldRow.name || `Product ${i + 1}`;
@@ -74,26 +77,41 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     if (newRate < oldRate) throw new AppError(`Price for "${label}" cannot be reduced below ₹${oldRate}`, 400);
     if (newGst < oldGst) throw new AppError(`GST% for "${label}" cannot be reduced below ${oldGst}%`, 400);
 
-    editedByKey.set(itemMatchKey(oldRow), { rate: newRate, gst: newGst });
+    // Quantity is optional per row (existing price-only callers never send it) and, once
+    // present, can only be raised — never lowered — mirroring sales.controller.js's own
+    // findOrderQuantityDecreases philosophy ("once placed, values only increase"). A row not
+    // touching qty simply keeps its current value.
+    let newQty = oldQty;
+    if (newRow.qty !== undefined) {
+      newQty = Number(newRow.qty);
+      if (!Number.isFinite(newQty) || newQty < 0) throw new AppError(`Invalid quantity for "${label}"`, 400);
+      if (newQty < oldQty) throw new AppError(`Quantity for "${label}" cannot be reduced below ${oldQty}`, 400);
+      if (newQty !== oldQty) qtyChanged = true;
+    }
+
+    editedByKey.set(itemMatchKey(oldRow), { rate: newRate, gst: newGst, qty: newQty });
     if (usingProductsArray) {
       order.products[i].rate = newRate;
       if (order.products[i].price !== undefined) order.products[i].price = newRate;
       order.products[i].gst = newGst;
+      order.products[i].qty = newQty;
     } else if (order.items[i]) {
       order.items[i].price = newRate;
       order.items[i].rate = newRate;
       order.items[i].gst = newGst;
-      order.items[i].lineTotal = (Number(order.items[i].qty) || 0) * newRate;
+      order.items[i].qty = newQty;
+      order.items[i].lineTotal = newQty * newRate;
     }
   }
 
-  // Same floor rule on kitOrders[] (the kit's own package price), matched by kitId.
+  // Same floor rule on kitOrders[] (the kit's own package price + overall qty), matched by kitId.
   for (const newKit of reqKitOrders) {
     if (!newKit || !newKit.kitId) continue;
     const oldKit = existingKitOrders.find((k) => k && k.kitId === newKit.kitId);
     if (!oldKit) continue;
     const oldKitPrice = Number(oldKit.kitPrice) || 0;
     const oldKitGst = Number(oldKit.gst ?? oldKit.gstPercent ?? oldKit.taxRate) || 0;
+    const oldKitQty = Number(oldKit.overallQty) || 0;
     const newKitPrice = Number(newKit.kitPrice);
     const newKitGst = newKit.gst !== undefined ? Number(newKit.gst) : oldKitGst;
     const label = oldKit.kitName || oldKit.kitType || newKit.kitId;
@@ -102,10 +120,19 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     if (!Number.isFinite(newKitGst) || newKitGst < 0) throw new AppError(`Invalid GST% for kit "${label}"`, 400);
     if (newKitGst < oldKitGst) throw new AppError(`GST% for kit "${label}" cannot be reduced below ${oldKitGst}%`, 400);
 
+    let newKitQty = oldKitQty;
+    if (newKit.overallQty !== undefined) {
+      newKitQty = Number(newKit.overallQty);
+      if (!Number.isFinite(newKitQty) || newKitQty < 0) throw new AppError(`Invalid quantity for kit "${label}"`, 400);
+      if (newKitQty < oldKitQty) throw new AppError(`Quantity for kit "${label}" cannot be reduced below ${oldKitQty}`, 400);
+      if (newKitQty !== oldKitQty) qtyChanged = true;
+    }
+
     const kitOrderDoc = order.kitOrders.find((k) => k && k.kitId === newKit.kitId);
     if (kitOrderDoc) {
       kitOrderDoc.kitPrice = newKitPrice;
       kitOrderDoc.gst = newKitGst;
+      kitOrderDoc.overallQty = newKitQty;
     }
   }
 
@@ -124,6 +151,10 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
   // Best-effort mirror onto order.items[] — only needed when the primary edit above landed on
   // products[]; products[]/kitOrders[] are what orderCalc.js actually reads for money, so a
   // row that can't be confidently matched here is skipped rather than failing the request.
+  // Also carries qty, since Operations/Task Management/Dispatch resolve required qty straight
+  // off order.items (see Backend/src/utils/taskQuantity.js resolveRequiredQty) — items[]
+  // staying stale here would leave those reading the old ceiling even though products[] (and
+  // the order total) already reflect the increase.
   if (usingProductsArray && Array.isArray(order.items)) {
     order.items.forEach((item) => {
       const edit = editedByKey.get(itemMatchKey(item));
@@ -131,7 +162,8 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
       item.price = edit.rate;
       item.rate = edit.rate;
       item.gst = edit.gst;
-      item.lineTotal = (Number(item.qty) || 0) * edit.rate;
+      item.qty = edit.qty;
+      item.lineTotal = edit.qty * edit.rate;
     });
   }
 
@@ -167,6 +199,30 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
   order.markModified('items');
   await order.save({ validateBeforeSave: false });
 
+  // A DispatchRecord already forwarded for this order snapshots qtyOrdered/overallQty ONCE at
+  // forward time and never revisits it — without this resync, Dispatch's "X of Y" would
+  // silently undercount a quantity raised after dispatch started. Mirrors exactly what
+  // sales.controller.js's own updateOrder does on a qty-increasing edit; order.items/kitOrders
+  // are already index/kitId-aligned with existingPlain at this point (only field values were
+  // mutated above, nothing added/removed/reordered), so they're safe to pass directly as the
+  // "patch". No-ops (and reads no DispatchRecord) when qty wasn't touched.
+  if (qtyChanged) {
+    await syncDispatchRecordQuantities(order._id, existingPlain, { items: order.items, kitOrders: order.kitOrders }).catch((err) => {
+      console.error(`Dispatch qty resync failed for order ${order.orderCode}:`, err.message);
+    });
+    // Inventory/material stock is only ever deducted ONCE, in full, at order creation — raising
+    // a qty afterward (here, via Billing) previously left the increase completely undeducted,
+    // same gap sales.controller.js's own updateOrder had until it got the identical fix. Only
+    // the DELTA is deducted (neither function has an "already deducted" flag to guard a re-run
+    // of the full amount).
+    await deductInventoryDeltaForOrder(existingPlain, order, user._id).catch((err) => {
+      console.error(`Inventory delta deduction failed for order ${order.orderCode}:`, err.message);
+    });
+    await deductMaterialStockDeltaForOrder(existingPlain, order).catch((err) => {
+      console.error(`Material stock delta deduction failed for order ${order.orderCode}:`, err.message);
+    });
+  }
+
   return { buckets, grandTotal, editedByKey };
 }
 
@@ -184,6 +240,7 @@ function applyOrphanItemsPriceEdit(items, reqProducts, label404 = 'record') {
     const newRow = reqProducts[i] || {};
     const oldRate = Number(oldRow.price) || 0;
     const oldGst = Number(oldRow.gst) || 0;
+    const oldQty = Number(oldRow.qty) || 0;
     const newRate = Number(newRow.rate);
     const newGst = Number(newRow.gst);
     const label = oldRow.itemName || `Product ${i + 1}`;
@@ -193,6 +250,16 @@ function applyOrphanItemsPriceEdit(items, reqProducts, label404 = 'record') {
     if (newGst < oldGst) throw new AppError(`GST% for "${label}" cannot be reduced below ${oldGst}%`, 400);
     items[i].price = newRate;
     items[i].gst = newGst;
+
+    // No linked Order to sync here (that's what makes this the orphan branch), so there's no
+    // Dispatch/Operations/Tasks concern — quantity is still increase-only for consistency.
+    if (newRow.qty !== undefined) {
+      const newQty = Number(newRow.qty);
+      if (!Number.isFinite(newQty) || newQty < 0) throw new AppError(`Invalid quantity for "${label}"`, 400);
+      if (newQty < oldQty) throw new AppError(`Quantity for "${label}" cannot be reduced below ${oldQty}`, 400);
+      items[i].qty = newQty;
+      items[i].lineTotal = newQty * newRate;
+    }
   }
   const newSubtotal = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
   const newGstAmount = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0) * ((Number(it.gst) || 0) / 100), 0);
@@ -364,14 +431,15 @@ exports.createInvoice = asyncHandler(async (req, res, next) => {
   res.status(201).json({ success: true, data: invoice });
 });
 
-// Full price + GST editor for an invoice (replaces the old GST-only editor). Edits land on
-// the linked ORDER's products[]/kitOrders[] — the actual source of truth every total
+// Full price + GST + quantity editor for an invoice (replaces the old GST-only editor). Edits
+// land on the linked ORDER's products[]/kitOrders[] — the actual source of truth every total
 // computation (Sales, Operations, Dispatch, Billing's own invoice list) reads from, via
 // orderCalc.js's computeRecordBuckets/computeCompositionGrandTotal — and the Invoice is then
 // re-derived from that SAME recompute so the two documents stay mathematically identical.
-// Quantity is never accepted here. Price/GST can only be revised UPWARD from their current
-// value, mirroring sales.controller.js's existing findOrderQuantityDecreases philosophy
-// ("once placed, values only increase") — just applied to price instead of qty.
+// Price/GST/quantity can only be revised UPWARD from their current value, mirroring
+// sales.controller.js's existing findOrderQuantityDecreases philosophy ("once placed, values
+// only increase") — quantity increases are also resynced to any already-forwarded
+// DispatchRecord (see applyOrderPriceEdit) exactly like a qty-increasing Sales order edit does.
 exports.updateInvoicePricing = asyncHandler(async (req, res, next) => {
   const reason = String(req.body.reason || '').trim();
   if (!reason) return next(new AppError('A reason is required to modify invoice pricing', 400));

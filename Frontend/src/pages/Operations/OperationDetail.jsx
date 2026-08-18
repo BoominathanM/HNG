@@ -489,8 +489,13 @@ export default function OperationDetail() {
   const [taskRequiredQty, setTaskRequiredQty] = useState(0);
 
   // Task Management department staff — populate every "Assign To" dropdown in this page
-  // (mirrors the Vendor-users filter used in Operations/index.jsx).
-  const { data: usersData } = useGetUsersQuery();
+  // (mirrors the Vendor-users filter used in Operations/index.jsx). The department filter
+  // itself is correct (Settings > User Management's own department list includes "Task
+  // Management" — see Settings/index.jsx's `departments`); the bug was this query had no
+  // `limit`, silently falling back to the backend's default of 10 users, which truncated real
+  // Task Management staff created earlier than the 10 most recent. Pass a high limit like
+  // every other full-staff-list page already does.
+  const { data: usersData } = useGetUsersQuery({ limit: 1000 });
   const taskManagementUsers = useMemo(
     () => (usersData?.data || []).filter((u) => u.fullName && u.department === 'Task Management'),
     [usersData],
@@ -2413,12 +2418,27 @@ export default function OperationDetail() {
           || taskedProductNames.has((record.product || record.itemName || record.name || '').toLowerCase());
         const pendingQty = itemIndex >= 0 ? pendingQtyByIndex.get(itemIndex) : undefined;
         const fullyCovered = pendingQty === undefined ? alreadyTasked : pendingQty <= 0;
+        // Physical stock not yet deducted from Inventory for this line (order taken/edited
+        // while short) — server-side hard-blocks assignment (checkStockDeductionGate) until
+        // it's restocked; this is just the proactive heads-up so staff aren't surprised by
+        // the error. deductedQty may be absent on orders predating this field — undefined
+        // never shows the tag (treated as fully deducted, same as the migration script does).
+        const itemRow = itemIndex >= 0 ? order?.items?.[itemIndex] : null;
+        const stockRequired = itemRow ? (itemRow.isKit ? (Number(itemRow.overallQty) || Number(itemRow.qty) || 0) : (Number(itemRow.qty) || 0)) : 0;
+        const stockDeductedQty = Number(itemRow?.deductedQty) || 0;
+        const stockPending = itemRow && itemRow.deductedQty !== undefined && stockRequired > stockDeductedQty;
+        const stockShortQty = stockRequired - stockDeductedQty;
         return (
           <Space direction="vertical" size={4}>
             {alreadyTasked && (
               <Tag color={fullyCovered ? 'green' : 'gold'} style={{ borderRadius: 6, fontSize: 10, margin: 0 }}>
                 {fullyCovered ? '✓ Task Assigned' : `${pendingQty} pending`}
               </Tag>
+            )}
+            {stockPending && (
+              <Tooltip title={`${stockDeductedQty} of ${stockRequired} unit(s) deducted from stock so far — ${stockShortQty} still short (insufficient inventory when the order was placed/edited). Assignment is blocked until all ${stockRequired} are deducted; restocking automatically pays off the shortfall.`}>
+                <Tag color="warning" style={{ borderRadius: 6, fontSize: 10, margin: 0 }}>{`Stock Pending (${stockDeductedQty}/${stockRequired})`}</Tag>
+              </Tooltip>
             )}
             <Button
               type="primary"

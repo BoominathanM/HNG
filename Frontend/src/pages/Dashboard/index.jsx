@@ -1,6 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { Row, Col, Card, Typography, Tag, Table, Progress, Timeline, Select, Spin } from 'antd';
-import { ShoppingCartOutlined, DollarOutlined, CarOutlined, UserOutlined, WarningOutlined, CheckCircleOutlined, ClockCircleOutlined, FileTextOutlined, AlertOutlined } from '@ant-design/icons';
+import { ShoppingCartOutlined, DollarOutlined, CarOutlined, UserOutlined, WarningOutlined, CheckCircleOutlined, ClockCircleOutlined, FileTextOutlined, AlertOutlined, TeamOutlined, ShoppingOutlined } from '@ant-design/icons';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 import { motion } from 'framer-motion';
 import StatCard from '../../components/common/StatCard';
@@ -13,11 +13,14 @@ import {
   useGetRevenueTrendQuery,
   useGetOrderStatusQuery,
   useGetTopProductsQuery,
+  useGetTaskStatusQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
 
 const COLORS = ['#6b1240', '#B11E6A', '#D85C9E', '#E8A0C4'];
+// Single primary-color family (shades of the app's colorPrimary #B11E6A) — used for every stat card.
+const PRIMARY_SHADES = ['#6b1240', '#8a1652', '#B11E6A', '#C94F8A', '#D85C9E', '#E8A0C4'];
 const fadeIn = (delay = 0) => ({ initial: { opacity: 0, y: 20 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.4, delay } });
 
 export default function Dashboard() {
@@ -32,6 +35,7 @@ export default function Dashboard() {
   const { data: trendRaw } = useGetRevenueTrendQuery();
   const { data: statusRaw } = useGetOrderStatusQuery();
   const { data: productsRaw } = useGetTopProductsQuery();
+  const { data: taskStatusRaw } = useGetTaskStatusQuery();
 
   const loading = kpiLoading || ordersLoading;
   const kpis = kpiRaw?.data || {};
@@ -40,21 +44,25 @@ export default function Dashboard() {
   const revenueTrend = trendRaw?.data || [];
   const orderStatus = statusRaw?.data || [];
   const topProducts = productsRaw?.data || [];
+  const taskStatus = taskStatusRaw?.data || [];
 
   const statCards = [
-    { title: 'Total Orders', value: kpis.totalOrders ?? '—', icon: <ShoppingCartOutlined />, color: '#B11E6A', change: 12 },
-    { title: 'Monthly Revenue', value: kpis.monthlyRevenue ? `₹${(kpis.monthlyRevenue / 100000).toFixed(1)}L` : '—', icon: <DollarOutlined />, color: '#8a1652', change: 8 },
-    { title: 'Dispatch Ready', value: kpis.dispatchReady ?? '—', icon: <CarOutlined />, color: '#C94F8A', change: -3 },
-    { title: 'Active Clients', value: kpis.activeClients ?? '—', icon: <UserOutlined />, color: '#D85C9E', change: 5 },
-    { title: 'Total Tasks', value: kpis.totalTasks ?? '—', icon: <CheckCircleOutlined />, color: '#6b1240', change: 8 },
-    { title: 'Active Complaints', value: kpis.activeComplaints ?? '—', icon: <WarningOutlined />, color: '#ff4d4f', change: 2 },
-    { title: 'Upcoming Reminders', value: kpis.upcomingReminders ?? '—', icon: <ClockCircleOutlined />, color: '#fa8c16', change: 5 },
-    { title: "Today's Tasks", value: kpis.todaysTasks ?? '—', icon: <ClockCircleOutlined />, color: '#8a1652', change: 4 },
-    { title: 'Pending Tasks', value: kpis.pendingTasks ?? '—', icon: <WarningOutlined />, color: '#C94F8A', change: -2 },
-    { title: 'Completed Tasks', value: kpis.completedTasks ?? '—', icon: <CheckCircleOutlined />, color: '#D85C9E', change: 6 },
-    { title: 'Pending Invoices', value: kpis.pendingInvoices ?? '—', icon: <FileTextOutlined />, color: '#fa541c', change: undefined },
-    { title: 'Low Stock Items', value: kpis.lowStockItems ?? '—', icon: <AlertOutlined />, color: '#fa8c16', change: undefined },
-  ];
+    { title: 'Total Orders', value: kpis.totalOrders ?? '—', icon: <ShoppingCartOutlined />, change: 12 },
+    { title: 'Monthly Revenue', value: kpis.monthlyRevenue ? `₹${(kpis.monthlyRevenue / 100000).toFixed(1)}L` : '—', icon: <DollarOutlined />, change: 8 },
+    { title: 'GST Amount', value: kpis.gstAmount ? `₹${kpis.gstAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—', icon: <FileTextOutlined />, change: undefined },
+    { title: 'Dispatch Ready', value: kpis.dispatchReady ?? '—', icon: <CarOutlined />, change: -3 },
+    { title: 'Active Clients', value: kpis.activeClients ?? '—', icon: <UserOutlined />, change: 5 },
+    { title: 'Total Tasks', value: kpis.totalTasks ?? '—', icon: <CheckCircleOutlined />, change: 8 },
+    { title: 'Active Complaints', value: kpis.activeComplaints ?? '—', icon: <WarningOutlined />, change: 2 },
+    { title: 'Upcoming Reminders', value: kpis.upcomingReminders ?? '—', icon: <ClockCircleOutlined />, change: 5 },
+    { title: "Today's Tasks", value: kpis.todaysTasks ?? '—', icon: <ClockCircleOutlined />, change: 4 },
+    { title: 'Pending Tasks', value: kpis.pendingTasks ?? '—', icon: <WarningOutlined />, change: -2 },
+    { title: 'Completed Tasks', value: kpis.completedTasks ?? '—', icon: <CheckCircleOutlined />, change: 6 },
+    { title: 'Pending Invoices', value: kpis.pendingInvoices ?? '—', icon: <FileTextOutlined />, change: undefined },
+    { title: 'Low Stock Items', value: kpis.lowStockItems ?? '—', icon: <AlertOutlined />, change: undefined },
+    { title: 'Total Leads', value: kpis.totalLeads ?? '—', icon: <TeamOutlined />, change: 6 },
+    { title: 'Pending Purchase Orders', value: kpis.pendingPurchaseOrders ?? '—', icon: <ShoppingOutlined />, change: undefined },
+  ].map((c, i) => ({ ...c, color: PRIMARY_SHADES[i % PRIMARY_SHADES.length] }));
 
   const orderColumns = [
     { title: 'Order ID', dataIndex: 'orderCode', render: (v) => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
@@ -65,6 +73,7 @@ export default function Dashboard() {
 
   const pieData = orderStatus.map((s, i) => ({ name: s._id, value: s.count, color: COLORS[i % COLORS.length] }));
   const barData = topProducts.map((p) => ({ product: p._id, qty: p.qty, revenue: p.revenue }));
+  const taskStatusData = taskStatus.map((s, i) => ({ name: s._id || 'Unknown', value: s.count, color: COLORS[i % COLORS.length] }));
 
   if (loading) return <div className="page-container fade-in" style={{ textAlign: 'center', paddingTop: 80 }}><Spin size="large" /></div>;
 
@@ -80,8 +89,8 @@ export default function Dashboard() {
 
       <Row gutter={[16, 16]} className="stat-cards-row" style={{ marginBottom: 24 }}>
         {statCards.map((s, i) => (
-          <Col xs={12} sm={8} md={8} lg={6} xl={6} key={s.title}>
-            <motion.div {...fadeIn(i * 0.08)}><StatCard {...s} /></motion.div>
+          <Col xs={12} sm={8} md={8} lg={6} xl={5} xxl={5} key={s.title}>
+            <motion.div {...fadeIn(i * 0.06)}><StatCard {...s} /></motion.div>
           </Col>
         ))}
       </Row>
@@ -219,6 +228,37 @@ export default function Dashboard() {
                         </>
                       ),
                     }))} />
+                  )}
+                </Card>
+              </motion.div>
+            </Col>
+
+            <Col xs={24} sm={12} xl={24}>
+              <motion.div {...fadeIn(0.45)}>
+                <Card title={<Text strong style={{ color: textColor }}>Task Status</Text>}
+                  style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                  styles={{ body: { padding: '12px 16px 16px' } }}>
+                  {taskStatusData.length > 0 ? (
+                    <>
+                      <ResponsiveContainer width="100%" height={180}>
+                        <PieChart>
+                          <Pie data={taskStatusData} cx="50%" cy="50%" innerRadius={50} outerRadius={75} paddingAngle={3} dataKey="value">
+                            {taskStatusData.map((e, i) => <Cell key={i} fill={e.color} />)}
+                          </Pie>
+                          <Tooltip formatter={(v) => [`${v}`, 'Tasks']} />
+                        </PieChart>
+                      </ResponsiveContainer>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', marginTop: 8 }}>
+                        {taskStatusData.map((d) => (
+                          <div key={d.name} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                            <div style={{ width: 10, height: 10, borderRadius: '50%', background: d.color }} />
+                            <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>{d.name} {d.value}</Text>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ textAlign: 'center', padding: '40px 0', color: '#aaa' }}>No tasks yet</div>
                   )}
                 </Card>
               </motion.div>

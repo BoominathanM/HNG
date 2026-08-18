@@ -19,7 +19,7 @@ import dayjs from 'dayjs';
 import html2pdf from 'html2pdf.js';
 import DocumentTemplate, { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
-import { computeRecordBuckets, computeRecordGrandTotal } from '../../utils/orderCalc';
+import { computeRecordBuckets, computeRecordGrandTotal, kitOrderValue } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
@@ -694,16 +694,18 @@ export default function Billing() {
   const [verifyQuot, setVerifyQuot] = useState(null);
   const [verifierName, setVerifierName] = useState('');
 
-  // Edit Pricing modal (Invoices tab) — full per-product price + GST editor, replacing the
-  // old flat "Edit GST" box. Grouped the same way the rest of the app models order composition
-  // (see Frontend/src/utils/orderCalc.js's ORDER_CATEGORIES / Sales' CategoryTotalsBreakdown):
-  // priceEditKitGroups = one entry per kitOrders row (Personalized or Separate Kit), each
-  // carrying its own componentRows (the kit's constituent products, nested underneath it —
-  // not a disconnected flat list); priceEditStandaloneRows = non-kit products (Separate
-  // Product, or a loose item tagged category:'personalized'). Every row keeps its original
-  // rate/gst alongside so the min-floor and "changed?" checks don't need to re-look-up the
-  // source array, and its productIndex so edits can be written back to the right position in
-  // the flat products[] array the backend expects (see priceEditPreview below).
+  // Edit Pricing modal (Invoices + Quotation-in-Process tabs) — full per-product price + GST +
+  // quantity editor, replacing the old flat "Edit GST" box. Grouped the same way the rest of
+  // the app models order composition (see Frontend/src/utils/orderCalc.js's ORDER_CATEGORIES /
+  // Sales' CategoryTotalsBreakdown): priceEditKitGroups = one entry per kitOrders row
+  // (Personalized or Separate Kit), each carrying its own componentRows (the kit's constituent
+  // products, nested underneath it — not a disconnected flat list); priceEditStandaloneRows =
+  // non-kit products (Separate Product, or a loose item tagged category:'personalized').
+  // Every row keeps its original rate/gst/qty alongside so the min-floor (rate/gst/qty can
+  // only be raised, never lowered — same philosophy as sales.controller.js's own
+  // findOrderQuantityDecreases) and "changed?" checks don't need to re-look-up the source
+  // array, and its productIndex so edits can be written back to the right position in the flat
+  // products[] array the backend expects (see priceEditPreview below).
   const [priceEditOpen, setPriceEditOpen] = useState(false);
   const [priceEditInv, setPriceEditInv] = useState(null);
   const [priceEditKitGroups, setPriceEditKitGroups] = useState([]);
@@ -1024,10 +1026,10 @@ export default function Billing() {
     // "Select Kit(s) to Include" bundles other kits/products inside the outer personalized
     // package (see Frontend/src/utils/docComposition.js:computePersonalizedComposition) — a
     // kit is referenced there by its _id, a standalone product by its name. Editing is
-    // per-row (one rate/gst per product/kit regardless of how its qty splits between
+    // per-row (one rate/gst/qty per product/kit regardless of how its qty splits between
     // "included" and "remaining"), so all that's needed here is WHICH bucket a row displays
     // under — not the included-vs-remaining quantity split itself (that stays a document-
-    // rendering concern, untouched by this modal since quantity is never edited).
+    // rendering concern, unaffected by editing the row's own total qty here).
     const piRaw = inv.editPackagingIncludes || [];
     const includedIds = new Set(
       (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null)
@@ -1046,12 +1048,23 @@ export default function Billing() {
         if ((p.isKit || p.kitType) && p.kitId === ko.kitId) {
           const rate = Number(p.rate ?? p.price) || 0;
           const pgst = Number(p.gst) || 0;
-          componentRows.push({ key: `p-${pi}`, productIndex: pi, name: p.name || p.itemName || `Product ${pi + 1}`, qty: Number(p.qty) || 0, origRate: rate, origGst: pgst, rate, gst: pgst });
+          const pqty = Number(p.qty) || 0;
+          componentRows.push({ key: `p-${pi}`, productIndex: pi, name: p.name || p.itemName || `Product ${pi + 1}`, origQty: pqty, qty: pqty, origRate: rate, origGst: pgst, rate, gst: pgst });
         }
       });
+      const kitQty = Number(ko.overallQty) || 0;
+      // ko.kitName is sometimes missing on the specific Order record this modal resolved
+      // (e.g. dropped somewhere in the Lead→Quotation→Negotiation→Order chain) even though the
+      // printed document shows it correctly via a richer fallback chain — kits (the Kit master
+      // data, already loaded) is keyed by kitId and always has the authoritative name
+      // regardless of which record's kitOrders entry is being read.
+      const kitDef = kits.find(k => String(k._id) === String(ko.kitId));
+      // Whether this kit is bundled into the outer personalized package via packagingIncludes —
+      // used by renderKitGroup to pick the right total formula (see its own comment).
+      const isIncludedInPackage = includedIds.has(String(ko.kitId));
       return {
-        key: `k-${ki}`, kitId: ko.kitId, category,
-        name: ko.kitName || ko.kitType || `Kit ${ki + 1}`, qty: Number(ko.overallQty) || 0,
+        key: `k-${ki}`, kitId: ko.kitId, category, isIncludedInPackage,
+        name: ko.kitName || ko.kitType || kitDef?.kitName || kitDef?.name || `Kit ${ki + 1}`, origQty: kitQty, qty: kitQty,
         origKitPrice: kitPrice, origGst: gst, kitPrice, gst, componentRows,
       };
     }));
@@ -1065,15 +1078,23 @@ export default function Billing() {
         const gst = Number(p.gst) || 0;
         const name = p.name || p.itemName || `Product ${pi + 1}`;
         const category = (p.category === 'personalized' || includedIds.has(name)) ? 'personalized' : (p.category || 'separate_product');
-        standaloneRows.push({ key: `p-${pi}`, productIndex: pi, category, name, qty: Number(p.qty) || 0, origRate: rate, origGst: gst, rate, gst });
+        const sqty = Number(p.qty) || 0;
+        standaloneRows.push({ key: `p-${pi}`, productIndex: pi, category, name, origQty: sqty, qty: sqty, origRate: rate, origGst: gst, rate, gst });
       }
     });
     setPriceEditStandaloneRows(standaloneRows);
 
-    // Outer personalized-package fee (Order.kitPrice) — shown/editable whenever the order
-    // actually has one (a real price, or the "include" feature is in use even at ₹0).
+    // Outer personalized-package fee (Order.kitPrice) — this field is only actually READ by
+    // the composition math (computeRecordBuckets/computePersonalizedComposition) in two cases:
+    // packagingIncludes bundling is in use, OR there's no kitOrders[] array at all (legacy
+    // kit-rows-only records). Whenever real kitOrders[] entries exist (the common case — each
+    // kit prices itself via its OWN kitPrice, not this top-level field) and packagingIncludes
+    // is empty, order.kitPrice is unused/stale data — showing it as an editable "fee" here
+    // would be misleading (it visually looks like part of the total but isn't) and editing it
+    // would silently do nothing to the actual total.
     const packagePrice = Number(inv.editKitPrice) || 0;
-    setPriceEditHasPackage(packagePrice > 0 || piRaw.length > 0);
+    const hasKitOrders = (inv.editKitOrders || []).length > 0;
+    setPriceEditHasPackage(piRaw.length > 0 || (packagePrice > 0 && !hasKitOrders));
     setPriceEditPackageQty(Number(inv.editKitOverallQty) || 0);
     setPriceEditPackagePrice(packagePrice);
     setPriceEditPackageOrigPrice(packagePrice);
@@ -1094,9 +1115,9 @@ export default function Billing() {
     setPriceEditStandaloneRows(rows => rows.map(r => (r.key === rowKey ? { ...r, [field]: value } : r)));
   };
 
-  const priceEditHasChanges = priceEditKitGroups.some(g => g.kitPrice !== g.origKitPrice || g.gst !== g.origGst
-      || g.componentRows.some(r => r.rate !== r.origRate || r.gst !== r.origGst))
-    || priceEditStandaloneRows.some(r => r.rate !== r.origRate || r.gst !== r.origGst)
+  const priceEditHasChanges = priceEditKitGroups.some(g => g.kitPrice !== g.origKitPrice || g.gst !== g.origGst || g.qty !== g.origQty
+      || g.componentRows.some(r => r.rate !== r.origRate || r.gst !== r.origGst || r.qty !== r.origQty))
+    || priceEditStandaloneRows.some(r => r.rate !== r.origRate || r.gst !== r.origGst || r.qty !== r.origQty)
     || priceEditPackagePrice !== priceEditPackageOrigPrice;
 
   // Split kit groups AND standalone rows into the same Personalized / Separate Kit / Separate
@@ -1120,7 +1141,20 @@ export default function Billing() {
       dataSource={rows}
       columns={[
         { title: 'Product', dataIndex: 'name', ellipsis: true },
-        { title: 'Qty', dataIndex: 'qty', width: 60, align: 'center' },
+        {
+          title: 'Qty', width: 80, align: 'center',
+          render: (_, row) => (
+            <InputNumber
+              size="small"
+              min={row.origQty}
+              precision={0}
+              value={row.qty}
+              controls={false}
+              style={{ width: '100%' }}
+              onChange={(v) => updateStandaloneField(row.key, 'qty', v == null ? row.origQty : v)}
+            />
+          ),
+        },
         {
           title: 'Price (₹)', width: 120, align: 'right',
           render: (_, row) => (
@@ -1163,7 +1197,10 @@ export default function Billing() {
     <div key={g.key} style={{ border: '1px solid #B11E6A33', borderRadius: 10, marginBottom: 10, overflow: 'hidden' }}>
       <div style={{ background: isDark ? '#2a1520' : '#B11E6A10', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <Text strong style={{ flex: '1 1 140px' }}>{g.name}</Text>
-        <Text type="secondary" style={{ fontSize: 12 }}>Qty {g.qty}</Text>
+        <InputNumber
+          size="small" min={g.origQty} precision={0} value={g.qty} controls={false} style={{ width: 70 }}
+          onChange={(v) => updateKitGroupField(g.key, 'qty', v == null ? g.origQty : v)}
+        />
         <InputNumber
           size="small" min={g.origKitPrice} value={g.kitPrice} controls={false} prefix="₹" style={{ width: 110 }}
           onChange={(v) => updateKitGroupField(g.key, 'kitPrice', v == null ? g.origKitPrice : v)}
@@ -1172,14 +1209,32 @@ export default function Billing() {
           size="small" min={g.origGst} max={100} value={g.gst} controls={false} suffix="%" style={{ width: 85 }}
           onChange={(v) => updateKitGroupField(g.key, 'gst', v == null ? g.origGst : v)}
         />
-        <Text strong style={{ fontSize: 12, minWidth: 90, textAlign: 'right' }}>₹{r2(g.qty * g.kitPrice * (1 + g.gst / 100)).toLocaleString()}</Text>
+        <Text strong style={{ fontSize: 12, minWidth: 90, textAlign: 'right' }}>
+          {/* kitOrderValue's own "personalized" branch deliberately IGNORES component rows
+              once kitPrice > 0 — correct for a plain standalone personalized kit (the stored
+              price already represents the whole thing), but WRONG for a kit bundled into the
+              outer package via packagingIncludes: computePersonalizedComposition always
+              combines kit fee + components for an included kit (kitPkgPrice + prodsTotalPerKit)
+              × consumed, the same "combine everything" rule as a Separate Kit — never the
+              price-only shortcut. Forcing category to 'separate_kit' here (display only, never
+              sent to the backend) gets kitOrderValue to apply that same combined formula, so
+              this row's total actually reflects — and updates with — the components' price/qty
+              instead of silently ignoring them. */}
+          ₹{kitOrderValue(
+            { kitId: g.kitId, kitPrice: g.kitPrice, overallQty: g.qty, category: g.isIncludedInPackage ? 'separate_kit' : g.category },
+            g.componentRows.map(r => ({ kitId: g.kitId, qty: r.qty, rate: r.rate, gst: r.gst })),
+          ).toLocaleString()}
+        </Text>
       </div>
       {g.componentRows.length > 0 && (
         <div style={{ padding: '2px 12px 6px 12px' }}>
           {g.componentRows.map(r => (
             <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', marginLeft: 16, borderTop: `1px dashed ${isDark ? '#ffffff22' : '#00000014'}` }}>
               <Text style={{ flex: '1 1 120px', fontSize: 13 }}>↳ {r.name}</Text>
-              <Text type="secondary" style={{ fontSize: 12 }}>Qty {r.qty}</Text>
+              <InputNumber
+                size="small" min={r.origQty} precision={0} value={r.qty} controls={false} style={{ width: 70 }}
+                onChange={(v) => updateKitComponentField(g.key, r.key, 'qty', v == null ? r.origQty : v)}
+              />
               <InputNumber
                 size="small" min={r.origRate} value={r.rate} controls={false} prefix="₹" style={{ width: 110 }}
                 onChange={(v) => updateKitComponentField(g.key, r.key, 'rate', v == null ? r.origRate : v)}
@@ -1206,17 +1261,17 @@ export default function Billing() {
   // so their already-known totals are added on afterward. This is still only a preview — the
   // authoritative numbers come back from the server on save.
   const priceEditPreview = useMemo(() => {
-    if (!priceEditInv) return { subtotal: 0, gst: 0, total: 0, flatProducts: [], flatKitOrders: [] };
+    if (!priceEditInv) return { subtotal: 0, gst: 0, total: 0, personalizedTotal: 0, separateKitTotal: 0, separateProductTotal: 0, flatProducts: [], flatKitOrders: [] };
     const flatProducts = (priceEditInv.editProducts || []).map(p => ({ ...p }));
     priceEditKitGroups.forEach(g => g.componentRows.forEach(r => {
-      flatProducts[r.productIndex] = { ...flatProducts[r.productIndex], rate: r.rate, gst: r.gst };
+      flatProducts[r.productIndex] = { ...flatProducts[r.productIndex], rate: r.rate, gst: r.gst, qty: r.qty };
     }));
     priceEditStandaloneRows.forEach(r => {
-      flatProducts[r.productIndex] = { ...flatProducts[r.productIndex], rate: r.rate, gst: r.gst };
+      flatProducts[r.productIndex] = { ...flatProducts[r.productIndex], rate: r.rate, gst: r.gst, qty: r.qty };
     });
     const flatKitOrders = (priceEditInv.editKitOrders || []).map(ko => {
       const g = priceEditKitGroups.find(gr => gr.kitId === ko.kitId);
-      return g ? { ...ko, kitPrice: g.kitPrice, gst: g.gst } : ko;
+      return g ? { ...ko, kitPrice: g.kitPrice, gst: g.gst, overallQty: g.qty } : ko;
     });
     const previewRec = {
       products: flatProducts,
@@ -1227,12 +1282,20 @@ export default function Billing() {
       packagingIncludesQty: priceEditInv.editPackagingIncludesQty || {},
     };
     const comp = buildDocComposition(previewRec, kits);
-    const subtotal = comp ? comp.taxable : computeRecordBuckets(previewRec).taxable;
-    const gst = comp ? comp.gst : computeRecordBuckets(previewRec).gst;
-    const baseGrand = comp ? comp.totalSectionsAmt : computeRecordBuckets(previewRec).grand;
+    const buckets = comp ? null : computeRecordBuckets(previewRec);
+    const subtotal = comp ? comp.taxable : buckets.taxable;
+    const gst = comp ? comp.gst : buckets.gst;
+    const baseGrand = comp ? comp.totalSectionsAmt : buckets.grand;
+    // Per-section rollups (A/B/C, same split the printed invoice/quotation document itself
+    // shows as "Total Personalized (A)" / Section B / Section C) — so this modal's own section
+    // headers can show the same reconciling subtotal instead of leaving the user to manually
+    // add up every row themselves to check the math.
+    const personalizedTotal = comp ? comp.personalized : buckets.personalized;
+    const separateKitTotal = comp ? comp.separateKit : buckets.separateKit;
+    const separateProductTotal = comp ? comp.separateProduct : buckets.separateProduct;
     const fwd = priceEditInv.forwardingCharge ? (Number(priceEditInv.forwardingChargeAmount) || 0) : 0;
     const total = r2(baseGrand + fwd + (Number(priceEditInv.courierCharge) || 0) + (Number(priceEditInv.roundOff) || 0));
-    return { subtotal, gst, total, flatProducts, flatKitOrders };
+    return { subtotal, gst, total, personalizedTotal, separateKitTotal, separateProductTotal, flatProducts, flatKitOrders };
   }, [priceEditInv, priceEditKitGroups, priceEditStandaloneRows, priceEditPackagePrice, priceEditPackageQty, kits]);
 
   const handleSavePricing = async () => {
@@ -1244,8 +1307,8 @@ export default function Billing() {
     try {
       const payload = {
         id: priceEditInv.key,
-        products: priceEditPreview.flatProducts.map(p => ({ rate: p.rate, gst: p.gst })),
-        kitOrders: priceEditPreview.flatKitOrders.map(k => ({ kitId: k.kitId, kitPrice: k.kitPrice, gst: k.gst })),
+        products: priceEditPreview.flatProducts.map(p => ({ rate: p.rate, gst: p.gst, qty: p.qty })),
+        kitOrders: priceEditPreview.flatKitOrders.map(k => ({ kitId: k.kitId, kitPrice: k.kitPrice, gst: k.gst, overallQty: k.overallQty })),
         kitPackagePrice: priceEditPackagePrice,
         reason: priceEditReason.trim(),
       };
@@ -2303,11 +2366,13 @@ export default function Billing() {
             {(priceEditHasPackage || personalizedKitGroups.length > 0 || personalizedStandaloneRows.length > 0) && (
               <>
                 <Text strong style={{ fontSize: 13 }}>Personalized Kit</Text>
-                <div style={{ marginTop: 6, marginBottom: 16 }}>
+                <div style={{ marginTop: 6, marginBottom: 6 }}>
                   {priceEditHasPackage && (
                     <div style={{ border: '1px solid #B11E6A33', borderRadius: 10, marginBottom: 10, background: isDark ? '#2a1520' : '#B11E6A10', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <Text strong style={{ flex: '1 1 140px' }}>Personalized Package Fee</Text>
-                      <Text type="secondary" style={{ fontSize: 12 }}>Qty {priceEditPackageQty}</Text>
+                      <Tooltip title="This is the outer package's own qty — edit the included kit's Qty above/below instead if you're increasing how many kits were packed.">
+                        <Text type="secondary" style={{ fontSize: 12, cursor: 'help' }}>Qty {priceEditPackageQty}</Text>
+                      </Tooltip>
                       <InputNumber
                         size="small" min={priceEditPackageOrigPrice} value={priceEditPackagePrice} controls={false} prefix="₹" style={{ width: 110 }}
                         onChange={(v) => setPriceEditPackagePrice(v == null ? priceEditPackageOrigPrice : v)}
@@ -2318,13 +2383,24 @@ export default function Billing() {
                   {personalizedKitGroups.map(renderKitGroup)}
                   {personalizedStandaloneRows.length > 0 && renderProductTable(personalizedStandaloneRows)}
                 </div>
+                {/* Rolled-up section total — matches "Total Personalized (A)" on the printed
+                    invoice/quotation document exactly, so it's directly comparable instead of
+                    making you manually add up every row above. */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 4px', marginBottom: 16, borderTop: `1px solid ${isDark ? '#ffffff22' : '#00000014'}` }}>
+                  <Text strong style={{ fontSize: 12, color: '#B11E6A' }}>Total Personalized (A)</Text>
+                  <Text strong style={{ fontSize: 13, color: '#B11E6A' }}>₹{priceEditPreview.personalizedTotal.toLocaleString()}</Text>
+                </div>
               </>
             )}
 
             {separateKitGroups.length > 0 && (
               <>
                 <Text strong style={{ fontSize: 13 }}>Separate Kit</Text>
-                <div style={{ marginTop: 6, marginBottom: 16 }}>{separateKitGroups.map(renderKitGroup)}</div>
+                <div style={{ marginTop: 6, marginBottom: 6 }}>{separateKitGroups.map(renderKitGroup)}</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 4px', marginBottom: 16, borderTop: `1px solid ${isDark ? '#ffffff22' : '#00000014'}` }}>
+                  <Text strong style={{ fontSize: 12, color: '#0ea5e9' }}>Total Separate Kit (B)</Text>
+                  <Text strong style={{ fontSize: 13, color: '#0ea5e9' }}>₹{priceEditPreview.separateKitTotal.toLocaleString()}</Text>
+                </div>
               </>
             )}
 
@@ -2332,6 +2408,10 @@ export default function Billing() {
               <>
                 <Text strong style={{ fontSize: 13 }}>Separate Product</Text>
                 {renderProductTable(separateProductRows)}
+                <div style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 4px', marginBottom: 16, borderTop: `1px solid ${isDark ? '#ffffff22' : '#00000014'}` }}>
+                  <Text strong style={{ fontSize: 12, color: '#ec4899' }}>Total Separate Product (C)</Text>
+                  <Text strong style={{ fontSize: 13, color: '#ec4899' }}>₹{priceEditPreview.separateProductTotal.toLocaleString()}</Text>
+                </div>
               </>
             )}
 

@@ -8,6 +8,7 @@ router.use(protect);
 
 router.get('/', ctrl.getDispatches);
 router.get('/today', ctrl.getTodaysDispatches);
+router.get('/pending', ctrl.getPendingDispatches);
 router.get('/transports', ctrl.getTransports);
 router.patch('/transports/:id/status', ctrl.updateTransportStatus);
 router.get('/pickups', ctrl.getPickupOrders);

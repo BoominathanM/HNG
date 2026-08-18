@@ -322,8 +322,14 @@ export default function Tasks() {
   const { data: ordersData } = useGetSalesOrdersQuery({ limit: 500 });
   const ordersList = useMemo(() => ordersData?.data || [], [ordersData]);
 
-  // Task Management department staff — populate the "Assign To" dropdown
-  const { data: usersData } = useGetUsersQuery();
+  // Task Management department staff — populate the "Assign To" dropdown. The department
+  // filter itself is correct (Settings > User Management's own department list includes
+  // "Task Management" — see Settings/index.jsx's `departments`); the bug was that this query
+  // had no `limit`, so it silently fell back to the backend's default of 10 users. With more
+  // than 10 total users, actual Task Management staff created earlier (outside the 10 most
+  // recently created) never even reached this filter. Pass a high limit like every other
+  // full-staff-list page already does (Settings, Sales, WhatsApp Integration).
+  const { data: usersData } = useGetUsersQuery({ limit: 1000 });
   const assignableUsers = useMemo(
     () => (usersData?.data || []).filter((u) => u.fullName && u.role && u.department === 'Task Management'),
     [usersData],
@@ -578,6 +584,11 @@ export default function Tasks() {
   const [dispatchVerifyOpen, setDispatchVerifyOpen] = useState(false);
   const [dispatchVerifyData, setDispatchVerifyData] = useState(null);
   const [selectedHotel, setSelectedHotel] = useState(null);
+  // Drill-down state for the Pending Remaining Qty tab — kept separate from selectedHotel
+  // above so switching between that tab and Today's Checklist doesn't carry the other's
+  // hotel selection along (both reset to the hotel-cards view on tab change — see the main
+  // Tabs' onChange handler).
+  const [selectedPendingHotel, setSelectedPendingHotel] = useState(null);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null);
   const [assignForm] = Form.useForm();
@@ -828,6 +839,51 @@ export default function Tasks() {
     });
     return map;
   }, [suggestedList, ordersList, kitPackingTasksByOrder]);
+
+  // ── Pending Remaining Qty ────────────────────────────────────────────
+  // Two distinct ways a product ends up with a "leftover" quantity still owed a task,
+  // both surfaced here — this tab is NOT emergency-only, it applies the same way to
+  // Emergency, Sample, and Regular orders alike:
+  //
+  // 1) Formal emergency/urgent split — when a product is only PARTIALLY emergency
+  //    (e.g. 50 of a 100-unit order), computeSuggestedTasks (backend) splits it into an
+  //    "-emg" card (the emergency batch) and an "-rem" card (whatever's left once that
+  //    batch is carved out — see isPartialEmergencySplit in tasks.controller.js). The
+  //    "-rem" card already lives in suggestedList/hotelGroups too (Today's Checklist still
+  //    shows it, tagged "After Emergency Items" while its sibling isn't Done yet — see
+  //    s.isEmergencyGated in renderSuggestionCard); it's included here unconditionally
+  //    (gated or not) so the leftover is never lost track of.
+  // 2) Ad-hoc partial assignment on an ordinary (non-split) card — Emergency, Sample, or
+  //    Regular, doesn't matter: someone assigns a task for only PART of a product's
+  //    required qty (e.g. 50 of a 100-unit Regular order) and marks it Done, with no
+  //    formal emergency split involved at all. getTaskProgress(s) (same helper the card
+  //    itself uses for its "Task Progress" badges) reports that task name's doneQty short
+  //    of requiredQty — a real leftover exactly like case 1, just reached a different way.
+  //    Only Done qty counts as "the initial portion is complete" (matches the rest of the
+  //    file's convention — see the fullyCovered comment above); an assigned-but-not-yet-
+  //    worked task doesn't count as a completed initial batch yet.
+  const pendingRemainingList = useMemo(
+    () => suggestedList.filter((s) => {
+      if (typeof s.id === 'string' && s.id.endsWith('-rem')) return true;
+      return getTaskProgress(s).some((p) => p.doneQty > 0 && p.pendingQty > 0);
+    }),
+    [suggestedList, tasksData],
+  );
+
+  // Same { hotelName: { orderCode: [items] } } shape as hotelGroups, scoped to
+  // pendingRemainingList only — no kit-placeholder entries here since those are a
+  // Today's-Checklist-only concern (kit packing assembly, not a qty split).
+  const pendingHotelGroups = useMemo(() => {
+    const map = {};
+    pendingRemainingList.forEach((s) => {
+      const hotel = s.client || 'Unknown';
+      if (!map[hotel]) map[hotel] = {};
+      const order = s.orderCode || 'Unknown';
+      if (!map[hotel][order]) map[hotel][order] = [];
+      map[hotel][order].push(s);
+    });
+    return map;
+  }, [pendingRemainingList]);
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -1448,6 +1504,253 @@ export default function Tasks() {
     { title: 'Delivery Date', dataIndex: 'deliveryDate', responsive: ['lg'], render: (v) => v || '—' },
   ];
 
+  // Single suggested-task product card — shared by Today's Checklist (all pending products)
+  // and the Pending Remaining Qty tab (just the "-rem" leftover-after-split cards, see
+  // pendingRemainingList below), so both stay visually/behaviourally identical instead of
+  // drifting apart as two copies of the same ~250-line card.
+  const renderSuggestionCard = (s) => {
+    // Design/printing are hard-gated server-side — every item reaching this
+    // checklist is print/design-complete already, so readiness here is purely
+    // about stock.
+    const readyAlertType = s.stockReady ? 'success' : 'error';
+    const readyText = s.stockReady
+      ? 'All resources ready — safe to assign and start production.'
+      : 'Stock Not Available — insufficient inventory to fully produce this item.';
+    // Own-print gate: a product routed to its own design/packaging destination
+    // (Sticker always, or Box/Frosted Ziplock/Butter Paper whenever this item
+    // also needs Printing — e.g. Soap: Packing Material=Box, Printing=Yes) can't
+    // have its matching Stickering/Packing task assigned until THIS product's
+    // own Printing Status (Operations → Product Specifications table) reaches
+    // Received/Closed. This blocks ONLY the matching suggested-task chip below
+    // (shown with a red border/background) — every other task for the same
+    // product and the general "Assign Task" button stay fully usable.
+    const printGateBlocked = s.stickerPrintingReady === false;
+    // Packing-material gate: a Personalized Kit Packing / Filling task can't be
+    // assigned until this product's own packing material (box/ziplock/bottle/etc.,
+    // tracked in Inventory > Material Stocks) has enough stock. Blocks ONLY the
+    // matching pack/fill chip below — same shape as the Stickering gate above.
+    const materialBlocked = s.materialStockReady === false;
+    return (
+      <Col xs={24} md={12} lg={8} key={s.id}>
+        <motion.div whileHover={{ y: -2 }} style={{ height: '100%' }}>
+          <Card
+            style={{
+              borderRadius: 14,
+              border: s.stockReady ? 'none' : '1.5px solid #ff4d4f',
+              background: s.stockReady ? cardBg : (isDark ? '#2d1516' : '#fff1f0'),
+              boxShadow: s.stockReady ? '0 4px 20px rgba(177,30,106,0.06)' : '0 4px 20px rgba(255,77,79,0.15)',
+              // Fixed height so every checklist card renders the same size
+              // regardless of how much content (alerts/progress/chips) it has —
+              // the middle section below scrolls internally instead of growing
+              // the card and breaking row alignment.
+              height: 440,
+            }}
+            styles={{ body: { padding: 22, height: '100%', display: 'flex', flexDirection: 'column' } }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+              <Space size={4} wrap>
+                {s.isUrgent && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
+                {s.logoType && <Tag color="purple" style={{ fontSize: 11 }}>{s.logoType}</Tag>}
+              </Space>
+              <Text style={{ fontSize: 11, color: '#999' }}>{s.orderCode}</Text>
+            </div>
+            <Text strong style={{ display: 'block', marginBottom: 6, color: textColor, fontSize: 16 }}>{s.product}</Text>
+            <Space size={4} wrap style={{ marginBottom: 10 }}>
+              {/* Per-product emergency count (kit-aware — see backend buildEmergencyQtyMap):
+                  only some kits/products in an order may be marked emergency via splitDates,
+                  so this is a DIFFERENT (and often smaller) number than the order-level
+                  "Emergency" tag above implies. When the product is fully emergency
+                  (emergencyQty >= qty) show one red tag for the full qty; when only part
+                  of it is (a partial splitDate qty), split into Emergency + Regular tags
+                  so the two counts always add up to the product's total qty. */}
+              {s.isEmergencyProduct && s.emergencyQty > 0 && s.emergencyQty >= s.qty && (
+                <Tag color="error" icon={<AlertFilled />}>{Number(s.qty).toLocaleString()} units — Emergency</Tag>
+              )}
+              {s.isEmergencyProduct && s.emergencyQty > 0 && s.emergencyQty < s.qty && (
+                <>
+                  <Tag color="error" icon={<AlertFilled />}>{Number(s.emergencyQty).toLocaleString()} Emergency</Tag>
+                  <Tag color="blue">{Number(s.qty - s.emergencyQty).toLocaleString()} Regular</Tag>
+                </>
+              )}
+              {!s.isEmergencyProduct && s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
+              {/* Tentative/remaining split card only (see computeSuggestedTasks'
+                  isPartialEmergencySplit) — mirrors Operations' own "After Emergency
+                  Items" tag: informational only, this card is still fully assignable,
+                  it's just a reminder that the emergency batch (its own separate
+                  card, shown first) should be handled/dispatched first. */}
+              {s.isEmergencyGated && (
+                <Tooltip title="Emergency batch for this product should be completed and dispatched first">
+                  <Tag color="orange">After Emergency Items</Tag>
+                </Tooltip>
+              )}
+              <Tag color={s.stockReady ? 'green' : 'red'}>
+                {s.stockReady ? `Stock: ${s.inventoryStock ?? '—'}` : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
+              </Tag>
+            </Space>
+            {/* Scrollable middle — keeps the card's overall height fixed (see
+                `height: 520` above) no matter how many alerts/progress badges/
+                suggested-task chips this product has; header and the Assign
+                Task button below stay pinned outside this scroll area. */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
+            {s.stockDeducted === false ? (() => {
+              const requiredForCard = Number(s.qty) || 0;
+              const pendingQtyForCard = Number(s.pendingDeductionQty) || 0;
+              const deductedForCard = Math.max(0, requiredForCard - pendingQtyForCard);
+              return (
+                <Alert
+                  type="warning"
+                  showIcon
+                  message={`Stock Not Deducted — ${deductedForCard} of ${requiredForCard} unit(s) deducted so far`}
+                  description={`${pendingQtyForCard} unit(s) still short (insufficient inventory when the order was placed/edited). Assignment stays blocked until all ${requiredForCard} unit(s) are deducted — each restock automatically pays off whatever's available toward the shortfall.`}
+                  style={{ borderRadius: 8, marginBottom: 8, fontSize: 12 }}
+                />
+              );
+            })() : (
+              <Alert
+                type="info"
+                showIcon
+                icon={<InfoCircleOutlined />}
+                message="Stock already deducted for this order"
+                style={{ borderRadius: 8, marginBottom: 8, fontSize: 12 }}
+              />
+            )}
+            <Alert
+              type={readyAlertType}
+              showIcon
+              message={readyText}
+              style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
+            />
+            {materialBlocked && (
+              <Alert
+                type="error"
+                showIcon
+                message={s.materialShortfall
+                  ? `Packing Material Not Available — ${s.materialShortfall.material}${s.materialShortfall.size ? ` (${s.materialShortfall.size})` : ''}: ${s.materialShortfall.available} available, ${s.materialShortfall.needed} needed.`
+                  : 'Packing Material Not Available for this product.'}
+                style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
+              />
+            )}
+            {/* Task Progress — task-wise assigned/required qty (e.g. "250/500 Soap
+                packing"), one badge per distinct task name that has any qty
+                assigned so far (see getTaskProgress). Each task name tracks its
+                own progress against this product's full qty independently — e.g.
+                "Soap packing" and "Sticker placing" each show their own X/Y. */}
+            {(() => {
+              const progress = getTaskProgress(s);
+              if (progress.length === 0) return null;
+              return (
+                <div style={{ marginBottom: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task Progress</Text>
+                  <Space size={4} wrap>
+                    {progress.map((p) => {
+                      const done = p.doneQty >= p.requiredQty;
+                      return (
+                        <Tag
+                          key={p.name}
+                          color={done ? 'green' : 'gold'}
+                          style={{ borderRadius: 10, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}
+                        >
+                          {Number(p.doneQty).toLocaleString()}/{Number(p.requiredQty).toLocaleString()} {p.name}
+                          {!done && p.pendingQty > 0 ? ` · ${Number(p.pendingQty).toLocaleString()} pending` : ''}
+                        </Tag>
+                      );
+                    })}
+                  </Space>
+                </div>
+              );
+            })()}
+            {/* Suggested Tasks — quick-assign chips, filtered to only the configured
+                task names that actually fit THIS product/order spec (see
+                getRelevantTaskOptions): explicit per-product configs, or general
+                configs matched by product-name/sticker/print/pack keywords.
+                When printGateBlocked, the Stickering chip turns red/disabled for
+                Sticker-routed products, and the pack/fill-named chip turns
+                red/disabled for Box/Frosted Ziplock/Butter Paper products that
+                also need Printing — same gate, applied to whichever chip is this
+                product's own design/packaging step. Pack/fill-named chips also
+                turn red/disabled when materialBlocked (packing material out of
+                stock) — every other chip for this product stays clickable. When
+                the last "Get AI Insight" run recommended task(s) for THIS exact
+                product (matched via aiProductTasks, keyed by orderCode::product),
+                that chip is moved first and highlighted gold with a robot icon —
+                the AI's product-wise call, not just the summary paragraph above. */}
+            {(() => {
+              const relevantOptions = s.stockReady ? getRelevantTaskOptions(s) : [];
+              if (relevantOptions.length === 0) return null;
+              const aiKey = `${s.orderCode}::${s.product}`.toLowerCase();
+              const aiTasks = (aiProductTasks[aiKey] || []).map((t) => String(t).toLowerCase());
+              const sortedOptions = aiTasks.length
+                ? [...relevantOptions].sort((a, b) => {
+                    const rank = (opt) => {
+                      const i = aiTasks.indexOf(opt.value.toLowerCase());
+                      return i === -1 ? aiTasks.length : i;
+                    };
+                    return rank(a) - rank(b);
+                  })
+                : relevantOptions;
+              return (
+                <div style={{ marginBottom: 12 }}>
+                  <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Suggested Tasks</Text>
+                  <Space size={4} wrap>
+                    {sortedOptions.map((opt) => {
+                      const isStickerRouted = s.designType === 'Sticker';
+                      const isStickerOption = /stick|label/i.test(opt.value);
+                      const isPackFillOption = /pack|fill/i.test(opt.value);
+                      // Sticker-routed products gate their Stickering-named chip;
+                      // Box/Frosted Ziplock/Butter Paper products that also need
+                      // Printing gate their pack/fill-named chip instead — same
+                      // printGateBlocked flag, different chip depending on routing.
+                      const optStickerBlocked = printGateBlocked && isStickerRouted && isStickerOption;
+                      const optPrintPackBlocked = printGateBlocked && !isStickerRouted && isPackFillOption;
+                      const optMaterialBlocked = materialBlocked && isPackFillOption;
+                      const optBlocked = optStickerBlocked || optPrintPackBlocked || optMaterialBlocked;
+                      const isAiRecommended = !optBlocked && aiTasks.includes(opt.value.toLowerCase());
+                      const tooltipTitle = (optStickerBlocked || optPrintPackBlocked)
+                        ? `Blocked — Printing Status is "${s.itemPrintingStatus || 'not set'}". Needs Received/Closed first.`
+                        : optMaterialBlocked
+                          ? `Blocked — Packing material not available${s.materialShortfall ? ` (${s.materialShortfall.material}${s.materialShortfall.size ? ` ${s.materialShortfall.size}` : ''}: ${s.materialShortfall.available}/${s.materialShortfall.needed})` : ''}.`
+                          : (isAiRecommended ? 'AI recommended — from the last "Get AI Insight" analysis' : '');
+                      return (
+                        <Tooltip key={opt.value} title={tooltipTitle}>
+                          <Tag
+                            style={{
+                              cursor: optBlocked ? 'not-allowed' : 'pointer',
+                              borderRadius: 10,
+                              padding: '4px 12px',
+                              fontSize: 13,
+                              lineHeight: '20px',
+                              borderColor: optBlocked ? '#cf1322' : (isAiRecommended ? '#faad14' : '#B11E6A66'),
+                              background: optBlocked ? '#ff4d4f' : (isAiRecommended ? (isDark ? '#2b2111' : '#fffbe6') : undefined),
+                              color: optBlocked ? '#fff' : (isAiRecommended ? '#ad6800' : '#B11E6A'),
+                              fontWeight: optBlocked ? 600 : undefined,
+                            }}
+                            onClick={() => !optBlocked && handleAssignSuggested(s, opt.value)}
+                          >
+                            {isAiRecommended && <RobotOutlined style={{ marginRight: 4 }} />}+ {opt.label}
+                          </Tag>
+                        </Tooltip>
+                      );
+                    })}
+                  </Space>
+                </div>
+              );
+            })()}
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingTop: 10, flexShrink: 0 }}>
+              <Button
+                size="small" type="primary" icon={<UserOutlined />}
+                style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+                onClick={() => handleAssignSuggested(s)}
+              >
+                Assign Task
+              </Button>
+            </div>
+          </Card>
+        </motion.div>
+      </Col>
+    );
+  };
+
   // ── Render ────────────────────────────────────────────────────────────
   return (
     <div className="page-container fade-in">
@@ -1494,9 +1797,9 @@ export default function Tasks() {
         })}
       </Row>
 
-      {/* ── Main Tabs: Current Task | Today's Checklist ─────────────────────── */}
+      {/* ── Main Tabs: Today's Checklist | Pending Remaining Qty | Current Task | Time Management ── */}
       <Tabs
-        onChange={(k) => { setMainTab(k); setSelectedHotel(null); }}
+        onChange={(k) => { setMainTab(k); setSelectedHotel(null); setSelectedPendingHotel(null); }}
         type="card"
         style={{ marginBottom: 0 }}
         items={filterTabs([
@@ -1758,233 +2061,7 @@ export default function Tasks() {
                         })()}
 
                         <Row gutter={[20, 20]}>
-                          {items.filter((s) => !s.__kitPlaceholder).map((s) => {
-                            // Design/printing are hard-gated server-side — every item reaching this
-                            // checklist is print/design-complete already, so readiness here is purely
-                            // about stock.
-                            const readyAlertType = s.stockReady ? 'success' : 'error';
-                            const readyText = s.stockReady
-                              ? 'All resources ready — safe to assign and start production.'
-                              : 'Stock Not Available — insufficient inventory to fully produce this item.';
-                            // Own-print gate: a product routed to its own design/packaging destination
-                            // (Sticker always, or Box/Frosted Ziplock/Butter Paper whenever this item
-                            // also needs Printing — e.g. Soap: Packing Material=Box, Printing=Yes) can't
-                            // have its matching Stickering/Packing task assigned until THIS product's
-                            // own Printing Status (Operations → Product Specifications table) reaches
-                            // Received/Closed. This blocks ONLY the matching suggested-task chip below
-                            // (shown with a red border/background) — every other task for the same
-                            // product and the general "Assign Task" button stay fully usable.
-                            const printGateBlocked = s.stickerPrintingReady === false;
-                            // Packing-material gate: a Personalized Kit Packing / Filling task can't be
-                            // assigned until this product's own packing material (box/ziplock/bottle/etc.,
-                            // tracked in Inventory > Material Stocks) has enough stock. Blocks ONLY the
-                            // matching pack/fill chip below — same shape as the Stickering gate above.
-                            const materialBlocked = s.materialStockReady === false;
-                            return (
-                              <Col xs={24} md={12} lg={8} key={s.id}>
-                                <motion.div whileHover={{ y: -2 }} style={{ height: '100%' }}>
-                                  <Card
-                                    style={{
-                                      borderRadius: 14,
-                                      border: s.stockReady ? 'none' : '1.5px solid #ff4d4f',
-                                      background: s.stockReady ? cardBg : (isDark ? '#2d1516' : '#fff1f0'),
-                                      boxShadow: s.stockReady ? '0 4px 20px rgba(177,30,106,0.06)' : '0 4px 20px rgba(255,77,79,0.15)',
-                                      // Fixed height so every checklist card renders the same size
-                                      // regardless of how much content (alerts/progress/chips) it has —
-                                      // the middle section below scrolls internally instead of growing
-                                      // the card and breaking row alignment.
-                                      height: 440,
-                                    }}
-                                    styles={{ body: { padding: 22, height: '100%', display: 'flex', flexDirection: 'column' } }}
-                                  >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                                      <Space size={4} wrap>
-                                        {s.isUrgent && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
-                                        {s.logoType && <Tag color="purple" style={{ fontSize: 11 }}>{s.logoType}</Tag>}
-                                      </Space>
-                                      <Text style={{ fontSize: 11, color: '#999' }}>{s.orderCode}</Text>
-                                    </div>
-                                    <Text strong style={{ display: 'block', marginBottom: 6, color: textColor, fontSize: 16 }}>{s.product}</Text>
-                                    <Space size={4} wrap style={{ marginBottom: 10 }}>
-                                      {/* Per-product emergency count (kit-aware — see backend buildEmergencyQtyMap):
-                                          only some kits/products in an order may be marked emergency via splitDates,
-                                          so this is a DIFFERENT (and often smaller) number than the order-level
-                                          "Emergency" tag above implies. When the product is fully emergency
-                                          (emergencyQty >= qty) show one red tag for the full qty; when only part
-                                          of it is (a partial splitDate qty), split into Emergency + Regular tags
-                                          so the two counts always add up to the product's total qty. */}
-                                      {s.isEmergencyProduct && s.emergencyQty > 0 && s.emergencyQty >= s.qty && (
-                                        <Tag color="error" icon={<AlertFilled />}>{Number(s.qty).toLocaleString()} units — Emergency</Tag>
-                                      )}
-                                      {s.isEmergencyProduct && s.emergencyQty > 0 && s.emergencyQty < s.qty && (
-                                        <>
-                                          <Tag color="error" icon={<AlertFilled />}>{Number(s.emergencyQty).toLocaleString()} Emergency</Tag>
-                                          <Tag color="blue">{Number(s.qty - s.emergencyQty).toLocaleString()} Regular</Tag>
-                                        </>
-                                      )}
-                                      {!s.isEmergencyProduct && s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
-                                      {/* Tentative/remaining split card only (see computeSuggestedTasks'
-                                          isPartialEmergencySplit) — mirrors Operations' own "After Emergency
-                                          Items" tag: informational only, this card is still fully assignable,
-                                          it's just a reminder that the emergency batch (its own separate
-                                          card, shown first) should be handled/dispatched first. */}
-                                      {s.isEmergencyGated && (
-                                        <Tooltip title="Emergency batch for this product should be completed and dispatched first">
-                                          <Tag color="orange">After Emergency Items</Tag>
-                                        </Tooltip>
-                                      )}
-                                      <Tag color={s.stockReady ? 'green' : 'red'}>
-                                        {s.stockReady ? `Stock: ${s.inventoryStock ?? '—'}` : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
-                                      </Tag>
-                                    </Space>
-                                    {/* Scrollable middle — keeps the card's overall height fixed (see
-                                        `height: 520` above) no matter how many alerts/progress badges/
-                                        suggested-task chips this product has; header and the Assign
-                                        Task button below stay pinned outside this scroll area. */}
-                                    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', paddingRight: 4 }}>
-                                    <Alert
-                                      type="info"
-                                      showIcon
-                                      icon={<InfoCircleOutlined />}
-                                      message="Stock already deducted for this order"
-                                      style={{ borderRadius: 8, marginBottom: 8, fontSize: 12 }}
-                                    />
-                                    <Alert
-                                      type={readyAlertType}
-                                      showIcon
-                                      message={readyText}
-                                      style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
-                                    />
-                                    {materialBlocked && (
-                                      <Alert
-                                        type="error"
-                                        showIcon
-                                        message={s.materialShortfall
-                                          ? `Packing Material Not Available — ${s.materialShortfall.material}${s.materialShortfall.size ? ` (${s.materialShortfall.size})` : ''}: ${s.materialShortfall.available} available, ${s.materialShortfall.needed} needed.`
-                                          : 'Packing Material Not Available for this product.'}
-                                        style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
-                                      />
-                                    )}
-                                    {/* Task Progress — task-wise assigned/required qty (e.g. "250/500 Soap
-                                        packing"), one badge per distinct task name that has any qty
-                                        assigned so far (see getTaskProgress). Each task name tracks its
-                                        own progress against this product's full qty independently — e.g.
-                                        "Soap packing" and "Sticker placing" each show their own X/Y. */}
-                                    {(() => {
-                                      const progress = getTaskProgress(s);
-                                      if (progress.length === 0) return null;
-                                      return (
-                                        <div style={{ marginBottom: 12 }}>
-                                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task Progress</Text>
-                                          <Space size={4} wrap>
-                                            {progress.map((p) => {
-                                              const done = p.doneQty >= p.requiredQty;
-                                              return (
-                                                <Tag
-                                                  key={p.name}
-                                                  color={done ? 'green' : 'gold'}
-                                                  style={{ borderRadius: 10, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}
-                                                >
-                                                  {Number(p.doneQty).toLocaleString()}/{Number(p.requiredQty).toLocaleString()} {p.name}
-                                                  {!done && p.pendingQty > 0 ? ` · ${Number(p.pendingQty).toLocaleString()} pending` : ''}
-                                                </Tag>
-                                              );
-                                            })}
-                                          </Space>
-                                        </div>
-                                      );
-                                    })()}
-                                    {/* Suggested Tasks — quick-assign chips, filtered to only the configured
-                                        task names that actually fit THIS product/order spec (see
-                                        getRelevantTaskOptions): explicit per-product configs, or general
-                                        configs matched by product-name/sticker/print/pack keywords.
-                                        When printGateBlocked, the Stickering chip turns red/disabled for
-                                        Sticker-routed products, and the pack/fill-named chip turns
-                                        red/disabled for Box/Frosted Ziplock/Butter Paper products that
-                                        also need Printing — same gate, applied to whichever chip is this
-                                        product's own design/packaging step. Pack/fill-named chips also
-                                        turn red/disabled when materialBlocked (packing material out of
-                                        stock) — every other chip for this product stays clickable. When
-                                        the last "Get AI Insight" run recommended task(s) for THIS exact
-                                        product (matched via aiProductTasks, keyed by orderCode::product),
-                                        that chip is moved first and highlighted gold with a robot icon —
-                                        the AI's product-wise call, not just the summary paragraph above. */}
-                                    {(() => {
-                                      const relevantOptions = s.stockReady ? getRelevantTaskOptions(s) : [];
-                                      if (relevantOptions.length === 0) return null;
-                                      const aiKey = `${s.orderCode}::${s.product}`.toLowerCase();
-                                      const aiTasks = (aiProductTasks[aiKey] || []).map((t) => String(t).toLowerCase());
-                                      const sortedOptions = aiTasks.length
-                                        ? [...relevantOptions].sort((a, b) => {
-                                            const rank = (opt) => {
-                                              const i = aiTasks.indexOf(opt.value.toLowerCase());
-                                              return i === -1 ? aiTasks.length : i;
-                                            };
-                                            return rank(a) - rank(b);
-                                          })
-                                        : relevantOptions;
-                                      return (
-                                        <div style={{ marginBottom: 12 }}>
-                                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Suggested Tasks</Text>
-                                          <Space size={4} wrap>
-                                            {sortedOptions.map((opt) => {
-                                              const isStickerRouted = s.designType === 'Sticker';
-                                              const isStickerOption = /stick|label/i.test(opt.value);
-                                              const isPackFillOption = /pack|fill/i.test(opt.value);
-                                              // Sticker-routed products gate their Stickering-named chip;
-                                              // Box/Frosted Ziplock/Butter Paper products that also need
-                                              // Printing gate their pack/fill-named chip instead — same
-                                              // printGateBlocked flag, different chip depending on routing.
-                                              const optStickerBlocked = printGateBlocked && isStickerRouted && isStickerOption;
-                                              const optPrintPackBlocked = printGateBlocked && !isStickerRouted && isPackFillOption;
-                                              const optMaterialBlocked = materialBlocked && isPackFillOption;
-                                              const optBlocked = optStickerBlocked || optPrintPackBlocked || optMaterialBlocked;
-                                              const isAiRecommended = !optBlocked && aiTasks.includes(opt.value.toLowerCase());
-                                              const tooltipTitle = (optStickerBlocked || optPrintPackBlocked)
-                                                ? `Blocked — Printing Status is "${s.itemPrintingStatus || 'not set'}". Needs Received/Closed first.`
-                                                : optMaterialBlocked
-                                                  ? `Blocked — Packing material not available${s.materialShortfall ? ` (${s.materialShortfall.material}${s.materialShortfall.size ? ` ${s.materialShortfall.size}` : ''}: ${s.materialShortfall.available}/${s.materialShortfall.needed})` : ''}.`
-                                                  : (isAiRecommended ? 'AI recommended — from the last "Get AI Insight" analysis' : '');
-                                              return (
-                                                <Tooltip key={opt.value} title={tooltipTitle}>
-                                                  <Tag
-                                                    style={{
-                                                      cursor: optBlocked ? 'not-allowed' : 'pointer',
-                                                      borderRadius: 10,
-                                                      padding: '4px 12px',
-                                                      fontSize: 13,
-                                                      lineHeight: '20px',
-                                                      borderColor: optBlocked ? '#cf1322' : (isAiRecommended ? '#faad14' : '#B11E6A66'),
-                                                      background: optBlocked ? '#ff4d4f' : (isAiRecommended ? (isDark ? '#2b2111' : '#fffbe6') : undefined),
-                                                      color: optBlocked ? '#fff' : (isAiRecommended ? '#ad6800' : '#B11E6A'),
-                                                      fontWeight: optBlocked ? 600 : undefined,
-                                                    }}
-                                                    onClick={() => !optBlocked && handleAssignSuggested(s, opt.value)}
-                                                  >
-                                                    {isAiRecommended && <RobotOutlined style={{ marginRight: 4 }} />}+ {opt.label}
-                                                  </Tag>
-                                                </Tooltip>
-                                              );
-                                            })}
-                                          </Space>
-                                        </div>
-                                      );
-                                    })()}
-                                    </div>
-                                    <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', paddingTop: 10, flexShrink: 0 }}>
-                                      <Button
-                                        size="small" type="primary" icon={<UserOutlined />}
-                                        style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
-                                        onClick={() => handleAssignSuggested(s)}
-                                      >
-                                        Assign Task
-                                      </Button>
-                                    </div>
-                                  </Card>
-                                </motion.div>
-                              </Col>
-                            );
-                          })}
+                          {items.filter((s) => !s.__kitPlaceholder).map((s) => renderSuggestionCard(s))}
                         </Row>
                       </div>
                     ))}
@@ -2097,6 +2174,114 @@ export default function Tasks() {
                                 ))}
                               </div>
 
+                              <div style={{ fontSize: 12, color: isDark ? '#aaa' : '#888', marginTop: 6 }}>
+                                Click to view orders →
+                              </div>
+                            </Card>
+                          </motion.div>
+                        </Col>
+                      );
+                    })}
+                  </Row>
+                )}
+              </div>
+            ),
+          },
+          {
+            key: 'pendingRemaining',
+            label: (
+              <Space size={6}>
+                <ClockCircleOutlined />
+                Pending Remaining Qty
+                {pendingRemainingList.length > 0 && (
+                  <Badge count={pendingRemainingList.length} style={{ background: '#fa8c16' }} />
+                )}
+              </Space>
+            ),
+            children: (
+              <div>
+                <Alert
+                  type="info"
+                  showIcon
+                  icon={<ClockCircleOutlined />}
+                  message="Pending Remaining Qty — Hotel-wise"
+                  description="Whenever only PART of a product's required quantity is completed as a task — on Emergency, Sample, or Regular orders alike — the leftover quantity stays here until it's picked up too, grouped by hotel like Today's Checklist (these products still appear there as well, this is just a focused view). A card tagged 'After Emergency Items' unlocks once its emergency/partial sibling batch is Done, but can still be assigned ahead of time if needed. Editing the order's quantity (from Sales or a Billing price/quantity edit) recalculates this automatically."
+                  style={{ marginBottom: 16, borderRadius: 8 }}
+                />
+                {pendingRemainingList.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '48px 0' }}>
+                    <ClockCircleOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
+                    <Text type="secondary">No pending remaining quantity right now</Text>
+                  </div>
+                ) : selectedPendingHotel ? (
+                  /* ── Order-wise view for selected hotel ── */
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                      <Button size="small" onClick={() => setSelectedPendingHotel(null)}>← Back to Hotels</Button>
+                      <Title level={5} style={{ margin: 0, color: textColor }}>{selectedPendingHotel}</Title>
+                    </div>
+                    {Object.entries(pendingHotelGroups[selectedPendingHotel] || {}).map(([orderCode, items]) => (
+                      <div key={orderCode} style={{ marginBottom: 24 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                          <ShoppingOutlined style={{ color: '#fa8c16' }} />
+                          <Text strong style={{ color: textColor }}>{orderCode}</Text>
+                          <Badge count={items.length} style={{ background: '#fa8c16' }} />
+                          {items.some((i) => i.isUrgent) && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
+                          {items.every((i) => !i.isEmergencyGated) && <Tag color="green" style={{ fontSize: 11 }}>Ready to Assign</Tag>}
+                        </div>
+                        <Row gutter={[20, 20]}>
+                          {items.map((s) => renderSuggestionCard(s))}
+                        </Row>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  /* ── Hotel cards view ── */
+                  <Row gutter={[24, 24]} align="stretch">
+                    {Object.entries(pendingHotelGroups).map(([hotel, orders]) => {
+                      const allItems = Object.values(orders).flat();
+                      const lockedCount = allItems.filter((i) => i.isEmergencyGated).length;
+                      const readyCount = allItems.length - lockedCount;
+                      const urgentCount = allItems.filter((i) => i.isUrgent).length;
+                      const orderCount = Object.keys(orders).length;
+                      return (
+                        <Col xs={24} sm={12} lg={8} key={hotel} style={{ display: 'flex' }}>
+                          <motion.div whileHover={{ y: -3 }} style={{ width: '100%' }}>
+                            <Card
+                              hoverable
+                              onClick={() => setSelectedPendingHotel(hotel)}
+                              style={{
+                                borderRadius: 14, border: 'none', height: '100%',
+                                boxShadow: isDark ? '0 2px 10px rgba(0,0,0,0.35)' : '0 2px 10px rgba(0,0,0,0.08)',
+                                background: cardBg, cursor: 'pointer',
+                              }}
+                              styles={{ body: { padding: 22, height: '100%', display: 'flex', flexDirection: 'column' } }}
+                            >
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+                                <Avatar size={44} style={{ background: 'linear-gradient(135deg,#fa8c16,#ffc069)', fontSize: 18 }}>
+                                  {hotel.charAt(0).toUpperCase()}
+                                </Avatar>
+                                {urgentCount > 0 && (
+                                  <Tag
+                                    style={{
+                                      fontSize: 16, fontWeight: 900, padding: '7px 18px', borderRadius: 10,
+                                      letterSpacing: 0.5, textTransform: 'uppercase', margin: 0, border: 'none',
+                                      background: '#ff4d4f', color: '#fff',
+                                      boxShadow: '0 3px 10px rgba(255,77,79,0.45)',
+                                    }}
+                                  >
+                                    Emergency
+                                  </Tag>
+                                )}
+                              </div>
+                              <Text strong style={{ display: 'block', fontSize: 18, color: textColor, marginBottom: 10, lineHeight: '1.3' }}>{hotel}</Text>
+                              <Space size={[6, 6]} wrap style={{ marginBottom: 12 }}>
+                                <Tag color="blue">{orderCount} order{orderCount !== 1 ? 's' : ''}</Tag>
+                                <Tag color="default">{allItems.length} item{allItems.length !== 1 ? 's' : ''} pending</Tag>
+                                {readyCount > 0 && <Tag color="green">{readyCount} ready to assign</Tag>}
+                                {lockedCount > 0 && <Tag color="orange">{lockedCount} after emergency</Tag>}
+                              </Space>
+                              <div style={{ flex: 1 }} />
                               <div style={{ fontSize: 12, color: isDark ? '#aaa' : '#888', marginTop: 6 }}>
                                 Click to view orders →
                               </div>

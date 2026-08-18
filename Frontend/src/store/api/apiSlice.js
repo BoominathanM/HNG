@@ -108,6 +108,10 @@ export const apiSlice = createApi({
       query: () => ({ url: '/dashboard/top-products' }),
       providesTags: ['Dashboard'],
     }),
+    getTaskStatus: builder.query({
+      query: () => ({ url: '/dashboard/task-status' }),
+      providesTags: ['Dashboard'],
+    }),
 
     // ── Staff ───────────────────────────────────────────────────────────────
     getStaff: builder.query({
@@ -222,7 +226,10 @@ export const apiSlice = createApi({
     }),
     receiveOrder: builder.mutation({
       query: ({ id, formData }) => ({ url: `/purchase/orders/${id}/receive`, method: 'post', data: formData }),
-      invalidatesTags: ['PurchaseOrders', 'Inventory', 'Reports'],
+      // Also invalidates Orders/Tasks: receiving stock can auto-backfill orders that were
+      // taken/edited while short (see backfillPendingDeductionsForItem), clearing their
+      // "Stock Pending" badge and unblocking Task Management assignment.
+      invalidatesTags: ['PurchaseOrders', 'Inventory', 'Reports', 'Orders', 'Tasks'],
     }),
     scanReceivedInvoice: builder.mutation({
       query: ({ id, formData }) => ({ url: `/purchase/orders/${id}/scan-invoice`, method: 'post', data: formData }),
@@ -244,7 +251,8 @@ export const apiSlice = createApi({
     }),
     createLocalPurchase: builder.mutation({
       query: (formData) => ({ url: '/purchase/local', method: 'post', data: formData }),
-      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses', 'Inventory', 'Reports'],
+      // Also invalidates Orders/Tasks — see receiveOrder's comment (same auto-backfill).
+      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses', 'Inventory', 'Reports', 'Orders', 'Tasks'],
     }),
     getLocalPurchase: builder.query({
       query: (id) => ({ url: `/purchase/local/${id}` }),
@@ -341,6 +349,10 @@ export const apiSlice = createApi({
       query: () => ({ url: '/dispatch/today' }),
       providesTags: ['Dispatch'],
     }),
+    getPendingDispatches: builder.query({
+      query: () => ({ url: '/dispatch/pending' }),
+      providesTags: ['Dispatch'],
+    }),
     getTransports: builder.query({
       query: () => ({ url: '/dispatch/transports' }),
       providesTags: ['Transport'],
@@ -377,11 +389,15 @@ export const apiSlice = createApi({
     }),
     createItem: builder.mutation({
       query: (data) => ({ url: '/inventory', method: 'post', data }),
-      invalidatesTags: ['Inventory'],
+      // Also invalidates Orders/Tasks — merging stock into an existing item code (mergeItemCode)
+      // can auto-backfill orders that were short on that item. See receiveOrder's comment.
+      invalidatesTags: ['Inventory', 'Orders', 'Tasks'],
     }),
     updateItem: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/inventory/${id}`, method: 'put', data }),
-      invalidatesTags: ['Inventory'],
+      // Also invalidates Orders/Tasks — "Add Stock" (addStockQty) can auto-backfill orders
+      // that were short on this item. See receiveOrder's comment.
+      invalidatesTags: ['Inventory', 'Orders', 'Tasks'],
     }),
     deleteItem: builder.mutation({
       query: (id) => ({ url: `/inventory/${id}`, method: 'delete' }),
@@ -397,7 +413,8 @@ export const apiSlice = createApi({
     }),
     fillStock: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/inventory/${id}/fill`, method: 'post', data }),
-      invalidatesTags: ['Inventory', 'StockHistory'],
+      // Also invalidates Orders/Tasks — see receiveOrder's comment (same auto-backfill).
+      invalidatesTags: ['Inventory', 'StockHistory', 'Orders', 'Tasks'],
     }),
     getStockApprovals: builder.query({
       query: () => ({ url: '/inventory/approvals' }),
@@ -405,7 +422,9 @@ export const apiSlice = createApi({
     }),
     approveMovement: builder.mutation({
       query: (id) => ({ url: `/inventory/approvals/${id}/approve`, method: 'patch' }),
-      invalidatesTags: ['StockApprovals', 'Inventory'],
+      // Also invalidates Orders/Tasks — an addition-type approval can auto-backfill orders
+      // that were short on this item. See receiveOrder's comment.
+      invalidatesTags: ['StockApprovals', 'Inventory', 'Orders', 'Tasks'],
     }),
     rejectMovement: builder.mutation({
       query: (id) => ({ url: `/inventory/approvals/${id}/reject`, method: 'patch' }),
@@ -629,7 +648,12 @@ export const apiSlice = createApi({
     }),
     updateSalesOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/orders/${id}`, method: 'put', data }),
-      invalidatesTags: ['Orders', 'Operations', 'Reports'],
+      // Editing an order can change item qty/emergency-split composition, which Task
+      // Management's Today's Checklist + Pending Remaining Qty tab (useGetSuggestedTasksQuery,
+      // provides 'Tasks'/'SuggestedTasks') need to recompute against — this used to only
+      // invalidate Orders/Operations/Reports, so those tabs kept showing stale quantities
+      // until something else happened to refetch them.
+      invalidatesTags: ['Orders', 'Operations', 'Reports', 'Tasks', 'SuggestedTasks'],
     }),
     updateSalesOrderStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/sales/orders/${id}/status`, method: 'patch', data: { status } }),
@@ -1145,6 +1169,12 @@ export const apiSlice = createApi({
     getHotelPendingDue: builder.query({
       query: (params) => ({ url: '/parties/pending-due', params }),
     }),
+    // Per-hotel product consumption/reorder forecast, derived from order history plus
+    // Rooms × Occupancy% as a fallback — powers the Sales "Consumption Forecast" tab.
+    getConsumptionForecast: builder.query({
+      query: () => ({ url: '/parties/consumption-forecast' }),
+      providesTags: ['Parties'],
+    }),
 
     // ── Reports ──────────────────────────────────────────────────────────────
     getSalesReport: builder.query({
@@ -1332,6 +1362,7 @@ export const {
   useGetRevenueTrendQuery,
   useGetOrderStatusQuery,
   useGetTopProductsQuery,
+  useGetTaskStatusQuery,
   // Staff
   useGetStaffQuery,
   useGetStaffMemberQuery,
@@ -1387,6 +1418,7 @@ export const {
   useUploadKitBoxPhotosMutation,
   useAddBoxPhotoUrlMutation,
   useGetTodaysDispatchesQuery,
+  useGetPendingDispatchesQuery,
   useGetTransportsQuery,
   useUpdateTransportStatusMutation,
   useGetPickupOrdersQuery,
@@ -1582,6 +1614,7 @@ export const {
   useDeletePartyMutation,
   useGetCustomersLedgerQuery,
   useGetVendorsLedgerQuery,
+  useGetConsumptionForecastQuery,
   // Reports
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,

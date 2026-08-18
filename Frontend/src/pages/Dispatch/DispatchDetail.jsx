@@ -45,6 +45,11 @@ const { Title, Text } = Typography;
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// Per-row cap on Open/Closed box photos in the Product Details table (Kit/Product rows) —
+// dispatchers select several images at once (Upload's `multiple`), so this also bounds how
+// many of a batch selection get accepted once the row is already near the limit.
+const MAX_ROW_BOX_PHOTOS = 5;
+
 // Case/whitespace/punctuation-insensitive compare used for the transport-name mismatch
 // check — AI-scanned and manually-entered names rarely match byte-for-byte (e.g. "VRL
 // Logistics" vs "VRL Logistics Pvt. Ltd.").
@@ -1630,42 +1635,8 @@ export default function DispatchDetail() {
               styles={{ body: { padding: 16 } }}
             >
               <Form form={form} layout="vertical" size="small">
-                {/* Row 1: Transport, Weight, Boxes — Dispatch Type is now computed from
-                    the per-row dispatch counts below, not a manual choice. */}
-                <Row gutter={12}>
-                  <Col xs={24} sm={12}>
-                    <Form.Item
-                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Transport Name</span>}
-                      name="transport"
-                      validateStatus={transportFilled ? 'success' : 'error'}
-                      help={transportFilled ? undefined : 'Required before dispatch can be confirmed'}
-                    >
-                      <Input placeholder="e.g. Fast Cargo" />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={12} sm={6}>
-                    <Form.Item
-                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Weight (Verify)</span>}
-                      name="weight"
-                      validateStatus={weightFilled ? 'success' : 'error'}
-                      help={weightFilled ? undefined : 'Required'}
-                    >
-                      <Input placeholder="kg" suffix="kg" />
-                    </Form.Item>
-                  </Col>
-                  <Col xs={12} sm={6}>
-                    <Form.Item
-                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Boxes</span>}
-                      name="boxes"
-                      validateStatus={boxesFilled ? 'success' : 'error'}
-                      help={boxesFilled ? undefined : 'Required'}
-                    >
-                      <InputNumber min={0} placeholder="0" style={{ width: '100%' }} prefix={<InboxOutlined style={{ color: '#B11E6A' }} />} />
-                    </Form.Item>
-                  </Col>
-                </Row>
                 {partialConfirmed && !dispatched && (
-                  <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block', marginTop: -8, marginBottom: 12 }}>
+                  <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block', marginBottom: 12 }}>
                     A Partial Dispatch checkpoint is already confirmed — enter the remaining counts below to finish this order.
                   </Text>
                 )}
@@ -1882,51 +1853,78 @@ export default function DispatchDetail() {
                             const closePhotos = row.closeBoxPhotos || [];
                             const openCount = openPhotos.length;
                             const closeCount = closePhotos.length;
+                            // Shows every uploaded photo (not just the most recent) so the
+                            // dispatcher can confirm all of them were captured, not only the
+                            // last one — each thumbnail opens its own preview on click.
                             const thumb = (photos, color) => photos.length > 0 && (
-                              <span style={{ position: 'relative', display: 'inline-flex', width: 28, height: 28 }}>
-                                <Image
-                                  src={photos[photos.length - 1]}
-                                  width={28}
-                                  height={28}
-                                  style={{ objectFit: 'cover', borderRadius: 4, border: `1px solid ${color}` }}
-                                  preview={{ src: photos[photos.length - 1] }}
-                                />
-                                <CheckCircleFilled
-                                  style={{
-                                    position: 'absolute', bottom: -4, right: -4,
-                                    color, background: '#fff', borderRadius: '50%', fontSize: 12,
-                                  }}
-                                />
-                              </span>
+                              <Space size={4} wrap>
+                                {photos.map((url, i) => (
+                                  <span key={`${url}-${i}`} style={{ position: 'relative', display: 'inline-flex', width: 28, height: 28 }}>
+                                    <Image
+                                      src={url}
+                                      width={28}
+                                      height={28}
+                                      style={{ objectFit: 'cover', borderRadius: 4, border: `1px solid ${color}` }}
+                                      preview={{ src: url }}
+                                    />
+                                    <CheckCircleFilled
+                                      style={{
+                                        position: 'absolute', bottom: -4, right: -4,
+                                        color, background: '#fff', borderRadius: '50%', fontSize: 12,
+                                      }}
+                                    />
+                                  </span>
+                                ))}
+                              </Space>
                             );
                             const openUploading = uploadingKeys.has(`${uploadKey}-open`);
                             const closeUploading = uploadingKeys.has(`${uploadKey}-close`);
                             const noKitTarget = isKitRow && !row.kitDispatchId;
+                            // Selecting several files at once (Upload's `multiple`) fires
+                            // beforeUpload synchronously for each file in the batch before any
+                            // upload completes, so openCount/closeCount (only refreshed after a
+                            // request resolves) can't by itself stop a single oversized batch
+                            // from exceeding the cap — these per-render counters do, ticking
+                            // down as each file in the batch is accepted.
+                            let openRemaining = MAX_ROW_BOX_PHOTOS - openCount;
+                            let closeRemaining = MAX_ROW_BOX_PHOTOS - closeCount;
+                            const guardBeforeUpload = (getRemaining, setRemaining, label) => () => {
+                              if (getRemaining() <= 0) {
+                                enqueueSnackbar(`Up to ${MAX_ROW_BOX_PHOTOS} ${label} box photos allowed`, { variant: 'warning' });
+                                return Upload.LIST_IGNORE;
+                              }
+                              setRemaining(getRemaining() - 1);
+                              return true;
+                            };
                             return (
-                              <Space size={4}>
+                              <Space size={4} wrap>
                                 <Upload
                                   showUploadList={false}
                                   accept="image/*"
-                                  disabled={openCount >= 20 || openUploading || noKitTarget || dispatched || row.assigned === false}
+                                  multiple
+                                  beforeUpload={guardBeforeUpload(() => openRemaining, (v) => { openRemaining = v; }, 'open')}
+                                  disabled={openCount >= MAX_ROW_BOX_PHOTOS || openUploading || noKitTarget || dispatched || row.assigned === false}
                                   customRequest={uploadFn}
                                 >
                                   <Button size="small" icon={openUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
                                     style={openCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
                                   >
-                                    Open
+                                    Open ({openCount}/{MAX_ROW_BOX_PHOTOS})
                                   </Button>
                                 </Upload>
                                 {thumb(openPhotos, '#52c41a')}
                                 <Upload
                                   showUploadList={false}
                                   accept="image/*"
-                                  disabled={closeCount >= 20 || closeUploading || noKitTarget || dispatched || row.assigned === false}
+                                  multiple
+                                  beforeUpload={guardBeforeUpload(() => closeRemaining, (v) => { closeRemaining = v; }, 'closed')}
+                                  disabled={closeCount >= MAX_ROW_BOX_PHOTOS || closeUploading || noKitTarget || dispatched || row.assigned === false}
                                   customRequest={uploadFnClose}
                                 >
                                   <Button size="small" icon={closeUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
                                     style={closeCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
                                   >
-                                    Closed
+                                    Closed ({closeCount}/{MAX_ROW_BOX_PHOTOS})
                                   </Button>
                                 </Upload>
                                 {thumb(closePhotos, '#1677ff')}
@@ -1938,6 +1936,43 @@ export default function DispatchDetail() {
                     />
                   </div>
                 )}
+
+                {/* Row: Transport, Weight, Boxes — moved below the Product Details table
+                    (above Dispatch History) so the dispatcher fills these in only after
+                    reviewing what's actually being dispatched. Dispatch Type is computed
+                    from the per-row dispatch counts above, not a manual choice. */}
+                <Row gutter={12}>
+                  <Col xs={24} sm={12}>
+                    <Form.Item
+                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Transport Name</span>}
+                      name="transport"
+                      validateStatus={transportFilled ? 'success' : 'error'}
+                      help={transportFilled ? undefined : 'Required before dispatch can be confirmed'}
+                    >
+                      <Input placeholder="e.g. Fast Cargo" />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={12} sm={6}>
+                    <Form.Item
+                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Weight (Verify)</span>}
+                      name="weight"
+                      validateStatus={weightFilled ? 'success' : 'error'}
+                      help={weightFilled ? undefined : 'Required'}
+                    >
+                      <Input placeholder="kg" suffix="kg" />
+                    </Form.Item>
+                  </Col>
+                  <Col xs={12} sm={6}>
+                    <Form.Item
+                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Boxes</span>}
+                      name="boxes"
+                      validateStatus={boxesFilled ? 'success' : 'error'}
+                      help={boxesFilled ? undefined : 'Required'}
+                    >
+                      <InputNumber min={0} placeholder="0" style={{ width: '100%' }} prefix={<InboxOutlined style={{ color: '#B11E6A' }} />} />
+                    </Form.Item>
+                  </Col>
+                </Row>
 
                 {/* Dispatch History — every confirm round that actually sent something,
                     oldest→each round frozen at the time it happened (unlike the live
@@ -1960,6 +1995,7 @@ export default function DispatchDetail() {
                       rowKey={(r, i) => `${r.date}-${i}`}
                       dataSource={[...order.dispatchHistory].reverse()}
                       style={{ borderRadius: 0 }}
+                      scroll={{ y: 360 }}
                       columns={[
                         {
                           title: 'Date', dataIndex: 'date', width: 150,
@@ -1970,41 +2006,56 @@ export default function DispatchDetail() {
                           render: (v) => <Tag color={v === 'Partial Dispatch' ? 'orange' : 'blue'} style={{ borderRadius: 12, fontSize: 11 }}>{v || '—'}</Tag>,
                         },
                         {
-                          title: 'Dispatched', key: 'dispatched',
+                          title: 'Dispatched', key: 'dispatched', width: 260,
                           render: (_, r) => {
-                            // Small round-trip thumbnails — openBoxPhotos/closeBoxPhotos here are a
+                            // Round-trip thumbnails — openBoxPhotos/closeBoxPhotos here are a
                             // snapshot taken when THIS round was confirmed (see confirmDispatch),
                             // so they show exactly what evidence existed for this round even after
-                            // later rounds add more photos to the live item/kit record.
-                            const roundThumbs = (photos, color) => (photos || []).slice(-3).map((url, i) => (
-                              <Image
-                                key={`${url}-${i}`}
-                                src={url}
-                                width={18}
-                                height={18}
-                                style={{ objectFit: 'cover', borderRadius: 3, border: `1px solid ${color}`, marginLeft: 3 }}
-                                preview={{ src: url }}
-                              />
-                            ));
+                            // later rounds add more photos to the live item/kit record. Every photo
+                            // is shown (not just the last few) with visible gaps between thumbnails.
+                            const roundThumbs = (photos, color) => (photos || []).length > 0 && (
+                              <Space size={6} wrap style={{ marginTop: 2 }}>
+                                {photos.map((url, i) => (
+                                  <Image
+                                    key={`${url}-${i}`}
+                                    src={url}
+                                    width={26}
+                                    height={26}
+                                    style={{ objectFit: 'cover', borderRadius: 4, border: `1px solid ${color}` }}
+                                    preview={{ src: url }}
+                                  />
+                                ))}
+                              </Space>
+                            );
+                            const photoGroup = (label, photos, color) => (photos || []).length > 0 && (
+                              <div>
+                                <Text style={{ fontSize: 10, color, display: 'block', marginBottom: 2 }}>{label} ({photos.length})</Text>
+                                {roundThumbs(photos, color)}
+                              </div>
+                            );
                             return (
-                              <Space direction="vertical" size={2}>
+                              <Space direction="vertical" size={10} style={{ width: '100%' }}>
                                 {(r.kits || []).map((k, i) => (
-                                  <Space key={`k-${i}`} size={0} align="center">
+                                  <div key={`k-${i}`}>
                                     <Text style={{ fontSize: 12 }}>
                                       {k.category === 'personalized' ? 'Personalized Kit' : 'Separate Kit'} — {k.kitName}: <b>{k.dispatchedQty}</b>
                                     </Text>
-                                    {roundThumbs(k.openBoxPhotos, '#52c41a')}
-                                    {roundThumbs(k.closeBoxPhotos, '#1677ff')}
-                                  </Space>
+                                    <Space size={16} wrap style={{ marginTop: 4 }}>
+                                      {photoGroup('Open', k.openBoxPhotos, '#52c41a')}
+                                      {photoGroup('Closed', k.closeBoxPhotos, '#1677ff')}
+                                    </Space>
+                                  </div>
                                 ))}
                                 {(r.products || []).map((p, i) => (
-                                  <Space key={`p-${i}`} size={0} align="center">
+                                  <div key={`p-${i}`}>
                                     <Text style={{ fontSize: 12 }}>
                                       Product — {p.itemName}: <b>{p.dispatchedQty}</b>
                                     </Text>
-                                    {roundThumbs(p.openBoxPhotos, '#52c41a')}
-                                    {roundThumbs(p.closeBoxPhotos, '#1677ff')}
-                                  </Space>
+                                    <Space size={16} wrap style={{ marginTop: 4 }}>
+                                      {photoGroup('Open', p.openBoxPhotos, '#52c41a')}
+                                      {photoGroup('Closed', p.closeBoxPhotos, '#1677ff')}
+                                    </Space>
+                                  </div>
                                 ))}
                                 {!(r.kits?.length || r.products?.length) && <Text type="secondary" style={{ fontSize: 12 }}>—</Text>}
                               </Space>

@@ -853,7 +853,33 @@ body.dark-mode {
 
 /* =============================================
    STAT CARDS ROW — RESPONSIVE GRID
+   5 per row on desktop, scaling down to 1 per row
+   on the smallest phones. antd's 24-col grid can't
+   express an exact 5-way split, so this is enforced
+   directly via flex-basis.
    ============================================= */
+
+/* Desktop / wide screens (>=1200px): 5-per-row */
+.stat-cards-row .ant-col {
+  flex: 0 0 20% !important;
+  max-width: 20% !important;
+}
+
+@media (max-width: 1199px) {
+  /* Laptop (lg): 4-per-row */
+  .stat-cards-row .ant-col {
+    flex: 0 0 25% !important;
+    max-width: 25% !important;
+  }
+}
+
+@media (max-width: 991px) {
+  /* Tablet (md/sm): 3-per-row */
+  .stat-cards-row .ant-col {
+    flex: 0 0 33.3333% !important;
+    max-width: 33.3333% !important;
+  }
+}
 
 @media (max-width: 576px) {
   /* Dashboard stat cards: force 2-per-row */

@@ -47,6 +47,12 @@ const orderItemSchema = new mongoose.Schema({
   gst: Number,
   boxes: Number,
   inventoryStock: { type: Number, default: 0 },
+  // Cumulative units actually pulled from InventoryItem.currentStock for this line —
+  // across creation, later qty-increase edits, and auto-backfill on restock (see
+  // deductInventoryQty/backfillPendingDeductionsForItem in sales.controller.js). May be
+  // LESS than the required qty (isKit ? qty × kit count : qty) when stock was insufficient
+  // at deduction time — the gap is the order's outstanding "owed" inventory.
+  deductedQty: { type: Number, default: 0 },
   verified: { type: Boolean, default: false },
   // ─── Order-composition category (drives 3-bucket totals + Operations grouping) ───
   // 'personalized'  = kit + extra products customized together as one unit
@@ -232,9 +238,16 @@ const orderSchema = new mongoose.Schema({
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  // True when at least one item's deductedQty is still short of what the order actually
+  // needs (isKit ? qty × kit count : qty) — set/cleared by deductInventoryQty and
+  // backfillPendingDeductionsForItem in sales.controller.js. Drives the Task Management
+  // assignment gate (checkStockDeductionGate, utils/taskQuantity.js) and the "Stock
+  // Pending" badge on Orders.
+  hasPendingStockDeduction: { type: Boolean, default: false },
 }, { timestamps: true, strict: false });
 
 orderSchema.index({ status: 1, deletedAt: 1 });
 orderSchema.index({ clientPartyId: 1 });
+orderSchema.index({ hasPendingStockDeduction: 1, deletedAt: 1 });
 
 module.exports = mongoose.model('Order', orderSchema);

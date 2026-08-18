@@ -12,6 +12,7 @@ const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { sendMessage, ensureDefaultWhatsAppEvents } = require('../../services/whatsAppService');
+const { backfillPendingDeductionsForItem } = require('../sales/sales.controller');
 
 // Bulk item's tracking unit → the fill units its linked "filled" (per-piece) items may use —
 // either the bulk unit's own metric sub-unit (small per-piece fills, e.g. a 10ml bottle) or
@@ -149,6 +150,10 @@ exports.createItem = asyncHandler(async (req, res, next) => {
         approvedAt: Date.now(),
         createdBy: req.user._id,
       });
+      // Pay off any orders that were placed/edited while this item was short of stock.
+      backfillPendingDeductionsForItem(existing._id, req.user._id).catch((err) => {
+        console.error(`Backorder backfill failed for item "${existing.itemName}" after item merge:`, err.message);
+      });
     }
     return res.status(200).json({ success: true, merged: true, data: existing });
   }
@@ -234,6 +239,10 @@ exports.updateItem = asyncHandler(async (req, res, next) => {
       approvedBy: req.user._id,
       approvedAt: Date.now(),
       createdBy: req.user._id,
+    });
+    // Pay off any orders that were placed/edited while this item was short of stock.
+    backfillPendingDeductionsForItem(item._id, req.user._id).catch((err) => {
+      console.error(`Backorder backfill failed for item "${item.itemName}" after add-stock edit:`, err.message);
     });
   } else {
     await item.save({ validateBeforeSave: false });
@@ -352,6 +361,12 @@ exports.fillStock = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
   });
 
+  // Pay off any orders that were placed/edited while the FILLED item was short of stock
+  // (the bulk item just went down, not up — only the filled item's own stock arrived).
+  backfillPendingDeductionsForItem(item._id, req.user._id).catch((err) => {
+    console.error(`Backorder backfill failed for item "${item.itemName}" after fill:`, err.message);
+  });
+
   res.status(200).json({ success: true, data: { item, bulk, fillQty } });
 });
 
@@ -446,6 +461,14 @@ exports.approveMovement = asyncHandler(async (req, res, next) => {
   await item.save({ validateBeforeSave: false });
 
   const isAddition = movement.movementType === 'IN' || (movement.movementType !== 'OUT' && movement.qtyAfter >= movement.qtyBefore);
+  if (isAddition) {
+    // Pay off any orders that were placed/edited while this item was short of stock —
+    // covers both a plain Add-Stock-Request approval and a Stock-Check/reconciliation
+    // approval that nets out to a surplus.
+    backfillPendingDeductionsForItem(item._id, req.user._id).catch((err) => {
+      console.error(`Backorder backfill failed for item "${item.itemName}" after movement approval:`, err.message);
+    });
+  }
   notifyRoles({ modules: ['Inventory'], userIds: [movement.createdBy], type: 'low_stock', title: 'Stock Movement Approved', message: `${isAddition ? '+' : '-'}${movement.qty} ${item.unit || 'units'} of ${item.itemName} approved (current: ${item.currentStock})`, link: '/inventory' }).catch(() => {});
   if (item.minStock > 0 && item.currentStock < item.minStock) {
     const isOut = item.currentStock === 0;

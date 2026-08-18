@@ -6,6 +6,7 @@ const Lead = require('../../models/Lead');
 const Party = require('../../models/Party');
 const InventoryItem = require('../../models/InventoryItem');
 const Kit = require('../../models/Kit');
+const PurchaseOrder = require('../../models/PurchaseOrder');
 const asyncHandler = require('../../utils/asyncHandler');
 const { computeCompositionGrandTotal } = require('../../utils/orderCalc');
 
@@ -26,6 +27,7 @@ exports.getKPIs = asyncHandler(async (req, res) => {
   const [
     totalOrders,
     revenue,
+    gst,
     dispatchReady,
     activeClients,
     totalTasks,
@@ -34,11 +36,17 @@ exports.getKPIs = asyncHandler(async (req, res) => {
     completedTasks,
     pendingInvoices,
     lowStockItems,
+    totalLeads,
+    pendingPurchaseOrders,
   ] = await Promise.all([
     Order.countDocuments({ ...dateFilter, deletedAt: null }),
     Invoice.aggregate([
       { $match: { status: { $in: ['Paid', 'Partially Paid'] }, ...(dateFilter.createdAt ? { createdAt: dateFilter.createdAt } : {}) } },
       { $group: { _id: null, total: { $sum: '$total' } } },
+    ]),
+    Invoice.aggregate([
+      { $match: { status: { $in: ['Paid', 'Partially Paid'] }, ...(dateFilter.createdAt ? { createdAt: dateFilter.createdAt } : {}) } },
+      { $group: { _id: null, total: { $sum: '$gstAmount' } } },
     ]),
     Order.countDocuments({ status: 'Dispatch Ready', deletedAt: null }),
     Party.countDocuments({ type: 'Customer', deletedAt: null }),
@@ -48,6 +56,8 @@ exports.getKPIs = asyncHandler(async (req, res) => {
     Task.countDocuments({ status: 'Done', ...dateFilter }),
     Invoice.countDocuments({ status: { $in: ['Pending', 'Overdue'] } }),
     InventoryItem.countDocuments({ $expr: { $lt: ['$currentStock', '$minStock'] }, deletedAt: null }),
+    Lead.countDocuments({ ...dateFilter, deletedAt: null }),
+    PurchaseOrder.countDocuments({ dispatchStatus: { $in: ['Pending', 'In Transit'] } }),
   ]);
 
   const today = new Date(); today.setHours(0, 0, 0, 0);
@@ -62,6 +72,7 @@ exports.getKPIs = asyncHandler(async (req, res) => {
     data: {
       totalOrders,
       monthlyRevenue: revenue[0]?.total || 0,
+      gstAmount: gst[0]?.total || 0,
       dispatchReady,
       activeClients,
       totalTasks,
@@ -72,6 +83,8 @@ exports.getKPIs = asyncHandler(async (req, res) => {
       completedTasks,
       pendingInvoices,
       lowStockItems,
+      totalLeads,
+      pendingPurchaseOrders,
     },
   });
 });
@@ -141,6 +154,13 @@ exports.getTopProducts = asyncHandler(async (req, res) => {
     { $group: { _id: '$items.itemName', qty: { $sum: '$items.qty' }, revenue: { $sum: '$items.lineTotal' } } },
     { $sort: { revenue: -1 } },
     { $limit: 5 },
+  ]);
+  res.status(200).json({ success: true, data: agg });
+});
+
+exports.getTaskStatusDistribution = asyncHandler(async (req, res) => {
+  const agg = await Task.aggregate([
+    { $group: { _id: '$status', count: { $sum: 1 } } },
   ]);
   res.status(200).json({ success: true, data: agg });
 });

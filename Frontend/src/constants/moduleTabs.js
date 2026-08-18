@@ -19,6 +19,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'quotations', label: 'Quotations & Negotiations' },
     { key: 'orders', label: 'Orders' },
     { key: 'customers', label: 'Parties' },
+    { key: 'forecast', label: 'Consumption Forecast' },
     { key: 'complaints', label: 'Complaints' },
   ],
   Operations: [
@@ -33,10 +34,12 @@ export const MODULE_TAB_DEFS = {
   'Task Management': [
     { key: 'current', label: 'Current Task' },
     { key: 'suggested', label: 'Suggested Task' },
+    { key: 'pendingRemaining', label: 'Pending Remaining Qty' },
     { key: 'timeconfig', label: 'Time Management' },
   ],
   'Dispatch Team': [
     { key: 'dispatch', label: 'Dispatch Orders' },
+    { key: 'pending_dispatch', label: 'Pending Dispatches' },
     { key: 'pickup', label: 'Pick Up Order' },
     { key: 'transport', label: 'Transport' },
   ],

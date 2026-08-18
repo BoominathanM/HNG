@@ -10,6 +10,7 @@ router.get('/', ctrl.getParties);
 router.get('/customers-ledger', ctrl.getCustomersLedger);
 router.get('/vendors-ledger', ctrl.getVendorsLedger);
 router.get('/pending-due', ctrl.getHotelPendingDue);
+router.get('/consumption-forecast', ctrl.getConsumptionForecast);
 router.delete('/:id', ctrl.deleteParty);
 router.get('/:id/orders', ctrl.getPartyOrders);
 router.get('/:id/ledger', ctrl.getPartyLedger);

@@ -11,5 +11,6 @@ router.get('/low-stock', ctrl.getLowStockAlerts);
 router.get('/revenue-trend', ctrl.getRevenueTrend);
 router.get('/order-status', ctrl.getOrderStatusDistribution);
 router.get('/top-products', ctrl.getTopProducts);
+router.get('/task-status', ctrl.getTaskStatusDistribution);
 
 module.exports = router;

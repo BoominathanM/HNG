@@ -13,6 +13,7 @@ const generateCode = require('../../utils/codeGenerator');
 const upload = require('../../config/multer');
 const { notifyRoles } = require('../../utils/notify');
 const aiService = require('../../services/aiService');
+const { backfillPendingDeductionsForItem } = require('../sales/sales.controller');
 
 // ─── PURCHASE REQUESTS ────────────────────────────────────────────────────────
 exports.getRequests = asyncHandler(async (req, res) => {
@@ -374,6 +375,11 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
       approvedAt: Date.now(),
       createdBy: req.user._id,
     });
+    // Pay off any orders that were placed/edited while this item was short of stock,
+    // oldest first, now that fresh stock has arrived.
+    backfillPendingDeductionsForItem(item._id, req.user._id).catch((err) => {
+      console.error(`Backorder backfill failed for item "${item.itemName}" after PO receive:`, err.message);
+    });
   }
 
   if (isPartial) {
@@ -543,6 +549,10 @@ async function addLocalPurchaseStock(lp, userId) {
         approvedBy: userId,
         approvedAt: Date.now(),
         createdBy: userId,
+      });
+      // Pay off any orders that were placed/edited while this item was short of stock.
+      backfillPendingDeductionsForItem(item._id, userId).catch((err) => {
+        console.error(`Backorder backfill failed for item "${item.itemName}" after local purchase:`, err.message);
       });
     } catch (err) {
       console.error(`[local-purchase] stock sync failed for "${name}":`, err.message);

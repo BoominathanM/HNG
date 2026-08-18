@@ -13,7 +13,8 @@ const { ROLE_TO_STICKER_TYPE } = require('../../utils/alertConfigQueries');
 const { sendMessage } = require('../../services/whatsAppService');
 const { computeTaskEstimate } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
-const { checkTaskQuantityOverflow } = require('../../utils/taskQuantity');
+const { checkTaskQuantityOverflow, checkStockDeductionGate } = require('../../utils/taskQuantity');
+const { resolveItemConsumedQty } = require('../sales/sales.controller');
 
 // ─── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
 // Visibility scoping (same rule as Sales getLeads/Task Management getTasks):
@@ -147,6 +148,9 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
   });
   if (overflowMsg) return next(new AppError(overflowMsg, 409));
 
+  const stockMsg = await checkStockDeductionGate({ orderId, productIndex });
+  if (stockMsg) return next(new AppError(stockMsg, 409));
+
   // Prevent duplicate Kit Packing task per order
   if (req.body.taskType === 'Kit Packing') {
     const existingKitPacking = await Task.findOne({ orderId, taskType: 'Kit Packing' });
@@ -220,6 +224,7 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
   const baseType = req.body.taskType || 'Production';
   const tasks = [];
   const skippedProducts = [];
+  const stockPendingProducts = [];
   // Optional per-product assignee, e.g. [{ productIndex, assignedTo, assigneeName }] —
   // lets one bulk call assign each product to a different Task Management staff member.
   const assignmentByIndex = new Map(
@@ -237,6 +242,14 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
     const pending = Math.max(0, required - (assignedQtyByIndex.get(i) || 0));
     if (pending <= 0) {
       skippedProducts.push(it.itemName);
+      continue;
+    }
+    // Physical stock not yet deducted for this line (order was taken/edited while short) —
+    // skip it here rather than hard-failing the whole bulk call; it'll unlock automatically
+    // once backfillPendingDeductionsForItem pays off the shortfall on restock.
+    const consumedRequired = resolveItemConsumedQty(it, order);
+    if (consumedRequired > (Number(it.deductedQty) || 0)) {
+      stockPendingProducts.push(it.itemName);
       continue;
     }
     const taskCode = await generateCode('TASK');
@@ -259,8 +272,11 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
   }
 
   if (tasks.length === 0) {
+    const reasons = [];
+    if (skippedProducts.length) reasons.push(`already assigned (${skippedProducts.join(', ')})`);
+    if (stockPendingProducts.length) reasons.push(`stock not yet deducted (${stockPendingProducts.join(', ')})`);
     return next(new AppError(
-      `All products for this order already have tasks assigned (${skippedProducts.join(', ')}).`,
+      `No tasks were assigned — all products for this order are ${reasons.join('; ') || 'unavailable'}.`,
       409
     ));
   }
@@ -273,6 +289,7 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
     total: tasks.length,
     data: tasks,
     ...(skippedProducts.length > 0 && { skippedProducts }),
+    ...(stockPendingProducts.length > 0 && { stockPendingProducts }),
   });
 });
 
