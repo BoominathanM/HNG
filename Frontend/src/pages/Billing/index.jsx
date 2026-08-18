@@ -31,7 +31,8 @@ import {
   useRecordPaymentMutation,
   useGetInvoicePaymentsQuery,
   useConvertQuotationToInvoiceMutation,
-  useUpdateInvoiceGstMutation,
+  useUpdateInvoicePricingMutation,
+  useUpdateQuotationPricingMutation,
   useDeleteInvoiceMutation,
   useDeleteSalesQuotationMutation,
   useGetBillingPartyLedgerQuery,
@@ -70,6 +71,22 @@ const itemsToProducts = (items = []) =>
     kitType: i.kitType || '',
     category: i.category || '',
   }));
+
+// Mirrors the BACKEND's own linked-order resolution for a Quotation (updateQuotation,
+// updateQuotationPricing, convertQuotationToInvoice all use
+// Order.findOne({$or:[{quotationId},{leadId}]}).sort('-createdAt')) — so Edit Pricing always
+// targets the EXACT SAME order the backend will load. Unlike `orderByLead` (used for display
+// throughout this file), which just takes "the last order seen for this lead" and can disagree
+// with the backend's resolution when a lead has more than one order.
+const resolveQuotationOrder = (quotationId, leadId, allOrders = []) => {
+  const matches = (allOrders || []).filter((o) => {
+    const oQuotId = o.quotationId?._id || o.quotationId;
+    const oLeadId = o.leadId?._id || o.leadId;
+    return (oQuotId && String(oQuotId) === String(quotationId)) || (leadId && oLeadId && String(oLeadId) === String(leadId));
+  });
+  if (!matches.length) return null;
+  return matches.reduce((newest, o) => (!newest || new Date(o.createdAt) > new Date(newest.createdAt) ? o : newest), null);
+};
 
 // Kit-aware grand total — delegates to utils/orderCalc's computeRecordGrandTotal, the single
 // source of truth also used by Sales and OperationDetail. (Previously this had its own
@@ -160,7 +177,8 @@ export default function Billing() {
   const [createInvoiceMutation] = useCreateInvoiceMutation();
   const [recordPaymentMutation] = useRecordPaymentMutation();
   const [convertQuotationMutation] = useConvertQuotationToInvoiceMutation();
-  const [updateInvoiceGstMutation] = useUpdateInvoiceGstMutation();
+  const [updateInvoicePricingMutation] = useUpdateInvoicePricingMutation();
+  const [updateQuotationPricingMutation] = useUpdateQuotationPricingMutation();
   const [deleteInvoiceMutation] = useDeleteInvoiceMutation();
   const [updateSalesOrderMutation] = useUpdateSalesOrderMutation();
   const [updateSalesQuotationMutation] = useUpdateSalesQuotationMutation();
@@ -224,6 +242,23 @@ export default function Billing() {
                       ? linkedQuotation.products
                       : itemsToProducts(linkedLead?.items?.length ? linkedLead.items : (quotationLead?.items?.length ? quotationLead.items : (linkedQuotation?.items?.length ? linkedQuotation.items : (inv.items || []))))))));
     const srcKitOrders = fullOrder?.kitOrders?.length ? fullOrder.kitOrders : (linkedLead?.kitOrders?.length ? linkedLead.kitOrders : (quotationLead?.kitOrders?.length ? quotationLead.kitOrders : (linkedQuotation?.kitOrders || [])));
+    // Edit Pricing must target the EXACT order the backend will load (invoice.orderId), not
+    // the "richest order for this lead" fallback `fullOrder` uses for display — a hotel/lead
+    // can have several orders, and fullOrder may resolve to a different one. When there's no
+    // linked order at all, the backend edits invoice.items[] directly instead.
+    const editHasOrderLink = !!linkedOrder?._id;
+    const editProducts = editHasOrderLink
+      ? (linkedOrder?.products?.length ? linkedOrder.products : (linkedOrder?.items?.length ? itemsToProducts(linkedOrder.items) : []))
+      : itemsToProducts(inv.items || []);
+    const editKitOrders = editHasOrderLink && linkedOrder?.kitOrders?.length ? linkedOrder.kitOrders : [];
+    // Outer "personalized package" fee + which kits/products are bundled inside it (the
+    // "Select Kit(s) to Include" feature) — needed so Edit Pricing groups a bundled item under
+    // Personalized Kit instead of its normal Separate Kit/Product bucket, matching the real
+    // invoice (see buildDocComposition). Only meaningful when there's a linked order.
+    const editKitPrice = editHasOrderLink ? (Number(linkedOrder?.kitPrice) || 0) : 0;
+    const editKitOverallQty = editHasOrderLink ? (Number(linkedOrder?.kitOverallQty) || 0) : 0;
+    const editPackagingIncludes = editHasOrderLink ? (linkedOrder?.packagingIncludes || []) : [];
+    const editPackagingIncludesQty = editHasOrderLink ? (linkedOrder?.packagingIncludesQty || {}) : {};
     const srcRec = (srcProds.length || srcKitOrders.length)
       ? {
           products: srcProds,
@@ -263,6 +298,16 @@ export default function Billing() {
       leadId: linkedLead?._id || quotationLead?._id || linkedOrder?.leadId || null,
       leadCode: linkedLead?.leadCode || quotationLead?.leadCode || '',
       orderId: fullOrder?._id || linkedOrder?._id || (typeof inv.orderId === 'string' ? inv.orderId : null),
+      // Edit Pricing source rows (see editHasOrderLink above) — always parallel to whatever
+      // the backend's updateInvoicePricing will load for this exact invoice.
+      editHasOrderLink,
+      editProducts,
+      editKitOrders,
+      editKitPrice,
+      editKitOverallQty,
+      editPackagingIncludes,
+      editPackagingIncludesQty,
+      priceEditHistory: inv.priceEditHistory || [],
       quotationId: linkedQuotation?._id || (typeof inv.quotationId === 'string' ? inv.quotationId : null),
       negotiationId: linkedOrder?.negotiationId || linkedLead?.negotiationId || null,
       inv: inv.invoiceNumber,
@@ -351,6 +396,20 @@ export default function Billing() {
               ? lead.products
               : itemsToProducts(lead?.items?.length ? lead.items : (q.items || []))));
     const lKitOrders = linkedOrder?.kitOrders?.length ? linkedOrder.kitOrders : (lead?.kitOrders || q.kitOrders || []);
+    // Edit Pricing must target the EXACT order the backend will load (same $or:[quotationId,
+    // leadId] resolution updateQuotationPricing uses) — not `linkedOrder` above, which is
+    // display-only ("last order seen for this lead" via orderByLead) and can disagree with the
+    // backend when a lead has more than one order.
+    const editOrder = resolveQuotationOrder(q._id, leadId, salesOrdersRaw?.data);
+    const editHasOrderLink = !!editOrder?._id;
+    const editProducts = editHasOrderLink
+      ? (editOrder?.products?.length ? editOrder.products : (editOrder?.items?.length ? itemsToProducts(editOrder.items) : []))
+      : itemsToProducts(q.items || []);
+    const editKitOrders = editHasOrderLink && editOrder?.kitOrders?.length ? editOrder.kitOrders : [];
+    const editKitPrice = editHasOrderLink ? (Number(editOrder?.kitPrice) || 0) : 0;
+    const editKitOverallQty = editHasOrderLink ? (Number(editOrder?.kitOverallQty) || 0) : 0;
+    const editPackagingIncludes = editHasOrderLink ? (editOrder?.packagingIncludes || []) : [];
+    const editPackagingIncludesQty = editHasOrderLink ? (editOrder?.packagingIncludesQty || {}) : {};
     // Authoritative payment collection — pick the source whose recorded payments are most
     // complete (matches `paid = sumPaid(...)`) so a manually-recorded payment ACCUMULATES on
     // top of prior ones instead of overwriting them when saved back to the quotation/order, and
@@ -391,6 +450,16 @@ export default function Billing() {
       key: q._id,
       orderId: linkedOrder?._id,
       docType: 'Quotation',
+      // Edit Pricing source rows + audit log (see editHasOrderLink above) — always parallel to
+      // whatever the backend's updateQuotationPricing will load for this exact quotation.
+      editHasOrderLink,
+      editProducts,
+      editKitOrders,
+      editKitPrice,
+      editKitOverallQty,
+      editPackagingIncludes,
+      editPackagingIncludesQty,
+      priceEditHistory: q.priceEditHistory || [],
       // Link IDs — required by syncBillingChain to propagate payment to Sales records
       leadId: q.leadId,
       leadCode: q.leadCode || '',
@@ -451,7 +520,7 @@ export default function Billing() {
       kitOrders: lKitOrders,
       composition,
     };
-  }), [quotationsData, orderByLead, kits]);
+  }), [quotationsData, orderByLead, kits, salesOrdersRaw]);
 
   const partiesList = useMemo(() => (partiesData?.data || []).map((p) => ({
     key: p._id,
@@ -625,10 +694,34 @@ export default function Billing() {
   const [verifyQuot, setVerifyQuot] = useState(null);
   const [verifierName, setVerifierName] = useState('');
 
-  // Edit GST modal (Invoices tab)
-  const [gstEditOpen, setGstEditOpen] = useState(false);
-  const [gstEditInv, setGstEditInv] = useState(null);
-  const [gstEditValue, setGstEditValue] = useState(0);
+  // Edit Pricing modal (Invoices tab) — full per-product price + GST editor, replacing the
+  // old flat "Edit GST" box. Grouped the same way the rest of the app models order composition
+  // (see Frontend/src/utils/orderCalc.js's ORDER_CATEGORIES / Sales' CategoryTotalsBreakdown):
+  // priceEditKitGroups = one entry per kitOrders row (Personalized or Separate Kit), each
+  // carrying its own componentRows (the kit's constituent products, nested underneath it —
+  // not a disconnected flat list); priceEditStandaloneRows = non-kit products (Separate
+  // Product, or a loose item tagged category:'personalized'). Every row keeps its original
+  // rate/gst alongside so the min-floor and "changed?" checks don't need to re-look-up the
+  // source array, and its productIndex so edits can be written back to the right position in
+  // the flat products[] array the backend expects (see priceEditPreview below).
+  const [priceEditOpen, setPriceEditOpen] = useState(false);
+  const [priceEditInv, setPriceEditInv] = useState(null);
+  const [priceEditKitGroups, setPriceEditKitGroups] = useState([]);
+  const [priceEditStandaloneRows, setPriceEditStandaloneRows] = useState([]);
+  // Outer personalized-package fee (Order.kitPrice) — a third price surface distinct from any
+  // individual product/kit, only relevant when the order uses "Select Kit(s) to Include".
+  const [priceEditHasPackage, setPriceEditHasPackage] = useState(false);
+  const [priceEditPackageQty, setPriceEditPackageQty] = useState(0);
+  const [priceEditPackagePrice, setPriceEditPackagePrice] = useState(0);
+  const [priceEditPackageOrigPrice, setPriceEditPackageOrigPrice] = useState(0);
+  const [priceEditReason, setPriceEditReason] = useState('');
+  const [priceEditSaving, setPriceEditSaving] = useState(false);
+
+  // Price Edit Logs modal — read-only audit trail (reason, edited by, date/time) for a
+  // record's priceEditHistory, populated by updateInvoicePricing/updateQuotationPricing.
+  const [priceLogsOpen, setPriceLogsOpen] = useState(false);
+  const [priceLogsRecord, setPriceLogsRecord] = useState(null);
+  const openPriceLogs = (record) => { setPriceLogsRecord(record); setPriceLogsOpen(true); };
 
   const billingPartiesData = Object.values(
     invoiceList.reduce((acc, inv) => {
@@ -924,21 +1017,246 @@ export default function Billing() {
     }
   };
 
-  const openGstEdit = (inv) => {
-    setGstEditInv(inv);
-    setGstEditValue(inv.gst);
-    setGstEditOpen(true);
+  const openPriceEdit = (inv) => {
+    setPriceEditInv(inv);
+    const products = inv.editProducts || [];
+
+    // "Select Kit(s) to Include" bundles other kits/products inside the outer personalized
+    // package (see Frontend/src/utils/docComposition.js:computePersonalizedComposition) — a
+    // kit is referenced there by its _id, a standalone product by its name. Editing is
+    // per-row (one rate/gst per product/kit regardless of how its qty splits between
+    // "included" and "remaining"), so all that's needed here is WHICH bucket a row displays
+    // under — not the included-vs-remaining quantity split itself (that stays a document-
+    // rendering concern, untouched by this modal since quantity is never edited).
+    const piRaw = inv.editPackagingIncludes || [];
+    const includedIds = new Set(
+      (piRaw.length && typeof piRaw[0] === 'object' && piRaw[0] !== null)
+        ? piRaw.map(p => String(p.id))
+        : piRaw.map(String)
+    );
+
+    // Kit groups: one card per kitOrders entry, its componentRows pulled from products[] by
+    // kitId (mirrors orderCalc.js's own kitRows.filter(p => p.kitId === ko.kitId) matching).
+    setPriceEditKitGroups((inv.editKitOrders || []).map((ko, ki) => {
+      const kitPrice = Number(ko.kitPrice) || 0;
+      const gst = Number(ko.gst ?? ko.gstPercent ?? ko.taxRate) || 0;
+      const category = (ko.category === 'personalized' || includedIds.has(String(ko.kitId))) ? 'personalized' : (ko.category || 'separate_kit');
+      const componentRows = [];
+      products.forEach((p, pi) => {
+        if ((p.isKit || p.kitType) && p.kitId === ko.kitId) {
+          const rate = Number(p.rate ?? p.price) || 0;
+          const pgst = Number(p.gst) || 0;
+          componentRows.push({ key: `p-${pi}`, productIndex: pi, name: p.name || p.itemName || `Product ${pi + 1}`, qty: Number(p.qty) || 0, origRate: rate, origGst: pgst, rate, gst: pgst });
+        }
+      });
+      return {
+        key: `k-${ki}`, kitId: ko.kitId, category,
+        name: ko.kitName || ko.kitType || `Kit ${ki + 1}`, qty: Number(ko.overallQty) || 0,
+        origKitPrice: kitPrice, origGst: gst, kitPrice, gst, componentRows,
+      };
+    }));
+
+    // Standalone rows: everything NOT part of a kit — Separate Product, or a standalone
+    // product bundled directly into the personalized package (by name, via packagingIncludes).
+    const standaloneRows = [];
+    products.forEach((p, pi) => {
+      if (!(p.isKit || p.kitType)) {
+        const rate = Number(p.rate ?? p.price) || 0;
+        const gst = Number(p.gst) || 0;
+        const name = p.name || p.itemName || `Product ${pi + 1}`;
+        const category = (p.category === 'personalized' || includedIds.has(name)) ? 'personalized' : (p.category || 'separate_product');
+        standaloneRows.push({ key: `p-${pi}`, productIndex: pi, category, name, qty: Number(p.qty) || 0, origRate: rate, origGst: gst, rate, gst });
+      }
+    });
+    setPriceEditStandaloneRows(standaloneRows);
+
+    // Outer personalized-package fee (Order.kitPrice) — shown/editable whenever the order
+    // actually has one (a real price, or the "include" feature is in use even at ₹0).
+    const packagePrice = Number(inv.editKitPrice) || 0;
+    setPriceEditHasPackage(packagePrice > 0 || piRaw.length > 0);
+    setPriceEditPackageQty(Number(inv.editKitOverallQty) || 0);
+    setPriceEditPackagePrice(packagePrice);
+    setPriceEditPackageOrigPrice(packagePrice);
+
+    setPriceEditReason('');
+    setPriceEditOpen(true);
   };
 
-  const handleSaveGst = async () => {
-    const newGst = gstEditValue || 0;
-    if (!gstEditInv?.key) { enqueueSnackbar('No invoice selected', { variant: 'error' }); return; }
+  const updateKitGroupField = (kitKey, field, value) => {
+    setPriceEditKitGroups(groups => groups.map(g => (g.key === kitKey ? { ...g, [field]: value } : g)));
+  };
+  const updateKitComponentField = (kitKey, rowKey, field, value) => {
+    setPriceEditKitGroups(groups => groups.map(g => (g.key === kitKey
+      ? { ...g, componentRows: g.componentRows.map(r => (r.key === rowKey ? { ...r, [field]: value } : r)) }
+      : g)));
+  };
+  const updateStandaloneField = (rowKey, field, value) => {
+    setPriceEditStandaloneRows(rows => rows.map(r => (r.key === rowKey ? { ...r, [field]: value } : r)));
+  };
+
+  const priceEditHasChanges = priceEditKitGroups.some(g => g.kitPrice !== g.origKitPrice || g.gst !== g.origGst
+      || g.componentRows.some(r => r.rate !== r.origRate || r.gst !== r.origGst))
+    || priceEditStandaloneRows.some(r => r.rate !== r.origRate || r.gst !== r.origGst)
+    || priceEditPackagePrice !== priceEditPackageOrigPrice;
+
+  // Split kit groups AND standalone rows into the same Personalized / Separate Kit / Separate
+  // Product sections used everywhere else in the app (Sales' ORDER_CATEGORIES) — a product
+  // bundled into the personalized package (via packagingIncludes, folded into `category` when
+  // these rows were built — see openPriceEdit) renders under Personalized Kit, not Separate
+  // Product.
+  const personalizedKitGroups = priceEditKitGroups.filter(g => g.category === 'personalized');
+  const separateKitGroups = priceEditKitGroups.filter(g => g.category !== 'personalized');
+  const personalizedStandaloneRows = priceEditStandaloneRows.filter(r => r.category === 'personalized');
+  const separateProductRows = priceEditStandaloneRows.filter(r => r.category !== 'personalized');
+
+  // Flat Price/GST-editable table, reused for both the Personalized Kit section's loose bundled
+  // products and the Separate Product section.
+  const renderProductTable = (rows) => (
+    <Table
+      size="small"
+      style={{ marginTop: 6, marginBottom: 16 }}
+      pagination={false}
+      rowKey="key"
+      dataSource={rows}
+      columns={[
+        { title: 'Product', dataIndex: 'name', ellipsis: true },
+        { title: 'Qty', dataIndex: 'qty', width: 60, align: 'center' },
+        {
+          title: 'Price (₹)', width: 120, align: 'right',
+          render: (_, row) => (
+            <InputNumber
+              size="small"
+              min={row.origRate}
+              value={row.rate}
+              controls={false}
+              style={{ width: '100%' }}
+              onChange={(v) => updateStandaloneField(row.key, 'rate', v == null ? row.origRate : v)}
+            />
+          ),
+        },
+        {
+          title: 'GST %', width: 90, align: 'right',
+          render: (_, row) => (
+            <InputNumber
+              size="small"
+              min={row.origGst}
+              max={100}
+              value={row.gst}
+              controls={false}
+              style={{ width: '100%' }}
+              onChange={(v) => updateStandaloneField(row.key, 'gst', v == null ? row.origGst : v)}
+            />
+          ),
+        },
+        {
+          title: 'Line Total (₹)', width: 120, align: 'right',
+          render: (_, row) => `₹${r2(row.qty * row.rate * (1 + row.gst / 100)).toLocaleString()}`,
+        },
+      ]}
+    />
+  );
+
+  // One card per kit, its component products nested (indented, "↳") directly underneath it —
+  // NOT a separate disconnected list. Reused for both the Personalized and Separate Kit
+  // sections below.
+  const renderKitGroup = (g) => (
+    <div key={g.key} style={{ border: '1px solid #B11E6A33', borderRadius: 10, marginBottom: 10, overflow: 'hidden' }}>
+      <div style={{ background: isDark ? '#2a1520' : '#B11E6A10', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        <Text strong style={{ flex: '1 1 140px' }}>{g.name}</Text>
+        <Text type="secondary" style={{ fontSize: 12 }}>Qty {g.qty}</Text>
+        <InputNumber
+          size="small" min={g.origKitPrice} value={g.kitPrice} controls={false} prefix="₹" style={{ width: 110 }}
+          onChange={(v) => updateKitGroupField(g.key, 'kitPrice', v == null ? g.origKitPrice : v)}
+        />
+        <InputNumber
+          size="small" min={g.origGst} max={100} value={g.gst} controls={false} suffix="%" style={{ width: 85 }}
+          onChange={(v) => updateKitGroupField(g.key, 'gst', v == null ? g.origGst : v)}
+        />
+        <Text strong style={{ fontSize: 12, minWidth: 90, textAlign: 'right' }}>₹{r2(g.qty * g.kitPrice * (1 + g.gst / 100)).toLocaleString()}</Text>
+      </div>
+      {g.componentRows.length > 0 && (
+        <div style={{ padding: '2px 12px 6px 12px' }}>
+          {g.componentRows.map(r => (
+            <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', marginLeft: 16, borderTop: `1px dashed ${isDark ? '#ffffff22' : '#00000014'}` }}>
+              <Text style={{ flex: '1 1 120px', fontSize: 13 }}>↳ {r.name}</Text>
+              <Text type="secondary" style={{ fontSize: 12 }}>Qty {r.qty}</Text>
+              <InputNumber
+                size="small" min={r.origRate} value={r.rate} controls={false} prefix="₹" style={{ width: 110 }}
+                onChange={(v) => updateKitComponentField(g.key, r.key, 'rate', v == null ? r.origRate : v)}
+              />
+              <InputNumber
+                size="small" min={r.origGst} max={100} value={r.gst} controls={false} suffix="%" style={{ width: 85 }}
+                onChange={(v) => updateKitComponentField(g.key, r.key, 'gst', v == null ? r.origGst : v)}
+              />
+              <Text style={{ fontSize: 12, minWidth: 90, textAlign: 'right' }}>₹{r2(r.qty * r.rate * (1 + r.gst / 100)).toLocaleString()}</Text>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  // Rebuilds the flat products[]/kitOrders[] arrays the backend expects (same shape/order as
+  // priceEditInv.editProducts/editKitOrders — see productIndex above) from the edited groups,
+  // then runs them through buildDocComposition — the SAME packagingIncludes-aware composition
+  // math the real invoice document uses (Billing's invoiceList row, DocumentTemplate, Dispatch's
+  // print) — when the order actually uses "Select Kit(s) to Include", falling back to the plain
+  // computeRecordBuckets for orders that don't. Forwarding charge/courier/round-off aren't part
+  // of either rec shape (they come from the Lead/Order form and Record Payment, not this modal)
+  // so their already-known totals are added on afterward. This is still only a preview — the
+  // authoritative numbers come back from the server on save.
+  const priceEditPreview = useMemo(() => {
+    if (!priceEditInv) return { subtotal: 0, gst: 0, total: 0, flatProducts: [], flatKitOrders: [] };
+    const flatProducts = (priceEditInv.editProducts || []).map(p => ({ ...p }));
+    priceEditKitGroups.forEach(g => g.componentRows.forEach(r => {
+      flatProducts[r.productIndex] = { ...flatProducts[r.productIndex], rate: r.rate, gst: r.gst };
+    }));
+    priceEditStandaloneRows.forEach(r => {
+      flatProducts[r.productIndex] = { ...flatProducts[r.productIndex], rate: r.rate, gst: r.gst };
+    });
+    const flatKitOrders = (priceEditInv.editKitOrders || []).map(ko => {
+      const g = priceEditKitGroups.find(gr => gr.kitId === ko.kitId);
+      return g ? { ...ko, kitPrice: g.kitPrice, gst: g.gst } : ko;
+    });
+    const previewRec = {
+      products: flatProducts,
+      kitOrders: flatKitOrders,
+      kitPrice: priceEditPackagePrice,
+      kitOverallQty: priceEditPackageQty,
+      packagingIncludes: priceEditInv.editPackagingIncludes || [],
+      packagingIncludesQty: priceEditInv.editPackagingIncludesQty || {},
+    };
+    const comp = buildDocComposition(previewRec, kits);
+    const subtotal = comp ? comp.taxable : computeRecordBuckets(previewRec).taxable;
+    const gst = comp ? comp.gst : computeRecordBuckets(previewRec).gst;
+    const baseGrand = comp ? comp.totalSectionsAmt : computeRecordBuckets(previewRec).grand;
+    const fwd = priceEditInv.forwardingCharge ? (Number(priceEditInv.forwardingChargeAmount) || 0) : 0;
+    const total = r2(baseGrand + fwd + (Number(priceEditInv.courierCharge) || 0) + (Number(priceEditInv.roundOff) || 0));
+    return { subtotal, gst, total, flatProducts, flatKitOrders };
+  }, [priceEditInv, priceEditKitGroups, priceEditStandaloneRows, priceEditPackagePrice, priceEditPackageQty, kits]);
+
+  const handleSavePricing = async () => {
+    if (!priceEditInv?.key) { enqueueSnackbar('No record selected', { variant: 'error' }); return; }
+    if (!priceEditHasChanges) { setPriceEditOpen(false); return; }
+    if (!priceEditReason.trim()) { enqueueSnackbar('Please provide a reason for the price change', { variant: 'error' }); return; }
+    const isQuotation = priceEditInv.docType === 'Quotation';
+    setPriceEditSaving(true);
     try {
-      await updateInvoiceGstMutation({ id: gstEditInv.key, gstAmount: newGst }).unwrap();
-      enqueueSnackbar('GST updated successfully', { variant: 'success' });
-      setGstEditOpen(false);
+      const payload = {
+        id: priceEditInv.key,
+        products: priceEditPreview.flatProducts.map(p => ({ rate: p.rate, gst: p.gst })),
+        kitOrders: priceEditPreview.flatKitOrders.map(k => ({ kitId: k.kitId, kitPrice: k.kitPrice, gst: k.gst })),
+        kitPackagePrice: priceEditPackagePrice,
+        reason: priceEditReason.trim(),
+      };
+      if (isQuotation) await updateQuotationPricingMutation(payload).unwrap();
+      else await updateInvoicePricingMutation(payload).unwrap();
+      enqueueSnackbar(`${isQuotation ? 'Quotation' : 'Invoice'} pricing updated successfully`, { variant: 'success' });
+      setPriceEditOpen(false);
     } catch (err) {
-      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update GST', { variant: 'error' });
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update pricing', { variant: 'error' });
+    } finally {
+      setPriceEditSaving(false);
     }
   };
 
@@ -1119,7 +1437,8 @@ export default function Billing() {
       render: (_, r) => (
         <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={async () => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); setSelectedInv(await withPendingDue(r)); }} /></Tooltip>
-          <Tooltip title="Edit GST"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openGstEdit(r)} /></Tooltip>
+          <Tooltip title="Edit Pricing"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openPriceEdit(r)} /></Tooltip>
+          <Tooltip title="Price Edit Logs"><Button size="small" icon={<HistoryOutlined />} style={{ color: '#3730a3', borderColor: '#3730a344' }} onClick={() => openPriceLogs(r)} /></Tooltip>
           <Tooltip title="Send invoice on WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp('invoice', r)} /></Tooltip>
           <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
           <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument('invoice', r)} /></Tooltip>
@@ -1162,7 +1481,7 @@ export default function Billing() {
     { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${quotStatusColor[v] || '#aaa'}22`, color: quotStatusColor[v] || '#888', border: `1px solid ${quotStatusColor[v] || '#aaa'}44` }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions',
-      width: tabType === 'in-process' ? 500 : 190,
+      width: tabType === 'in-process' ? 580 : 190,
       fixed: 'right',
       render: (_, r) => {
         const isOrder = r.docType === 'Order';
@@ -1175,15 +1494,19 @@ export default function Billing() {
             <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument(docType, r)} /></Tooltip>
             {/* Quotation-specific actions */}
             {tabType === 'in-process' && !isOrder && (
-              <Button
-                size="small"
-                type="primary"
-                icon={<FileDoneOutlined />}
-                style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontSize: 12 }}
-                onClick={() => openConvertModal(r)}
-              >
-                Convert to Invoice
-              </Button>
+              <>
+                <Tooltip title="Edit Pricing"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openPriceEdit({ ...r, inv: r.quot })} /></Tooltip>
+                <Tooltip title="Price Edit Logs"><Button size="small" icon={<HistoryOutlined />} style={{ color: '#3730a3', borderColor: '#3730a344' }} onClick={() => openPriceLogs(r)} /></Tooltip>
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<FileDoneOutlined />}
+                  style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontSize: 12 }}
+                  onClick={() => openConvertModal(r)}
+                >
+                  Convert to Invoice
+                </Button>
+              </>
             )}
             {tabType === 'in-process' && !isOrder && r.status === 'Paid' && (
               <>
@@ -1950,77 +2273,173 @@ export default function Billing() {
         )}
       </Modal>
 
-      {/* ───────────── EDIT GST MODAL (Invoices tab) ───────────── */}
+      {/* ───────────── EDIT INVOICE PRICING MODAL (Invoices tab) ───────────── */}
       <Modal
         title={
           <Space>
             <EditOutlined style={{ color: '#B11E6A' }} />
-            <span style={{ fontWeight: 700 }}>Edit GST — {gstEditInv?.inv}</span>
+            <span style={{ fontWeight: 700 }}>Edit Invoice Pricing — {priceEditInv?.inv}</span>
           </Space>
         }
-        open={gstEditOpen}
-        onCancel={() => setGstEditOpen(false)}
+        open={priceEditOpen}
+        onCancel={() => setPriceEditOpen(false)}
         footer={null}
-        width={420}
+        width={720}
         centered
       >
-        {gstEditInv && (
+        {priceEditInv && (
           <div style={{ marginTop: 8 }}>
-            <div style={{ background: '#B11E6A10', border: '1px solid #B11E6A33', borderRadius: 10, padding: '12px 16px', marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Invoice</Text>
-                <Text strong style={{ color: '#B11E6A' }}>{gstEditInv.inv}</Text>
+            <div style={{ background: '#B11E6A10', border: '1px solid #B11E6A33', borderRadius: 10, padding: '12px 16px', marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+              <div>
+                <Text type="secondary" style={{ fontSize: 12 }}>Invoice</Text><br />
+                <Text strong style={{ color: '#B11E6A' }}>{priceEditInv.inv}</Text>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Client</Text>
-                <Text strong>{gstEditInv.client}</Text>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Base Amount</Text>
-                <Text strong>₹{gstEditInv.amount.toLocaleString()}</Text>
+              <div style={{ textAlign: 'right' }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Client</Text><br />
+                <Text strong>{priceEditInv.client}</Text>
               </div>
             </div>
-            <Form layout="vertical">
-              <Form.Item label={<Text strong>GST Amount <span style={{ color: '#ff4d4f' }}>*</span></Text>}>
-                <InputNumber
-                  prefix="₹"
-                  value={gstEditValue}
-                  onChange={(v) => setGstEditValue(v || 0)}
-                  min={0}
-                  style={{ width: '100%', height: 44 }}
-                  controls={false}
-                  autoFocus
-                />
-              </Form.Item>
-            </Form>
+
+            {(priceEditHasPackage || personalizedKitGroups.length > 0 || personalizedStandaloneRows.length > 0) && (
+              <>
+                <Text strong style={{ fontSize: 13 }}>Personalized Kit</Text>
+                <div style={{ marginTop: 6, marginBottom: 16 }}>
+                  {priceEditHasPackage && (
+                    <div style={{ border: '1px solid #B11E6A33', borderRadius: 10, marginBottom: 10, background: isDark ? '#2a1520' : '#B11E6A10', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                      <Text strong style={{ flex: '1 1 140px' }}>Personalized Package Fee</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>Qty {priceEditPackageQty}</Text>
+                      <InputNumber
+                        size="small" min={priceEditPackageOrigPrice} value={priceEditPackagePrice} controls={false} prefix="₹" style={{ width: 110 }}
+                        onChange={(v) => setPriceEditPackagePrice(v == null ? priceEditPackageOrigPrice : v)}
+                      />
+                      <Text strong style={{ fontSize: 12, minWidth: 90, textAlign: 'right' }}>₹{r2(priceEditPackageQty * priceEditPackagePrice).toLocaleString()}</Text>
+                    </div>
+                  )}
+                  {personalizedKitGroups.map(renderKitGroup)}
+                  {personalizedStandaloneRows.length > 0 && renderProductTable(personalizedStandaloneRows)}
+                </div>
+              </>
+            )}
+
+            {separateKitGroups.length > 0 && (
+              <>
+                <Text strong style={{ fontSize: 13 }}>Separate Kit</Text>
+                <div style={{ marginTop: 6, marginBottom: 16 }}>{separateKitGroups.map(renderKitGroup)}</div>
+              </>
+            )}
+
+            {separateProductRows.length > 0 && (
+              <>
+                <Text strong style={{ fontSize: 13 }}>Separate Product</Text>
+                {renderProductTable(separateProductRows)}
+              </>
+            )}
+
+            {!priceEditHasPackage && priceEditKitGroups.length === 0 && priceEditStandaloneRows.length === 0 && (
+              <div style={{ padding: '16px 0', textAlign: 'center' }}>
+                <Text type="secondary">No priced line items found for this invoice.</Text>
+              </div>
+            )}
+
             <div style={{ background: isDark ? '#1a0f14' : '#fdf5f9', border: '1px solid #B11E6A33', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <Text style={{ fontSize: 13, color: '#888' }}>Base Amount</Text>
-                <Text strong>₹{gstEditInv.amount.toLocaleString()}</Text>
+                <Text style={{ fontSize: 13, color: '#888' }}>Subtotal</Text>
+                <Text strong>₹{priceEditInv.amount.toLocaleString()} → ₹{priceEditPreview.subtotal.toLocaleString()}</Text>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                 <Text style={{ fontSize: 13, color: '#888' }}>GST</Text>
-                <Text strong style={{ color: '#B11E6A' }}>₹{(gstEditValue || 0).toLocaleString()}</Text>
+                <Text strong style={{ color: '#B11E6A' }}>₹{priceEditInv.gst.toLocaleString()} → ₹{priceEditPreview.gst.toLocaleString()}</Text>
               </div>
+              {!!priceEditInv.forwardingCharge && priceEditInv.forwardingChargeAmount > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={{ fontSize: 13, color: '#888' }}>Forwarding Charge</Text>
+                  <Text strong>₹{priceEditInv.forwardingChargeAmount.toLocaleString()}</Text>
+                </div>
+              )}
+              {priceEditInv.courierCharge > 0 && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={{ fontSize: 13, color: '#888' }}>Courier Charge</Text>
+                  <Text strong>₹{priceEditInv.courierCharge.toLocaleString()}</Text>
+                </div>
+              )}
+              {!!priceEditInv.roundOff && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <Text style={{ fontSize: 13, color: '#888' }}>Round Off</Text>
+                  <Text strong>₹{priceEditInv.roundOff.toLocaleString()}</Text>
+                </div>
+              )}
               <Divider style={{ margin: '6px 0' }} />
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <Text strong style={{ fontSize: 14 }}>New Total</Text>
-                <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>
-                  ₹{(gstEditInv.amount + (gstEditValue || 0)).toLocaleString()}
-                </Text>
+                <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>₹{priceEditPreview.total.toLocaleString()}</Text>
               </div>
             </div>
+
+            <Form layout="vertical">
+              <Form.Item
+                label={<Text strong>Reason for change <span style={{ color: '#ff4d4f' }}>*</span></Text>}
+                validateStatus={priceEditHasChanges && !priceEditReason.trim() ? 'error' : ''}
+                help={priceEditHasChanges && !priceEditReason.trim() ? 'A reason is required to save price changes' : ''}
+              >
+                <Input.TextArea
+                  rows={2}
+                  value={priceEditReason}
+                  onChange={(e) => setPriceEditReason(e.target.value)}
+                  placeholder="Why is this invoice's pricing being revised?"
+                />
+              </Form.Item>
+            </Form>
+
             <div style={{ display: 'flex', gap: 10 }}>
-              <Button style={{ flex: 1 }} onClick={() => setGstEditOpen(false)}>Cancel</Button>
+              <Button style={{ flex: 1 }} onClick={() => setPriceEditOpen(false)}>Cancel</Button>
               <Button
                 type="primary"
                 style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
-                onClick={handleSaveGst}
+                onClick={handleSavePricing}
+                loading={priceEditSaving}
+                disabled={priceEditHasChanges && !priceEditReason.trim()}
               >
-                Save GST
+                Save Pricing
               </Button>
             </div>
           </div>
+        )}
+      </Modal>
+
+      {/* ───────────── PRICE EDIT LOGS MODAL (Invoices + Quotation in Process) ───────────── */}
+      <Modal
+        title={
+          <Space>
+            <HistoryOutlined style={{ color: '#3730a3' }} />
+            <span style={{ fontWeight: 700 }}>Price Edit Logs — {priceLogsRecord?.inv || priceLogsRecord?.quot}</span>
+          </Space>
+        }
+        open={priceLogsOpen}
+        onCancel={() => setPriceLogsOpen(false)}
+        footer={null}
+        width={720}
+        centered
+      >
+        {priceLogsRecord && (
+          (priceLogsRecord.priceEditHistory || []).length === 0 ? (
+            <div style={{ padding: '24px 0', textAlign: 'center' }}>
+              <Text type="secondary">No price edits recorded yet.</Text>
+            </div>
+          ) : (
+            <Table
+              size="small"
+              pagination={{ pageSize: 8, size: 'small', hideOnSinglePage: true }}
+              rowKey={(r, i) => `${r.changedAt}-${i}`}
+              dataSource={[...(priceLogsRecord.priceEditHistory || [])].reverse()}
+              columns={[
+                { title: 'Date & Time', dataIndex: 'changedAt', width: 150, render: (v) => <Text style={{ fontSize: 12 }}>{v ? new Date(v).toLocaleString() : '—'}</Text> },
+                { title: 'Reason', dataIndex: 'reason', render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                { title: 'Old Total', dataIndex: 'oldTotal', width: 110, render: (v) => <Text type="secondary" style={{ fontSize: 12, textDecoration: 'line-through' }}>₹{(v || 0).toLocaleString()}</Text> },
+                { title: 'New Total', dataIndex: 'newTotal', width: 110, render: (v) => <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>₹{(v || 0).toLocaleString()}</Text> },
+                { title: 'Edited By', dataIndex: 'changedByName', width: 140, render: (v) => <Space size={4}><UserOutlined style={{ color: '#aaa' }} />{v || 'System'}</Space> },
+              ]}
+            />
+          )
         )}
       </Modal>
 

@@ -47,6 +47,20 @@ const invoiceSchema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  // Audit trail for price/GST revisions made via updateInvoicePricing (Billing's "Edit
+  // Pricing" modal) — mirrors Order.editHistory's shape/purpose.
+  priceEditHistory: [{
+    reason: String,
+    oldSubtotal: Number,
+    newSubtotal: Number,
+    oldGstAmount: Number,
+    newGstAmount: Number,
+    oldTotal: Number,
+    newTotal: Number,
+    changedAt: { type: Date, default: Date.now },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    changedByName: String,
+  }],
 }, { timestamps: true });
 
 invoiceSchema.index({ partyId: 1 });

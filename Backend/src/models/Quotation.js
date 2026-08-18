@@ -67,6 +67,20 @@ const quotationSchema = new mongoose.Schema({
   },
   items: [quotationItemSchema],
   note: String,
+  // Audit trail for price/GST revisions made via updateQuotationPricing (Billing's "Edit
+  // Pricing" modal) — mirrors Invoice.priceEditHistory's shape/purpose.
+  priceEditHistory: [{
+    reason: String,
+    oldSubtotal: Number,
+    newSubtotal: Number,
+    oldGstAmount: Number,
+    newGstAmount: Number,
+    oldTotal: Number,
+    newTotal: Number,
+    changedAt: { type: Date, default: Date.now },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    changedByName: String,
+  }],
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

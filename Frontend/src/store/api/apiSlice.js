@@ -724,9 +724,18 @@ export const apiSlice = createApi({
       // createInvoice) — invalidate Orders/Operations so Sales/Operations refetch too.
       invalidatesTags: ['Invoices', 'BillingParties', 'Orders', 'Operations', 'Reports'],
     }),
-    updateInvoiceGst: builder.mutation({
-      query: ({ id, gstAmount }) => ({ url: `/billing/invoices/${id}/gst`, method: 'patch', data: { gstAmount } }),
-      invalidatesTags: ['Invoices', 'Reports'],
+    updateInvoicePricing: builder.mutation({
+      query: ({ id, products, kitOrders, kitPackagePrice, reason }) => ({ url: `/billing/invoices/${id}/pricing`, method: 'patch', data: { products, kitOrders, kitPackagePrice, reason } }),
+      // Backend rewrites the linked Order's products/kitOrders/total/gstAmount too (see
+      // billing.controller updateInvoicePricing) — invalidate everything that reads order
+      // totals so Sales/Operations/Dispatch/Task views refetch alongside Billing/Reports.
+      invalidatesTags: ['Invoices', 'Orders', 'Operations', 'Dispatch', 'Reports', 'Tasks'],
+    }),
+    updateQuotationPricing: builder.mutation({
+      query: ({ id, products, kitOrders, kitPackagePrice, reason }) => ({ url: `/billing/quotations/${id}/pricing`, method: 'patch', data: { products, kitOrders, kitPackagePrice, reason } }),
+      // Same reasoning as updateInvoicePricing — a quotation "in process" very often already
+      // has a linked Order, which the backend edits directly (see updateQuotationPricing).
+      invalidatesTags: ['Quotations', 'Orders', 'Operations', 'Dispatch', 'Reports', 'Tasks'],
     }),
     deleteInvoice: builder.mutation({
       query: (id) => ({ url: `/billing/invoices/${id}`, method: 'delete' }),
@@ -1489,7 +1498,8 @@ export const {
   useGetInvoicesQuery,
   useGetInvoiceQuery,
   useCreateInvoiceMutation,
-  useUpdateInvoiceGstMutation,
+  useUpdateInvoicePricingMutation,
+  useUpdateQuotationPricingMutation,
   useDeleteInvoiceMutation,
   useRecordPaymentMutation,
   useGetInvoicePaymentsQuery,
