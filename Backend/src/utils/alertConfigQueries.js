@@ -44,7 +44,16 @@ function linkFor(recordType, record) {
     return record.emergencyTaskId ? `/tasks/${record.emergencyTaskId}` : '/tasks';
   }
   // StickerRequest queue items are actioned from the order's Operations detail page.
-  return record.orderId ? `/operations/${record.orderId}` : '/operations';
+  // OperationDetail.jsx (and every other "view order" link in Operations) matches by
+  // the order's orderCode, not its raw _id — `allOrders` there normalizes each order's
+  // route id as `o.orderCode || o._id`. `record.orderId` needs to be populated with
+  // { orderCode } (see getPendingRecordsForConfig below) for this to resolve correctly;
+  // an un-populated ObjectId falls through to the `_id` fallback below, which still
+  // matches OperationDetail's own fallback for orders that lack a code.
+  if (!record.orderId) return '/operations';
+  const orderCode = record.orderId?.orderCode;
+  const orderRef = orderCode || record.orderId?._id || record.orderId;
+  return `/operations/${orderRef}`;
 }
 
 // Returns [{ recordType, recordId, record, title, link }] currently pending for this config.
@@ -55,7 +64,7 @@ async function getPendingRecordsForConfig(config) {
     const items = await StickerRequest.find({
       stickerType,
       status: { $nin: TERMINAL_DESIGN_STATUSES },
-    }).lean();
+    }).populate('orderId', 'orderCode').lean();
     return items.map((r) => ({
       recordType: 'StickerRequest',
       recordId: r._id,
@@ -129,7 +138,7 @@ async function getPendingRecordsForConfig(config) {
     const emergencyField = config.group === 'sales_approval' ? 'emergencySalesApproved' : 'emergencyOpsApproved';
 
     const [stickerPending, orderPending] = await Promise.all([
-      StickerRequest.find({ status: 'Waiting for Approval', [approvedField]: false }).lean(),
+      StickerRequest.find({ status: 'Waiting for Approval', [approvedField]: false }).populate('orderId', 'orderCode').lean(),
       Order.find({ emergencyDispatchRequested: true, [emergencyField]: false }).lean(),
     ]);
 

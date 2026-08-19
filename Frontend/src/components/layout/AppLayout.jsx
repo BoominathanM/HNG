@@ -5,6 +5,7 @@ import { useSelector } from 'react-redux';
 import Sidebar from './Sidebar';
 import Header from './Header';
 import AlertListener from '../alerts/AlertListener';
+import NotificationSoundListener from '../notifications/NotificationSoundListener';
 
 const { Content } = Layout;
 
@@ -15,6 +16,7 @@ export default function AppLayout() {
   return (
     <Layout style={{ height: '100vh', overflow: 'hidden', background: isDark ? '#121212' : '#F8F9FC' }}>
       <AlertListener />
+      <NotificationSoundListener />
       <Sidebar
         mobileOpen={mobileOpen}
         onMobileClose={() => setMobileOpen(false)}

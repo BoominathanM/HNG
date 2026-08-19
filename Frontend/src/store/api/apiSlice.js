@@ -40,7 +40,7 @@ export const apiSlice = createApi({
     'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
     'GstConfig', 'TaskTimeConfig',
     'MaterialStocks', 'PackagingInvoices',
-    'AlertConfigs',
+    'AlertConfigs', 'ActiveAlerts', 'SnoozedAlerts', 'AlertLogs', 'NotificationSoundConfig',
     'AiConfig', 'QuotationComparisons',
     'HiddenQueueRows',
   ],
@@ -1082,6 +1082,17 @@ export const apiSlice = createApi({
       query: () => ({ url: '/notifications/all', method: 'delete' }),
       invalidatesTags: ['Notifications'],
     }),
+    getNotificationSoundConfig: builder.query({
+      query: () => ({ url: '/notifications/sound-config' }),
+      providesTags: ['NotificationSoundConfig'],
+    }),
+    updateNotificationSoundConfig: builder.mutation({
+      query: (data) => ({ url: '/notifications/sound-config', method: 'put', data }),
+      invalidatesTags: ['NotificationSoundConfig'],
+    }),
+    uploadNotificationSoundFile: builder.mutation({
+      query: (formData) => ({ url: '/notifications/sound-config/upload-audio', method: 'post', data: formData }),
+    }),
 
     // ── Settings ─────────────────────────────────────────────────────────────
     getCountryCodes: builder.query({
@@ -1316,6 +1327,27 @@ export const apiSlice = createApi({
     }),
     getActiveAlerts: builder.query({
       query: () => ({ url: '/alerts/active' }),
+      providesTags: ['ActiveAlerts'],
+    }),
+    snoozeAlert: builder.mutation({
+      query: (data) => ({ url: '/alerts/snooze', method: 'post', data }),
+      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts', 'AlertLogs'],
+    }),
+    stopAlert: builder.mutation({
+      query: (data) => ({ url: '/alerts/stop', method: 'post', data }),
+      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts', 'AlertLogs'],
+    }),
+    getSnoozedAlerts: builder.query({
+      query: () => ({ url: '/alerts/snoozed' }),
+      providesTags: ['SnoozedAlerts'],
+    }),
+    clearSnoozedAlert: builder.mutation({
+      query: (id) => ({ url: `/alerts/snoozed/${id}/clear`, method: 'post' }),
+      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts', 'AlertLogs'],
+    }),
+    getAlertLogs: builder.query({
+      query: () => ({ url: '/alerts/logs' }),
+      providesTags: ['AlertLogs'],
     }),
 
     // ── GST Integration ──────────────────────────────────────────────────────
@@ -1628,6 +1660,9 @@ export const {
   useGetPaymentAlertsQuery,
   useDeleteNotificationMutation,
   useDeleteAllNotificationsMutation,
+  useGetNotificationSoundConfigQuery,
+  useUpdateNotificationSoundConfigMutation,
+  useUploadNotificationSoundFileMutation,
   // Settings
   useGetCountryCodesQuery,
   useGetCompanySettingsQuery,
@@ -1689,6 +1724,11 @@ export const {
   useSaveAlertConfigMutation,
   useUploadAlertAudioMutation,
   useGetActiveAlertsQuery,
+  useSnoozeAlertMutation,
+  useStopAlertMutation,
+  useGetSnoozedAlertsQuery,
+  useClearSnoozedAlertMutation,
+  useGetAlertLogsQuery,
   // GST Integration
   useGetGstConfigQuery,
   useGetGstCredentialsQuery,

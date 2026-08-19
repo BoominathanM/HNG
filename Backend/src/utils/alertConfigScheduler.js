@@ -1,6 +1,7 @@
 const cron = require('node-cron');
 const AlertConfig = require('../models/AlertConfig');
 const AlertFireLog = require('../models/AlertFireLog');
+const AlertLog = require('../models/AlertLog');
 const { getPendingRecordsForConfig } = require('./alertConfigQueries');
 
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -20,6 +21,22 @@ function isWithinWindow(config, now) {
   const startMinutes = minutesSinceMidnight(startHH, startMM);
   const endMinutes = minutesSinceMidnight(endHH, endMM);
   return nowMinutes >= startMinutes && nowMinutes <= endMinutes;
+}
+
+// Best-effort audit write — a logging failure must never break the actual
+// alert-firing flow, so this is fire-and-forget from the caller's perspective.
+async function logAlertEvent(event, config, item, now, extra = {}) {
+  try {
+    await AlertLog.create({
+      event,
+      configId: config._id, recordType: item.recordType, recordId: item.recordId,
+      group: config.group, role: config.role, title: item.title,
+      createdAt: now,
+      ...extra,
+    });
+  } catch (err) {
+    console.error('[alert-config] failed to write AlertLog:', err.message);
+  }
 }
 
 async function processConfig(config) {
@@ -43,9 +60,11 @@ async function processConfig(config) {
       await AlertFireLog.create({
         configId: config._id, recordType: item.recordType, recordId: item.recordId, lastFiredAt: now,
       });
+      await logAlertEvent('fired', config, item, now);
     } else if (now.getTime() - log.lastFiredAt.getTime() >= cadenceMs) {
       log.lastFiredAt = now;
       await log.save();
+      await logAlertEvent('fired', config, item, now);
     }
   }
 
@@ -60,8 +79,15 @@ async function processConfig(config) {
 async function checkAndFire() {
   try {
     const configs = await AlertConfig.find({ isEnabled: true });
+    // Each config is isolated in its own try/catch — one config throwing (e.g. an
+    // unexpected recordType, a bad query) must never abort the remaining configs
+    // in this tick, or every alert after it in the list silently stops repeating.
     for (const config of configs) {
-      await processConfig(config);
+      try {
+        await processConfig(config);
+      } catch (err) {
+        console.error(`[alert-config] check error for config ${config._id} (${config.group}/${config.role || ''}):`, err.message);
+      }
     }
   } catch (err) {
     console.error('[alert-config] check error:', err.message);

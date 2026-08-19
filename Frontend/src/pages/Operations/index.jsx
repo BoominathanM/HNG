@@ -1194,6 +1194,11 @@ export default function Operations() {
               style={{ width: 140 }}
               placeholder="Unassigned"
               allowClear
+              // Design Vendor team members (Sticker/Box/Ziplock/etc.) can see who a
+              // request is routed to but must not reroute it themselves — only
+              // Admin/Ops control printing-supplier assignment. Same department
+              // check used elsewhere in this file (see `isAdminDept`, line ~208).
+              disabled={currentUser?.department === 'Vendors'}
               value={currentVendorId}
               options={options}
               onChange={async (val) => {

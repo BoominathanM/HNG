@@ -9,6 +9,7 @@ import {
   SaveOutlined, PlusOutlined, EditOutlined, DeleteOutlined,
   UserOutlined, UploadOutlined, CheckOutlined, CloseOutlined,
   FileTextOutlined, BgColorsOutlined, FontColorsOutlined, NotificationOutlined,
+  ClockCircleOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -31,6 +32,9 @@ import {
   useUploadSignatureMutation,
   useUploadQrCodeMutation,
   useRestoreRecordMutation,
+  useGetSnoozedAlertsQuery,
+  useClearSnoozedAlertMutation,
+  useGetAlertLogsQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -71,6 +75,7 @@ const VENDOR_ROLES = ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush
 
 const DEPT_ROLES = {
   Admin: ['Admin'],
+  Management: ['Admin'],
   Sales: ['Sales Executive', 'Sales Manager', 'Sales Head'],
   Operations: ['Operations Executive', 'Operations Manager', 'Operations Head'],
   'Task Management': ['Task Management Executive', 'Task Management Manager', 'Task Management Head'],
@@ -137,6 +142,14 @@ export default function Settings() {
   const handleProfilePhotoUpload = useMemo(() => makeUpload('settings/profiles'), [makeUpload]);
   const { filterTabs } = useTabAccess('Settings');
   const isDark = useSelector((s) => s.theme.isDark);
+  const currentUser = useSelector((s) => s.auth.user);
+  // Real admin-gate idiom used elsewhere (mirrors the backend's isAdminOrManagement
+  // in modules/alerts/alerts.controller.js) — Snoozed Alerts shows cross-user data,
+  // so it's excluded from the tab list entirely for anyone else, not just hidden
+  // via the (default-open) per-user Tab Access checkboxes.
+  const isAdminOrManagement = !!currentUser && (
+    currentUser.role === 'Super Admin' || currentUser.department === 'Admin' || currentUser.department === 'Management'
+  );
   const cardBg     = isDark ? '#1E1E2E' : '#ffffff';
   const textColor  = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor= isDark ? '#2a2a3a' : '#f0f0f0';
@@ -149,7 +162,7 @@ export default function Settings() {
   const [customDeptRoles, setCustomDeptRoles] = useState({});
 
   // Departments (fixed list — no user-facing add option)
-  const departments = ['Sales', 'Operations', 'Task Management', 'Dispatch', 'Finance', 'Vendors', 'Admin'];
+  const departments = ['Sales', 'Operations', 'Task Management', 'Dispatch', 'Finance', 'Vendors', 'Admin', 'Management'];
 
   // Users — RTK Query
   const { data: usersData, isLoading: usersLoading } = useGetUsersQuery({ limit: 500 });
@@ -205,6 +218,21 @@ export default function Settings() {
   const [uploadLogoMutation] = useUploadLogoMutation();
   const [uploadSignatureMutation] = useUploadSignatureMutation();
   const [uploadQrCodeMutation] = useUploadQrCodeMutation();
+
+  // Snoozed Alerts — RTK Query (Admin/Management only; the query is still safe to
+  // mount for anyone since the backend 403s, we just don't render the tab for them)
+  const { data: snoozedData, isLoading: snoozedLoading } = useGetSnoozedAlertsQuery(undefined, { skip: !isAdminOrManagement });
+  const [clearSnoozedAlertMutation] = useClearSnoozedAlertMutation();
+  const [snoozedSearch, setSnoozedSearch] = useState('');
+  const [snoozedActionFilter, setSnoozedActionFilter] = useState('all');
+  const snoozedAlerts = snoozedData?.data || [];
+
+  // Alert Logs — full history (fired/snoozed/stopped/cleared/expired), unlike
+  // Snoozed Alerts above which only shows currently-active suppressions.
+  const { data: alertLogsData, isLoading: alertLogsLoading } = useGetAlertLogsQuery(undefined, { skip: !isAdminOrManagement });
+  const [alertLogSearch, setAlertLogSearch] = useState('');
+  const [alertLogEventFilter, setAlertLogEventFilter] = useState('all');
+  const alertLogs = alertLogsData?.data || [];
 
   // Form instance for the General tab (so its Save button can persist)
   const [generalForm] = Form.useForm();
@@ -945,6 +973,7 @@ export default function Settings() {
                       <Switch checked={notifPrefs[n.key]} onChange={(v) => setNotifPrefs((p) => ({ ...p, [n.key]: v }))} style={{ background: notifPrefs[n.key] ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
                     </div>
                   ))}
+
                   <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 8 }}>
                     <Button>Cancel</Button>
                     <Button type="primary" icon={<SaveOutlined />} onClick={saveNotifications} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
@@ -1460,6 +1489,201 @@ export default function Settings() {
             label: <Space><NotificationOutlined />Alert Configuration</Space>,
             children: <AlertConfigurationTab />,
           },
+          ...(isAdminOrManagement ? [{
+            key: 'snoozed_alerts',
+            label: <Space><ClockCircleOutlined />Snoozed Alerts</Space>,
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                  <Text type="secondary" style={{ fontSize: 13 }}>Alerts individual users have snoozed or stopped, with who/when/duration (Admin/Management only)</Text>
+                  <Space wrap>
+                    <Input
+                      prefix={<span>🔍</span>}
+                      placeholder="Search by user or alert..."
+                      value={snoozedSearch}
+                      onChange={e => setSnoozedSearch(e.target.value)}
+                      style={{ width: 220, borderRadius: 8 }}
+                      allowClear
+                    />
+                    <Select value={snoozedActionFilter} onChange={setSnoozedActionFilter} style={{ width: 160 }}>
+                      <Option value="all">All</Option>
+                      <Option value="snooze">Snoozed</Option>
+                      <Option value="stop">Stopped</Option>
+                    </Select>
+                  </Space>
+                </div>
+                {snoozedLoading ? (
+                  <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                ) : snoozedAlerts.length === 0 ? (
+                  <Empty description="No snoozed or stopped alerts" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                ) : (
+                  <Table
+                    size="small"
+                    dataSource={snoozedAlerts
+                      .filter(r => snoozedActionFilter === 'all' || r.action === snoozedActionFilter)
+                      .filter(r => {
+                        if (!snoozedSearch) return true;
+                        const q = snoozedSearch.toLowerCase();
+                        return (r.userId?.fullName || '').toLowerCase().includes(q)
+                          || (r.title || '').toLowerCase().includes(q)
+                          || (r.group || '').toLowerCase().includes(q);
+                      })}
+                    rowKey="_id"
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                    columns={[
+                      {
+                        title: 'User', dataIndex: 'userId', width: 180,
+                        render: u => <Text strong style={{ color: textColor, fontSize: 13 }}>{u?.fullName || 'Unknown'}</Text>
+                      },
+                      {
+                        title: 'Alert', key: 'alert',
+                        render: (_, r) => (
+                          <div>
+                            <Text style={{ color: textColor, fontSize: 13, display: 'block' }}>{r.title || `${r.group}${r.role ? ` — ${r.role}` : ''}`}</Text>
+                            <Tag style={{ borderRadius: 10, background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, marginTop: 2 }}>{r.group}</Tag>
+                          </div>
+                        )
+                      },
+                      {
+                        title: 'Action', dataIndex: 'action', width: 100,
+                        render: v => <Tag color={v === 'stop' ? 'red' : 'orange'} style={{ borderRadius: 10, fontSize: 12 }}>{v === 'stop' ? 'Stopped' : 'Snoozed'}</Tag>
+                      },
+                      {
+                        title: 'Duration', dataIndex: 'snoozeMinutes', width: 100,
+                        render: (v, r) => r.action === 'stop' ? <Text style={{ fontSize: 13, color: '#888' }}>—</Text> : <Text style={{ fontSize: 13, color: '#888' }}>{v} min</Text>
+                      },
+                      {
+                        title: 'Status', key: 'status', width: 110,
+                        render: (_, r) => {
+                          if (r.action === 'stop') return <Tag color="red" style={{ borderRadius: 10, fontSize: 12 }}>Stopped</Tag>;
+                          const active = r.snoozedUntil && new Date(r.snoozedUntil) > new Date();
+                          return <Tag color={active ? 'green' : 'default'} style={{ borderRadius: 10, fontSize: 12 }}>{active ? 'Active' : 'Expired'}</Tag>;
+                        }
+                      },
+                      {
+                        title: 'At', dataIndex: 'createdAt', width: 160,
+                        render: v => <Text style={{ fontSize: 13, color: '#888' }}>{new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</Text>
+                      },
+                      {
+                        title: 'Until', dataIndex: 'snoozedUntil', width: 160,
+                        render: v => v ? <Text style={{ fontSize: 13, color: '#888' }}>{new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</Text> : <Text style={{ fontSize: 13, color: '#888' }}>—</Text>
+                      },
+                      {
+                        title: 'Actions', key: 'actions', width: 80,
+                        render: (_, r) => (
+                          <Tooltip title="Clear — alert will ring again for this user">
+                            <Button
+                              size="small"
+                              type="link"
+                              style={{ color: '#52c41a', padding: '0 4px', fontSize: 13 }}
+                              onClick={async () => {
+                                try {
+                                  await clearSnoozedAlertMutation(r._id).unwrap();
+                                  enqueueSnackbar('Cleared', { variant: 'success' });
+                                } catch { enqueueSnackbar('Failed to clear', { variant: 'error' }); }
+                              }}
+                            >
+                              Clear
+                            </Button>
+                          </Tooltip>
+                        )
+                      },
+                    ]}
+                  />
+                )}
+              </Card>
+            ),
+          }] : []),
+          ...(isAdminOrManagement ? [{
+            key: 'alert_logs',
+            label: <Space><ClockCircleOutlined />Alert Logs</Space>,
+            children: (
+              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
+                  <Text type="secondary" style={{ fontSize: 13 }}>Full history of every alert event — fired, snoozed, stopped, cleared, expired (Admin/Management only)</Text>
+                  <Space wrap>
+                    <Input
+                      prefix={<span>🔍</span>}
+                      placeholder="Search by user or alert..."
+                      value={alertLogSearch}
+                      onChange={e => setAlertLogSearch(e.target.value)}
+                      style={{ width: 220, borderRadius: 8 }}
+                      allowClear
+                    />
+                    <Select value={alertLogEventFilter} onChange={setAlertLogEventFilter} style={{ width: 160 }}>
+                      <Option value="all">All Events</Option>
+                      <Option value="fired">Fired</Option>
+                      <Option value="snoozed">Snoozed</Option>
+                      <Option value="stopped">Stopped</Option>
+                      <Option value="cleared">Cleared</Option>
+                      <Option value="expired">Expired</Option>
+                    </Select>
+                  </Space>
+                </div>
+                {alertLogsLoading ? (
+                  <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+                ) : alertLogs.length === 0 ? (
+                  <Empty description="No alert log entries yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
+                ) : (
+                  <Table
+                    size="small"
+                    dataSource={alertLogs
+                      .filter(r => alertLogEventFilter === 'all' || r.event === alertLogEventFilter)
+                      .filter(r => {
+                        if (!alertLogSearch) return true;
+                        const q = alertLogSearch.toLowerCase();
+                        return (r.userId?.fullName || '').toLowerCase().includes(q)
+                          || (r.targetUserId?.fullName || '').toLowerCase().includes(q)
+                          || (r.title || '').toLowerCase().includes(q)
+                          || (r.group || '').toLowerCase().includes(q);
+                      })}
+                    rowKey="_id"
+                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 20 }}
+                    columns={[
+                      {
+                        title: 'Event', dataIndex: 'event', width: 100,
+                        render: v => {
+                          const colors = { fired: 'blue', snoozed: 'orange', stopped: 'red', cleared: 'green', expired: 'purple' };
+                          return <Tag color={colors[v] || 'default'} style={{ borderRadius: 10, fontSize: 12 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</Tag>;
+                        }
+                      },
+                      {
+                        title: 'Alert', key: 'alert',
+                        render: (_, r) => (
+                          <div>
+                            <Text style={{ color: textColor, fontSize: 13, display: 'block' }}>{r.title || `${r.group}${r.role ? ` — ${r.role}` : ''}`}</Text>
+                            <Tag style={{ borderRadius: 10, background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, marginTop: 2 }}>{r.group}</Tag>
+                          </div>
+                        )
+                      },
+                      {
+                        title: 'User', key: 'user', width: 200,
+                        render: (_, r) => {
+                          if (r.event === 'fired') return <Text style={{ fontSize: 13, color: '#888' }}>System (scheduler)</Text>;
+                          if (r.event === 'cleared') {
+                            return (
+                              <Text style={{ fontSize: 13, color: textColor }}>
+                                {r.userId?.fullName || 'Unknown'} <Text style={{ color: '#888', fontSize: 12 }}>cleared for</Text> {r.targetUserId?.fullName || 'Unknown'}
+                              </Text>
+                            );
+                          }
+                          return <Text style={{ fontSize: 13, color: textColor }}>{r.userId?.fullName || 'Unknown'}</Text>;
+                        }
+                      },
+                      {
+                        title: 'Details', key: 'details', width: 100,
+                        render: (_, r) => r.event === 'snoozed' ? <Text style={{ fontSize: 13, color: '#888' }}>{r.minutes} min</Text> : <Text style={{ fontSize: 13, color: '#888' }}>—</Text>
+                      },
+                      {
+                        title: 'At', dataIndex: 'createdAt', width: 160,
+                        render: v => <Text style={{ fontSize: 13, color: '#888' }}>{new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</Text>
+                      },
+                    ]}
+                  />
+                )}
+              </Card>
+            ),
+          }] : []),
           {
             key: 'deleted_records',
             label: <Space><DeleteOutlined />Deleted Records</Space>,

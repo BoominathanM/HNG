@@ -1,8 +1,15 @@
 const Notification = require('../../models/Notification');
 const InventoryItem = require('../../models/InventoryItem');
 const Invoice = require('../../models/Invoice');
+const NotificationSoundConfig = require('../../models/NotificationSoundConfig');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
+
+// Same admin-gate idiom used across alerts.controller.js/operations.controller.js —
+// authorize()/checkPermission() middleware is unused everywhere in this codebase,
+// admin-only endpoints check inline instead.
+const isAdminOrManagement = (user) =>
+  !!user && (user.role === 'Super Admin' || user.department === 'Admin' || user.department === 'Management');
 
 exports.getNotifications = asyncHandler(async (req, res) => {
   const filter = { userId: req.user._id };
@@ -55,4 +62,34 @@ exports.deleteNotification = asyncHandler(async (req, res, next) => {
 exports.deleteAllNotifications = asyncHandler(async (req, res) => {
   await Notification.deleteMany({ userId: req.user._id });
   res.status(200).json({ success: true });
+});
+
+// ─── Notification Sound (Notifications > Alert Sound tab) ────────────────────
+// GET is open to any authenticated user — NotificationSoundListener (mounted
+// app-wide) needs to read audioUrl/isEnabled for every user, not just admins.
+exports.getNotificationSoundConfig = asyncHandler(async (req, res) => {
+  let config = await NotificationSoundConfig.findOne();
+  if (!config) config = await NotificationSoundConfig.create({});
+  res.status(200).json({ success: true, data: config });
+});
+
+exports.updateNotificationSoundConfig = asyncHandler(async (req, res, next) => {
+  if (!isAdminOrManagement(req.user)) return next(new AppError('Only Admin/Management department or Super Admin can change the notification sound', 403));
+  const { isEnabled, audioUrl, audioPublicId, audioName } = req.body;
+  const update = { updatedBy: req.user._id };
+  if (isEnabled !== undefined) update.isEnabled = !!isEnabled;
+  if (audioUrl !== undefined) { update.audioUrl = audioUrl; update.audioPublicId = audioPublicId; update.audioName = audioName; }
+  const config = await NotificationSoundConfig.findOneAndUpdate({}, update, { new: true, upsert: true, runValidators: true });
+  res.status(200).json({ success: true, data: config });
+});
+
+exports.uploadNotificationSound = asyncHandler(async (req, res, next) => {
+  if (!isAdminOrManagement(req.user)) return next(new AppError('Only Admin/Management department or Super Admin can upload the notification sound', 403));
+  if (!req.file) return next(new AppError('Please upload an audio file', 400));
+  res.status(200).json({
+    success: true,
+    url: req.file.path,
+    public_id: req.file.filename,
+    name: req.file.originalname,
+  });
 });

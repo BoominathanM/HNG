@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Card, List, Tag, Badge, Button, Typography, Space, Tabs, Spin, Empty, Tooltip, Popconfirm,
+  Switch, Upload, Form,
 } from 'antd';
 import {
   BellOutlined, DollarOutlined, WarningOutlined, CarOutlined,
   CheckCircleOutlined, ShoppingCartOutlined, ExclamationCircleOutlined,
-  BoxPlotOutlined, DeleteOutlined, ReloadOutlined,
+  BoxPlotOutlined, DeleteOutlined, ReloadOutlined, SoundOutlined, UploadOutlined, SaveOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -18,6 +19,9 @@ import {
   useMarkNotificationReadMutation,
   useMarkAllNotificationsReadMutation,
   useDeleteNotificationMutation,
+  useGetNotificationSoundConfigQuery,
+  useUpdateNotificationSoundConfigMutation,
+  useUploadNotificationSoundFileMutation,
 } from '../../store/api/apiSlice';
 
 const { Text } = Typography;
@@ -44,6 +48,14 @@ export default function Notifications() {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
+  const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
+  const currentUser = useSelector((s) => s.auth.user);
+  // Same admin-gate idiom used across Settings > Snoozed Alerts / Alert Logs and
+  // the backend's isAdminOrManagement checks — only Admin/Super Admin/Management
+  // can configure the shared notification sound; everyone else just hears it.
+  const isAdminOrManagement = !!currentUser && (
+    currentUser.role === 'Super Admin' || currentUser.department === 'Admin' || currentUser.department === 'Management'
+  );
   const [activeTab, setActiveTab] = useState('all');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -55,6 +67,40 @@ export default function Notifications() {
   const [markRead] = useMarkNotificationReadMutation();
   const [markAllRead] = useMarkAllNotificationsReadMutation();
   const [deleteNotif] = useDeleteNotificationMutation();
+
+  // Alert Sound tab — separate NotificationSoundConfig schema (not CompanySettings).
+  const { data: soundConfigData, isLoading: soundConfigLoading } = useGetNotificationSoundConfigQuery(undefined, { skip: !isAdminOrManagement });
+  const [updateNotificationSoundConfig, { isLoading: savingSound }] = useUpdateNotificationSoundConfigMutation();
+  const [uploadNotificationSoundFile, { isLoading: uploadingSound }] = useUploadNotificationSoundFileMutation();
+  const [soundForm, setSoundForm] = useState({ audioUrl: '', audioPublicId: '', audioName: '', isEnabled: false });
+
+  useEffect(() => {
+    const c = soundConfigData?.data;
+    if (c) setSoundForm({ audioUrl: c.audioUrl || '', audioPublicId: c.audioPublicId || '', audioName: c.audioName || '', isEnabled: !!c.isEnabled });
+  }, [soundConfigData]);
+
+  const handleSoundUpload = async ({ file, onSuccess, onError }) => {
+    const formData = new FormData();
+    formData.append('audio', file);
+    try {
+      const res = await uploadNotificationSoundFile(formData).unwrap();
+      setSoundForm((p) => ({ ...p, audioUrl: res.url, audioPublicId: res.public_id, audioName: res.name || file.name }));
+      onSuccess(res, file);
+      enqueueSnackbar('Alert sound uploaded — click Save to apply', { variant: 'success' });
+    } catch (err) {
+      onError(err);
+      enqueueSnackbar(err?.data || 'Audio upload failed', { variant: 'error' });
+    }
+  };
+
+  const handleSaveSound = async () => {
+    try {
+      await updateNotificationSoundConfig(soundForm).unwrap();
+      enqueueSnackbar('Alert sound settings saved', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data || 'Failed to save alert sound settings', { variant: 'error' });
+    }
+  };
 
   const notifications = notifData?.data || [];
   const stockAlerts = stockData?.data || [];
@@ -160,11 +206,48 @@ export default function Notifications() {
             { key: 'dispatch',  label: 'Dispatch / Tasks / Orders' },
             { key: 'purchase',  label: 'Purchase' },
             { key: 'complaint', label: 'Sales / Complaints' },
+            ...(isAdminOrManagement ? [{ key: 'sound_settings', label: <Space><SoundOutlined />Alert Sound</Space> }] : []),
           ]}
           style={{ padding: '0 20px' }}
         />
 
-        {loading ? (
+        {activeTab === 'sound_settings' ? (
+          soundConfigLoading ? (
+            <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+          ) : (
+            <Form layout="vertical" style={{ padding: '20px 20px 4px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 0', flexWrap: 'wrap', gap: 12 }}>
+                <div style={{ flex: 1, minWidth: 240 }}>
+                  <Text strong style={{ color: textColor, display: 'block', fontSize: 14 }}>Notification Alert Sound</Text>
+                  <Text style={{ fontSize: 12, color: '#aaa' }}>Plays for every user whenever a new notification arrives here — off means notifications still arrive silently, no sound.</Text>
+                  <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                    <Upload accept="audio/*" showUploadList={false} customRequest={handleSoundUpload}>
+                      <Button icon={<UploadOutlined />} loading={uploadingSound} size="small" style={{ borderRadius: 6 }}>
+                        {soundForm.audioUrl ? 'Replace Sound' : 'Upload Sound'}
+                      </Button>
+                    </Upload>
+                    {soundForm.audioUrl && (
+                      <Space size={6}>
+                        <SoundOutlined style={{ color: '#B11E6A' }} />
+                        <Text style={{ color: '#aaa', fontSize: 12 }}>{soundForm.audioName || 'audio file'}</Text>
+                        <audio controls src={soundForm.audioUrl} style={{ height: 30, maxWidth: 200 }} />
+                      </Space>
+                    )}
+                  </div>
+                </div>
+                <Switch
+                  checked={soundForm.isEnabled}
+                  onChange={(v) => setSoundForm((p) => ({ ...p, isEnabled: v }))}
+                  checkedChildren="On" unCheckedChildren="Off"
+                  style={{ background: soundForm.isEnabled ? '#B11E6A' : undefined, flexShrink: 0 }}
+                />
+              </div>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, borderTop: `1px solid ${borderColor}`, paddingTop: 16, marginTop: 8 }}>
+                <Button type="primary" icon={<SaveOutlined />} loading={savingSound} onClick={handleSaveSound} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Save</Button>
+              </div>
+            </Form>
+          )
+        ) : loading ? (
           <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
         ) : displayData.length === 0 ? (
           <Empty description="No notifications" style={{ padding: 40 }} />
