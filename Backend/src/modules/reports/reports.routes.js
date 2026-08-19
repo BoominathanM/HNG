@@ -18,6 +18,7 @@ router.get('/monthly-gst/export', ctrl.exportGstReport);
 router.get('/auditor-tax', ctrl.getAuditorTax);
 router.get('/auditor-tax/export', ctrl.exportSalesReport);
 router.get('/forwarding-courier', ctrl.getForwardingCourierReport);
+router.get('/transportation-charge', ctrl.getTransportationChargeReport);
 router.get('/my-performance', ctrl.getMyPerformance);
 router.get('/performance', ctrl.getPerformance);
 router.get('/emergency-approvals', ctrl.getEmergencyApprovalsReport);

@@ -1971,7 +1971,7 @@ export default function Purchase() {
                               if (lr) {
                                 return (
                                   <Space direction="vertical" size={2}>
-                                    <Tag color={lr.paidStatus === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 8, margin: 0 }}>
+                                    <Tag color={lr.paidStatus === 'Paid' ? 'success' : lr.paidStatus === 'Partial Paid' ? 'warning' : 'error'} style={{ borderRadius: 8, margin: 0 }}>
                                       {lr.paidStatus === 'Paid' ? <CheckCircleOutlined style={{ marginRight: 3 }} /> : null}{lr.paidStatus}
                                     </Tag>
                                     <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
@@ -2383,7 +2383,7 @@ export default function Purchase() {
                               if (lr) {
                                 return (
                                   <Space direction="vertical" size={2}>
-                                    <Tag color={lr.paidStatus === 'Paid' ? 'success' : 'error'} style={{ borderRadius: 8, margin: 0 }}>
+                                    <Tag color={lr.paidStatus === 'Paid' ? 'success' : lr.paidStatus === 'Partial Paid' ? 'warning' : 'error'} style={{ borderRadius: 8, margin: 0 }}>
                                       {lr.paidStatus === 'Paid' ? <CheckCircleOutlined style={{ marginRight: 3 }} /> : null}{lr.paidStatus}
                                     </Tag>
                                     <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>

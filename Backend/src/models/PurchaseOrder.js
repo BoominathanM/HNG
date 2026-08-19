@@ -34,9 +34,14 @@ const purchaseOrderSchema = new mongoose.Schema({
   trackingUrl: String,
   lrFileUrl: String,
   expectedDeliveryDate: Date,
-  // Purchase's own Paid/Not Paid toggle captured at LR-upload time — separate from
-  // `paymentStatus` above (which tracks the vendor invoice amount paid via Financial).
-  lrPaymentStatus: { type: String, enum: ['Paid', 'Not Paid'] },
+  // Purchase's own Paid/Not Paid toggle captured at LR-upload time, later refined to
+  // 'Partial Paid'/'Paid' by Finance settling it in amounts (see lrPaidAmount) — kept
+  // separate from `paymentStatus` above (which tracks the vendor invoice amount paid).
+  lrPaymentStatus: { type: String, enum: ['Paid', 'Partial Paid', 'Not Paid'] },
+  // How much of `amount` Finance has settled against the LR/freight so far — drives
+  // lrPaymentStatus once Finance starts paying in parts (Financial → Reimbursement
+  // Expense → LR Payment tab).
+  lrPaidAmount: { type: Number, default: 0 },
   dispatchStatus: { type: String, enum: ['Pending', 'In Transit', 'Received', 'Partially Received'], default: 'Pending' },
   receivedAt: Date,
   stockUpdated: { type: Boolean, default: false },

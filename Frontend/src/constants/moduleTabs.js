@@ -90,6 +90,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'performance', label: 'Performance' },
     { key: 'monthly_gst', label: 'Monthly GST' },
     { key: 'forwarding_courier', label: 'Forwarding & Courier Charges' },
+    { key: 'transportation_charge', label: 'Transportation Charge Report' },
     { key: 'auditor_tax', label: 'Auditor Tax Report' },
     { key: 'emergency_approvals', label: 'Approval Report' },
     { key: 'switch_report', label: 'Switch Report' },

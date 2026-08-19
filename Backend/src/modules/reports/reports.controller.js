@@ -904,6 +904,108 @@ exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
   });
 });
 
+// ─── TRANSPORTATION CHARGE REPORT ─────────────────────────────────────────────
+// Row-per-order forwarding-charge report scoped by "Transport Cost Scope"
+// (Order.transportationBy, set on Lead/Order creation — 'CLIENT' or 'HNG') with each charge's
+// live Paid/Partially Paid/Pending status, reconciled against its linked Invoice the same way
+// Bill-wise P&L does (resolveInvoiceStatus/resolveInvoicePaid). Distinct from the existing
+// Forwarding & Courier Charges report above (month+hotel aggregate, no scope or per-row
+// payment-status breakdown) — this one keeps one row per order and adds those two facets.
+exports.getTransportationChargeReport = asyncHandler(async (req, res) => {
+  const invoices = await Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
+    .populate('partyId', 'name')
+    .populate({
+      path: 'orderId',
+      select: `orderCode transportationBy salesPerson assignedTo ${ORDER_MONEY_FIELDS}`,
+      populate: { path: 'assignedTo', select: 'fullName' },
+    })
+    .sort('-invoiceDate');
+
+  const data = [];
+  invoices.forEach((inv) => {
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    // Only orders where "Forwarding charge applicable" was actually checked carry a real
+    // transportation charge to report — same gate the Forwarding & Courier report uses.
+    if (!order?.forwardingCharge) return;
+
+    const forwardingChargeAmount = r2(Number(order.forwardingChargeAmount) || 0);
+    const { invValue } = resolveInvoiceMoney(inv, order);
+    const paid = resolveInvoicePaid(inv, order);
+    // Same ratio Profit & Loss uses to split an invoice's excl-GST sales into paid/pending
+    // (see paidRatio in getProfitLoss) — applied here to just the forwarding-charge slice of
+    // the invoice, so a partially-paid invoice reports a partially-paid forwarding charge
+    // instead of an all-or-nothing paid/pending flag.
+    const ratio = invValue > 0 ? Math.min(1, paid / invValue) : 0;
+    const paidAmount = r2(forwardingChargeAmount * ratio);
+    const pendingAmount = r2(forwardingChargeAmount - paidAmount);
+
+    data.push({
+      key: String(inv._id),
+      hotel: inv.partyId?.name || 'Unknown',
+      orderCode: order.orderCode || '',
+      invoiceNo: inv.invoiceNumber || '',
+      invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10) || '',
+      salesPerson: order.salesPerson || order.assignedTo?.fullName || '',
+      transportCostScope: order.transportationBy || 'Unspecified',
+      forwardingChargeApplicable: 'Yes',
+      forwardingChargeAmount,
+      paidAmount,
+      pendingAmount,
+      paymentStatus: resolveInvoiceStatus(inv, order, invValue),
+    });
+  });
+
+  // Detailed Scope × Payment-Status matrix — Transport Cost Scope (CLIENT/HNG/Unspecified) is
+  // the invoice-independent order attribute; paymentStatus (Paid/Partially Paid/Pending) is the
+  // reconciled invoice status (resolveInvoiceStatus above). Each row's own forwardingChargeAmount
+  // is bucketed by its OWN status here (not the ratio-split paid/pending amounts used for the
+  // per-row/summary financial totals below) so the matrix answers "how many Client orders are
+  // still Pending" as a whole-charge count, matching how the Payment Status column/filter reads.
+  const PAYMENT_STATUSES = ['Paid', 'Partially Paid', 'Pending'];
+  const emptyStatusBucket = () => ({ Paid: { count: 0, amount: 0 }, 'Partially Paid': { count: 0, amount: 0 }, Pending: { count: 0, amount: 0 } });
+
+  const scopeMap = {};
+  data.forEach((r) => {
+    const key = r.transportCostScope;
+    if (!scopeMap[key]) scopeMap[key] = { scope: key, totalAmount: 0, paid: 0, pending: 0, count: 0, statusBreakdown: emptyStatusBucket() };
+    scopeMap[key].totalAmount += r.forwardingChargeAmount;
+    scopeMap[key].paid += r.paidAmount;
+    scopeMap[key].pending += r.pendingAmount;
+    scopeMap[key].count += 1;
+    const bucket = scopeMap[key].statusBreakdown[r.paymentStatus] || (scopeMap[key].statusBreakdown[r.paymentStatus] = { count: 0, amount: 0 });
+    bucket.count += 1;
+    bucket.amount += r.forwardingChargeAmount;
+  });
+  const scopeData = Object.values(scopeMap).map((s) => ({
+    ...s,
+    totalAmount: r2(s.totalAmount),
+    paid: r2(s.paid),
+    pending: r2(s.pending),
+    statusBreakdown: Object.fromEntries(
+      Object.entries(s.statusBreakdown).map(([status, b]) => [status, { count: b.count, amount: r2(b.amount) }])
+    ),
+  }));
+
+  // Overall Paid/Partially Paid/Pending totals (by real order-count and charge amount, not the
+  // ratio-split paid/pending money split) — the KPI-card-level view of the same matrix.
+  const statusSummary = PAYMENT_STATUSES.map((status) => {
+    const rows = data.filter((r) => r.paymentStatus === status);
+    return { status, count: rows.length, amount: r2(rows.reduce((s, r) => s + r.forwardingChargeAmount, 0)) };
+  });
+
+  const totalAmount = r2(data.reduce((s, r) => s + r.forwardingChargeAmount, 0));
+  const totalPaid = r2(data.reduce((s, r) => s + r.paidAmount, 0));
+  const totalPending = r2(data.reduce((s, r) => s + r.pendingAmount, 0));
+
+  res.status(200).json({
+    success: true,
+    data,
+    scopeData,
+    statusSummary,
+    summary: { totalAmount, totalPaid, totalPending, count: data.length },
+  });
+});
+
 // ─── MY PERFORMANCE (individual current user) ────────────────────────────────
 exports.getMyPerformance = asyncHandler(async (req, res) => {
   const user = await User.findById(req.user._id);

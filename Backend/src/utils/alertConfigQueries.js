@@ -4,6 +4,7 @@
 const StickerRequest = require('../models/StickerRequest');
 const Order = require('../models/Order');
 const Task = require('../models/Task');
+const PurchaseOrder = require('../models/PurchaseOrder');
 
 // AlertConfig.role matches User.role ('Ziplock'), but StickerRequest.stickerType
 // uses the longer label ('Frosted Ziplock') — translate before querying the queue.
@@ -100,6 +101,26 @@ async function getPendingRecordsForConfig(config) {
       recipientUserId: r.assignedTo,
       title: `Invoice mismatch pending — Order ${r.orderCode || r._id}`,
       link: '/sales',
+    }));
+  }
+
+  if (config.group === 'lr_payment') {
+    // A vendor LR marked "Not Paid" at upload time starts alerting Finance once its
+    // expected delivery date arrives (matches the "Finance will be notified on
+    // receiving date" promise shown at LR-upload time) and keeps ringing — through
+    // "Partial Paid" — until Finance fully settles it from the Financial →
+    // Reimbursement Expense → LR Payment tab.
+    const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+    const items = await PurchaseOrder.find({
+      lrPaymentStatus: { $in: ['Not Paid', 'Partial Paid'] },
+      expectedDeliveryDate: { $ne: null, $lte: todayEnd },
+    }).lean();
+    return items.map((r) => ({
+      recordType: 'PurchaseOrder',
+      recordId: r._id,
+      record: r,
+      title: `LR payment due — ${r.itemName || r.poCode}${r.lrNumber ? ` (LR ${r.lrNumber})` : ''}${r.lrPaymentStatus === 'Partial Paid' ? ' (Partially Paid)' : ''}`,
+      link: '/financial',
     }));
   }
 

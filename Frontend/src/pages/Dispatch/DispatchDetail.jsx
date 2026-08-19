@@ -4,7 +4,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, InputNumber, Upload, Typography, Space,
   Steps, Descriptions, Alert, Tag, Checkbox,
-  Table, Divider, Spin, Image, Modal,
+  Table, Divider, Spin, Image, Modal, Select,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import html2pdf from 'html2pdf.js';
@@ -527,6 +527,10 @@ export default function DispatchDetail() {
       orderObjectId: o._id || d.orderId,
       client: o.clientName || lead.hotelName || '—', contactPerson: o.contactPerson || lead.contactPerson || '—',
       phone: o.clientPhone || lead.phone || '', email: o.email || o.clientEmail || lead.email || '',
+      // Secondary/landline contacts aren't denormalized onto the order — only the lead
+      // carries them (altNumber = alternative/secondary, landlineNumber = landline).
+      secondaryPhone: lead.altNumber || '',
+      landlineNumber: lead.landlineNumber || '',
       product: derivedProduct, qty: derivedQty,
       boxes: d.boxes || 0, weight: d.weight || '',
       basePaymentConfirmed,
@@ -899,6 +903,9 @@ export default function DispatchDetail() {
   const [showInvoiceMismatchBox, setShowInvoiceMismatchBox] = useState(false);
   const [invoiceMismatchReasonInput, setInvoiceMismatchReasonInput] = useState('');
   const [submittingInvoiceMismatch, setSubmittingInvoiceMismatch] = useState(false);
+  // Which contact number(s) to include on the printed Dispatch Details — defaults to
+  // Primary only so existing prints stay unchanged unless the user opts into more.
+  const [printContactTypes, setPrintContactTypes] = useState(['primary']);
 
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -920,6 +927,17 @@ export default function DispatchDetail() {
     // Descriptions above already use so the print reflects what's currently entered.
     const printTransport = liveTransport || order.storedTransportName || order.transport || '—';
     const printWeight = liveWeight || order.storedWeight || order.weight || '—';
+    // Build the Phone cell from whichever contact number(s) the user picked in the
+    // Contact Numbers dropdown — falls back to Primary alone if nothing resolved.
+    const contactOptions = [
+      { key: 'primary', label: 'Primary', value: order.phone },
+      { key: 'secondary', label: 'Secondary', value: order.secondaryPhone },
+      { key: 'landline', label: 'Landline', value: order.landlineNumber },
+    ];
+    const selectedContacts = contactOptions.filter((c) => printContactTypes.includes(c.key));
+    const printPhone = selectedContacts.length
+      ? selectedContacts.map((c) => `${c.label}: ${c.value || '—'}`).join('<br/>')
+      : (order.phone || '—');
     const win = window.open('', '_blank', 'width=600,height=800');
     win.document.write(`<!DOCTYPE html><html><head><title>Dispatch Details — ${order.id}</title>
 <style>
@@ -934,7 +952,7 @@ export default function DispatchDetail() {
 <h2>${order.id} — ${order.client}</h2>
 <table>
   <tr><th>Client</th><td>${order.client}</td><th>Contact</th><td>${order.contactPerson}</td></tr>
-  <tr><th>Phone</th><td>${order.phone}</td><th>Email</th><td>${order.email}</td></tr>
+  <tr><th>Phone</th><td>${printPhone}</td><th>Email</th><td>${order.email}</td></tr>
   <tr><th>Destination</th><td>${order.destination || '—'}</td><th>Expected Delivery</th><td>${order.expectedDeliveryDate ? new Date(order.expectedDeliveryDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</td></tr>
   <tr><th>Address</th><td colspan="3">${order.shippingAddress}, ${order.shippingCity}, ${order.shippingState} — ${order.shippingPincode}</td></tr>
   <tr><th>Product</th><td>${order.product || '—'}</td><th>Weight</th><td>${printWeight}</td></tr>
@@ -2233,6 +2251,18 @@ export default function DispatchDetail() {
                     Enter Transport Name, Weight and Boxes above to enable dispatch confirmation.
                   </Text>
                 )}
+                <Select
+                  mode="multiple"
+                  value={printContactTypes}
+                  onChange={setPrintContactTypes}
+                  placeholder="Contact numbers to print"
+                  style={{ minWidth: 220 }}
+                  options={[
+                    { label: 'Primary Contact', value: 'primary' },
+                    { label: 'Secondary Contact', value: 'secondary' },
+                    { label: 'Landline Contact', value: 'landline' },
+                  ]}
+                />
                 <Button icon={<PrinterOutlined />} onClick={handlePrintDispatchDetails}>
                   Print Dispatch Details
                 </Button>

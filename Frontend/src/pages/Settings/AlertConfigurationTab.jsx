@@ -242,6 +242,7 @@ export default function AlertConfigurationTab() {
     users.filter((u) => u.department === 'Vendors' && u.role === role && u.status === 'Active');
   const salesUsers = users.filter((u) => u.department === 'Sales' && u.status === 'Active');
   const opsUsers = users.filter((u) => u.department === 'Operations' && u.status === 'Active');
+  const financeUsers = users.filter((u) => u.department === 'Financial' && u.status === 'Active');
 
   if (configsLoading || usersLoading) {
     return <div style={{ textAlign: 'center', padding: 60 }}><Spin size="large" /></div>;
@@ -365,6 +366,29 @@ export default function AlertConfigurationTab() {
             role={null}
             config={findConfig('dispatch_reason', null)}
             dynamicRecipient
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>LR Payment Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          Rings the selected Finance users once a vendor LR's expected delivery date arrives while it's still marked "Not Paid", repeating on the schedule below, until Finance settles it.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('lr_payment', null)?._id || 'lr_payment'}
+            title="LR Payment Alert"
+            description="Notifies selected Finance users about vendor LRs due for payment."
+            group="lr_payment"
+            role={null}
+            config={findConfig('lr_payment', null)}
+            recipientPool={financeUsers}
+            deptLabel="Financial"
           />
         </Col>
       </Row>

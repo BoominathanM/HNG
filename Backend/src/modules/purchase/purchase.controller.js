@@ -446,6 +446,19 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
   ).populate('vendorId', 'name');
   if (!order) return next(new AppError('Purchase order not found', 404));
 
+  // Purchase's Paid/Not-Paid toggle here is a manual, non-amount override — keep
+  // lrPaidAmount consistent with it so Finance's later partial-payment math
+  // (financial.controller.js payLrPayment) doesn't inherit a stale balance. A
+  // resubmit that leaves the field on 'Partial Paid' (Finance already part-paid it
+  // via that same screen) intentionally skips this and leaves lrPaidAmount as-is.
+  if (paymentStatus === 'Paid' && order.lrPaidAmount !== order.amount) {
+    order.lrPaidAmount = order.amount || 0;
+    await order.save({ validateBeforeSave: false });
+  } else if (paymentStatus === 'Not Paid' && order.lrPaidAmount) {
+    order.lrPaidAmount = 0;
+    await order.save({ validateBeforeSave: false });
+  }
+
   // Raise/refresh the matching Dispatch "Pick Up Order" entry — this is what makes the
   // shipment show up in Dispatch's Pick Up Order / Today's Pickup Orders / All Orders
   // tabs, keyed off this LR's expected delivery date.
@@ -462,13 +475,15 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
     Object.assign(existingPickup, commonFields);
     // Once Dispatch has picked a payer (Finance/Pickup Team) for this pickup, further LR
     // edits from Purchase must not clobber that progress back to Unpaid — only follow
-    // Purchase's Paid/Not-Paid toggle here while Dispatch hasn't touched it yet.
-    if (!existingPickup.paymentBy) existingPickup.paymentStatus = paymentStatus === 'Not Paid' ? 'Unpaid' : 'Paid';
+    // the LR's own status here while Dispatch hasn't touched it yet. PickupOrder's
+    // paymentStatus is binary, so only 'Paid' (fully settled) maps to 'Paid' — both
+    // 'Not Paid' and 'Partial Paid' mean it still needs settling, i.e. 'Unpaid'.
+    if (!existingPickup.paymentBy) existingPickup.paymentStatus = order.lrPaymentStatus === 'Paid' ? 'Paid' : 'Unpaid';
     await existingPickup.save({ validateBeforeSave: false });
   } else {
     await PickupOrder.create({
       ...commonFields,
-      paymentStatus: paymentStatus === 'Not Paid' ? 'Unpaid' : 'Paid',
+      paymentStatus: order.lrPaymentStatus === 'Paid' ? 'Paid' : 'Unpaid',
       createdBy: req.user._id,
     });
   }

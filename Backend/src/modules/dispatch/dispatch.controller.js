@@ -267,7 +267,7 @@ exports.getDispatch = asyncHandler(async (req, res, next) => {
     .populate({
       path: 'orderId',
       populate: [
-        { path: 'leadId', select: 'leadType hotelName contactPerson phone email destination detailedAddress address city state pincode shippingAddress shippingCity shippingState shippingPincode salesPerson products' },
+        { path: 'leadId', select: 'leadType hotelName contactPerson phone altNumber landlineNumber email destination detailedAddress address city state pincode shippingAddress shippingCity shippingState shippingPincode salesPerson products' },
         { path: 'assignedTo', select: 'fullName' },
       ],
     })

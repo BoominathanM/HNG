@@ -30,7 +30,7 @@ export const apiSlice = createApi({
     'Auth', 'Staff', 'Claims',
     'Vendors', 'Purchase', 'PurchaseOrders', 'LocalPurchases', 'PurchaseHistory', 'PurchasePersons',
     'Dispatch', 'Inventory', 'StockApprovals', 'StockHistory',
-    'Financial', 'ExpensePayments', 'PickupExpenses', 'LocalPurchaseExpenses',
+    'Financial', 'ExpensePayments', 'PickupExpenses', 'LocalPurchaseExpenses', 'LrPayments',
     'Sales', 'Leads', 'Quotations', 'Negotiations', 'Orders', 'Complaints',
     'Billing', 'BillingParties', 'Invoices',
     'Reports', 'Notifications', 'Settings', 'Users', 'DeletedRecords',
@@ -556,6 +556,14 @@ export const apiSlice = createApi({
     payLocalPurchaseExpense: builder.mutation({
       query: ({ id, formData }) => ({ url: `/financial/reimbursements/local-purchase/${id}/pay`, method: 'post', data: formData }),
       invalidatesTags: ['LocalPurchaseExpenses', 'Expenses', 'LocalPurchases'],
+    }),
+    getLrPayments: builder.query({
+      query: (params) => ({ url: '/financial/reimbursements/lr-payment', params }),
+      providesTags: ['LrPayments'],
+    }),
+    payLrPayment: builder.mutation({
+      query: ({ id, formData }) => ({ url: `/financial/reimbursements/lr-payment/${id}/pay`, method: 'post', data: formData }),
+      invalidatesTags: ['LrPayments', 'Expenses', 'PurchaseOrders', 'Pickups'],
     }),
 
     // ── Sales ────────────────────────────────────────────────────────────────
@@ -1224,6 +1232,10 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/forwarding-courier', params }),
       providesTags: ['Reports'],
     }),
+    getTransportationChargeReport: builder.query({
+      query: (params) => ({ url: '/reports/transportation-charge', params }),
+      providesTags: ['Reports'],
+    }),
     getMyPerformance: builder.query({
       query: (params) => ({ url: '/reports/my-performance', params }),
       providesTags: ['Reports'],
@@ -1515,6 +1527,8 @@ export const {
   usePayPickupExpenseMutation,
   useGetLocalPurchaseExpensesQuery,
   usePayLocalPurchaseExpenseMutation,
+  useGetLrPaymentsQuery,
+  usePayLrPaymentMutation,
   // Sales
   useGetLeadsQuery,
   useGetLeadQuery,
@@ -1650,6 +1664,7 @@ export const {
   useGetMonthlyGstQuery,
   useGetAuditorTaxQuery,
   useGetForwardingCourierReportQuery,
+  useGetTransportationChargeReportQuery,
   useGetMyPerformanceQuery,
   useGetPerformanceQuery,
   useGetEmergencyApprovalsReportQuery,

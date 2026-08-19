@@ -30,4 +30,8 @@ router.post('/reimbursements/pickup/:id/pay', upload.single('proof'), ctrl.payPi
 router.get('/reimbursements/local-purchase', ctrl.getLocalPurchaseExpenses);
 router.post('/reimbursements/local-purchase/:id/pay', upload.single('proof'), ctrl.payLocalPurchase);
 
+// Reimbursements — LR Payment (unpaid freight/LR from Purchase's LR Upload)
+router.get('/reimbursements/lr-payment', ctrl.getLrPayments);
+router.post('/reimbursements/lr-payment/:id/pay', upload.single('proof'), ctrl.payLrPayment);
+
 module.exports = router;

@@ -10,7 +10,7 @@ import {
   WhatsAppOutlined, ShopOutlined, CheckCircleOutlined, CloseCircleOutlined, WalletOutlined,
   ContainerOutlined, ArrowUpOutlined, ClockCircleOutlined, EyeOutlined, UploadOutlined, DollarCircleOutlined, AuditOutlined, FileTextOutlined,
   SearchOutlined, MessageOutlined, EditOutlined,
-  CarOutlined, UserOutlined, PhoneOutlined, SendOutlined, ShoppingOutlined
+  CarOutlined, UserOutlined, PhoneOutlined, SendOutlined, ShoppingOutlined, TruckOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -31,6 +31,8 @@ import {
   usePayPickupExpenseMutation,
   useGetLocalPurchaseExpensesQuery,
   usePayLocalPurchaseExpenseMutation,
+  useGetLrPaymentsQuery,
+  usePayLrPaymentMutation,
   useAddPurchaseNoteMutation,
   useGetVendorsQuery,
 } from '../../store/api/apiSlice';
@@ -61,6 +63,9 @@ export default function Financial() {
   const [localExpPayFilter, setLocalExpPayFilter] = useState(null);
   const [localExpPage, setLocalExpPage] = useState(1);
   const [localExpPageSize, setLocalExpPageSize] = useState(10);
+  const [lrPayFilter, setLrPayFilter] = useState(null);
+  const [lrPayPage, setLrPayPage] = useState(1);
+  const [lrPayPageSize, setLrPayPageSize] = useState(10);
 
   // RTK Query data
   const { data: pendingReqData } = useGetPendingRequestsQuery({ page: reqPage, limit: reqPageSize, ...(purchaseReqStatusFilter ? { status: purchaseReqStatusFilter } : {}) });
@@ -76,6 +81,8 @@ export default function Financial() {
   const [payPickup] = usePayPickupExpenseMutation();
   const { data: localPurchaseExpData } = useGetLocalPurchaseExpensesQuery({ page: localExpPage, limit: localExpPageSize, ...(localExpPayFilter ? { paymentStatus: localExpPayFilter } : {}) });
   const [payLocalPurchase] = usePayLocalPurchaseExpenseMutation();
+  const { data: lrPaymentsData } = useGetLrPaymentsQuery({ page: lrPayPage, limit: lrPayPageSize, ...(lrPayFilter ? { paymentStatus: lrPayFilter } : {}) });
+  const [payLrPayment] = usePayLrPaymentMutation();
   const [addPurchaseNote] = useAddPurchaseNoteMutation();
   const { data: vendorData } = useGetVendorsQuery();
 
@@ -230,6 +237,48 @@ export default function Financial() {
   const [localPayTarget, setLocalPayTarget] = useState(null);
   const [localPayForm] = Form.useForm();
 
+  // ── LR Payment sub-tab — vendor LRs marked "Not Paid" at Purchase's LR-upload
+  // time (PurchaseOrder.lrPaymentStatus). Finance settles these directly with the
+  // vendor/transporter based on the expected delivery date shown here.
+  const lrPayments = useMemo(() => (lrPaymentsData?.data || []).map((o) => ({
+    key: o._id,
+    poCode: o.poCode,
+    item: o.itemId?.itemName || o.itemName,
+    vendorName: o.vendorId?.name || '—',
+    vendorPhone: o.vendorId?.phone || '',
+    lrNumber: o.lrNumber || '—',
+    lrFileUrl: o.lrFileUrl || null,
+    expectedDeliveryDate: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
+    amount: o.amount || 0,
+    lrPaidAmount: o.lrPaidAmount || 0,
+    balance: Math.max(0, (o.amount || 0) - (o.lrPaidAmount || 0)),
+    paymentStatus: o.lrPaymentStatus || 'Not Paid',
+    dispatchStatus: o.dispatchStatus,
+  })), [lrPaymentsData]);
+
+  const [showLrPaymentModal, setShowLrPaymentModal] = useState(false);
+  const [lrPayTarget, setLrPayTarget] = useState(null);
+  const [lrPayForm] = Form.useForm();
+
+  const handleLrPayment = async (vals) => {
+    try {
+      const fd = new FormData();
+      fd.append('paid_by', vals.paid_by || 'Finance Team');
+      fd.append('amount', vals.amount ?? lrPayTarget.balance ?? lrPayTarget.amount);
+      const lrProofFile = Array.isArray(vals.payment_proof) ? vals.payment_proof[0] : vals.payment_proof?.fileList?.[0];
+      if (lrProofFile?.url) {
+        fd.append('proofUrl', lrProofFile.url);
+      } else if (lrProofFile?.originFileObj) {
+        fd.append('proof', lrProofFile.originFileObj);
+      }
+      await payLrPayment({ id: lrPayTarget.key, formData: fd }).unwrap();
+      enqueueSnackbar(vals.amount >= lrPayTarget.balance ? 'LR payment paid in full!' : 'Partial LR payment recorded!', { variant: 'success' });
+    } catch { enqueueSnackbar('Payment failed', { variant: 'error' }); }
+    setShowLrPaymentModal(false);
+    setLrPayTarget(null);
+    lrPayForm.resetFields();
+  };
+
   const handleLocalPayment = async (vals) => {
     try {
       const fd = new FormData();
@@ -273,12 +322,14 @@ export default function Financial() {
   const [expSearch, setExpSearch] = useState('');
   const [pickupSearch, setPickupSearch] = useState('');
   const [localExpSearch, setLocalExpSearch] = useState('');
+  const [lrPaySearch, setLrPaySearch] = useState('');
 
   // ── Date-range filter state (per table) ──
   const [purchaseReqDateRange, setPurchaseReqDateRange] = useState(null);
   const [expDateRange, setExpDateRange] = useState(null);
   const [pickupDateRange, setPickupDateRange] = useState(null);
   const [localExpDateRange, setLocalExpDateRange] = useState(null);
+  const [lrPayDateRange, setLrPayDateRange] = useState(null);
 
   const [partiesSearch, setPartiesSearch] = useState('');
   const [viewPartyLedger, setViewPartyLedger] = useState(null);
@@ -1030,6 +1081,129 @@ export default function Financial() {
                         )
                       },
                       {
+                        key: 'lr_payment',
+                        label: <Space><TruckOutlined />LR Payment</Space>,
+                        children: (
+                          <div style={{ marginTop: 8 }}>
+                            <div style={{ marginBottom: 12 }}>
+                              <Title level={5} style={{ margin: 0, color: textColor }}>LR Payment — Freight/Transport Settlement</Title>
+                              <Text type="secondary">Vendor LRs marked "Not Paid" at Purchase's LR-upload — Finance settles these directly with the vendor/transporter by the expected delivery date</Text>
+                            </div>
+                            <div style={{ marginBottom: 10, paddingBottom: 10, borderBottom: `1px solid ${borderColor}`, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                              <Input
+                                prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                                placeholder="Search PO, item, vendor, LR number..."
+                                allowClear
+                                value={lrPaySearch}
+                                onChange={(e) => setLrPaySearch(e.target.value)}
+                                style={{ width: 260, borderRadius: 8 }}
+                              />
+                              <Select
+                                allowClear
+                                placeholder="Payment Status"
+                                value={lrPayFilter}
+                                onChange={(val) => { setLrPayFilter(val); setLrPayPage(1); }}
+                                style={{ width: 160, borderRadius: 8 }}
+                              >
+                                <Option value="Not Paid">Not Paid</Option>
+                                <Option value="Partial Paid">Partial Paid</Option>
+                                <Option value="Paid">Paid</Option>
+                              </Select>
+                              <DatePicker.RangePicker
+                                style={{ borderRadius: 8 }}
+                                onChange={(dates) => setLrPayDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                                allowClear
+                                placeholder={['Delivery from', 'Delivery to']}
+                              />
+                            </div>
+                            {lrPayments.length === 0 ? (
+                              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                                <TruckOutlined style={{ fontSize: 40, display: 'block', marginBottom: 10, color: '#B11E6A55' }} />
+                                <Text type="secondary">No LR payments yet — they'll appear here once Purchase uploads an LR.</Text>
+                              </div>
+                            ) : (
+                              <Table
+                                size="small"
+                                dataSource={lrPayments.filter((r) => {
+                                  const q = lrPaySearch.toLowerCase();
+                                  if (q && !((r.poCode || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.vendorName || '').toLowerCase().includes(q) || (r.lrNumber || '').toLowerCase().includes(q))) return false;
+                                  if (lrPayDateRange) {
+                                    const d = r.expectedDeliveryDate || '';
+                                    if (d < lrPayDateRange[0] || d > lrPayDateRange[1]) return false;
+                                  }
+                                  return true;
+                                })}
+                                rowKey="key"
+                                pagination={{
+                                  current: lrPayPage,
+                                  pageSize: lrPayPageSize,
+                                  total: lrPaymentsData?.total || 0,
+                                  showSizeChanger: true,
+                                  pageSizeOptions: ['10', '20', '50', '100'],
+                                  onChange: (p, ps) => { setLrPayPage(p); setLrPayPageSize(ps); },
+                                  size: 'small',
+                                }}
+                                scroll={{ x: 'max-content' }}
+                                columns={[
+                                  { title: 'PO Code', dataIndex: 'poCode', key: 'poCode', width: 110, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
+                                  { title: 'Item', dataIndex: 'item', key: 'item', width: 160, render: v => <Text style={{ fontWeight: 600, fontSize: 13 }}>{v}</Text> },
+                                  {
+                                    title: 'Vendor', key: 'vendor', width: 165,
+                                    render: (_, r) => (
+                                      <Space direction="vertical" size={0}>
+                                        <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{r.vendorName}</Text>
+                                        {r.vendorPhone && <Text type="secondary" style={{ fontSize: 11 }}>{r.vendorPhone}</Text>}
+                                      </Space>
+                                    )
+                                  },
+                                  { title: 'LR Number', dataIndex: 'lrNumber', key: 'lrNumber', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+                                  {
+                                    title: 'LR Copy', dataIndex: 'lrFileUrl', key: 'lrFileUrl', width: 110,
+                                    render: v => v ? <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A' }}>View</Button> : <Tag color="default" style={{ fontSize: 11 }}>None</Tag>
+                                  },
+                                  {
+                                    title: 'Expected Delivery', dataIndex: 'expectedDeliveryDate', key: 'expectedDeliveryDate', width: 155, align: 'center',
+                                    render: (v, r) => {
+                                      if (!v) return <Text type="secondary">—</Text>;
+                                      const todayStr = new Date().toISOString().slice(0, 10);
+                                      const overdue = r.paymentStatus !== 'Paid' && v < todayStr;
+                                      const dueToday = r.paymentStatus !== 'Paid' && v === todayStr;
+                                      return (
+                                        <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
+                                          <Text style={{ fontSize: 13 }}>{v}</Text>
+                                          {overdue && <Tag color="error" style={{ borderRadius: 8, fontSize: 11, margin: 0 }}>Overdue — Pay Now</Tag>}
+                                          {dueToday && <Tag color="warning" style={{ borderRadius: 8, fontSize: 11, margin: 0 }}>Due Today</Tag>}
+                                        </Space>
+                                      );
+                                    }
+                                  },
+                                  { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
+                                  {
+                                    title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 150, align: 'center',
+                                    render: (v, r) => (
+                                      <Space direction="vertical" size={2} style={{ textAlign: 'center' }}>
+                                        <Tag color={v === 'Paid' ? 'success' : v === 'Partial Paid' ? 'warning' : 'error'} style={{ borderRadius: 10, margin: 0, fontSize: 13 }}>{v}</Tag>
+                                        {v === 'Partial Paid' && <Text type="secondary" style={{ fontSize: 11 }}>&#8377;{r.lrPaidAmount.toLocaleString()} of &#8377;{r.amount.toLocaleString()}</Text>}
+                                      </Space>
+                                    )
+                                  },
+                                  {
+                                    title: 'Actions', key: 'actions', fixed: 'right', width: 115,
+                                    render: (_, r) => r.paymentStatus === 'Paid' ? (
+                                      <Tag color="success" style={{ borderRadius: 8, fontSize: 13 }}>Paid</Tag>
+                                    ) : (
+                                      <Button size="small" type="primary" icon={<DollarCircleOutlined />} style={{ background: '#B11E6A', border: 'none', fontSize: 13 }} onClick={() => { if (!requireAccess('edit')) return; setLrPayTarget(r); setShowLrPaymentModal(true); }}>
+                                        {r.paymentStatus === 'Partial Paid' ? 'Pay Remaining' : 'Pay Now'}
+                                      </Button>
+                                    )
+                                  },
+                                ]}
+                              />
+                            )}
+                          </div>
+                        )
+                      },
+                      {
                         key: 'local_purchase_expense',
                         label: <Space><ShoppingOutlined />Local Purchase Expense</Space>,
                         children: (
@@ -1666,6 +1840,62 @@ export default function Financial() {
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <Button block onClick={() => { setShowLocalPaymentModal(false); localPayForm.resetFields(); }}>Cancel</Button>
+              <Button block type="primary" htmlType="submit" style={{ background: '#B11E6A', border: 'none' }}>Confirm Payment Done</Button>
+            </div>
+          </Form>
+        )}
+      </Modal>
+
+      {/* ── LR Payment Modal ── */}
+      <Modal
+        title={<Space><TruckOutlined style={{ color: '#B11E6A' }} /><Text strong>Settle LR Payment</Text></Space>}
+        open={showLrPaymentModal}
+        onCancel={() => { setShowLrPaymentModal(false); setLrPayTarget(null); lrPayForm.resetFields(); }}
+        footer={null}
+        width={480}
+        centered
+        destroyOnClose
+      >
+        {lrPayTarget && (
+          <Form form={lrPayForm} layout="vertical" onFinish={handleLrPayment} style={{ marginTop: 8 }}>
+            <div style={{ background: isDark ? '#1a1a2e' : '#fafcff', borderRadius: 10, padding: '12px 14px', marginBottom: 16, border: `1px solid ${isDark ? '#2a2d40' : '#e8f4ff'}` }}>
+              <Text strong style={{ display: 'block', marginBottom: 4 }}>{lrPayTarget.item} ({lrPayTarget.poCode})</Text>
+              <Text style={{ color: '#B11E6A' }}>{lrPayTarget.vendorName}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>LR Number: {lrPayTarget.lrNumber} · Expected Delivery: {lrPayTarget.expectedDeliveryDate || '—'}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Amount: ₹{lrPayTarget.amount?.toLocaleString()}</Text>
+              {lrPayTarget.lrPaidAmount > 0 && (
+                <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Already Paid: ₹{lrPayTarget.lrPaidAmount.toLocaleString()} · Balance: ₹{lrPayTarget.balance.toLocaleString()}</Text>
+              )}
+            </div>
+            <Form.Item
+              label="Amount to Pay"
+              name="amount"
+              initialValue={lrPayTarget.balance ?? lrPayTarget.amount}
+              tooltip="Pay the full balance, or a lesser amount to record a partial payment"
+              rules={[{ required: true, message: 'Enter the amount being paid' }]}
+            >
+              <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} max={lrPayTarget.balance ?? lrPayTarget.amount} />
+            </Form.Item>
+            <Form.Item label="Paid By" name="paid_by" initialValue="Finance Team">
+              <Input placeholder="Finance team member name" style={{ borderRadius: 8 }} />
+            </Form.Item>
+            <Form.Item
+              label="Upload Payment Proof"
+              name="payment_proof"
+              valuePropName="fileList"
+              getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}
+              rules={[{ required: true, message: 'Please upload payment proof' }]}
+            >
+              <Upload maxCount={1} customRequest={makeUpload('financial/proofs')} accept=".pdf,.jpg,.jpeg,.png">
+                <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Upload Proof (PDF / Image)</Button>
+              </Upload>
+            </Form.Item>
+            <div style={{ padding: '10px 12px', background: isDark ? '#1e2235' : '#f6fff8', borderRadius: 8, border: `1px solid #52c41a33`, marginBottom: 14, fontSize: 12 }}>
+              <CheckCircleOutlined style={{ color: '#52c41a', marginRight: 6 }} />
+              A partial payment sets status to <Text strong>Partial Paid</Text>; paying the full balance sets it to <Text strong>Paid</Text>. Status syncs back to Purchase's Quotation & Raise Request tab and Dispatch's Pick Up Order tab.
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <Button block onClick={() => { setShowLrPaymentModal(false); lrPayForm.resetFields(); }}>Cancel</Button>
               <Button block type="primary" htmlType="submit" style={{ background: '#B11E6A', border: 'none' }}>Confirm Payment Done</Button>
             </div>
           </Form>

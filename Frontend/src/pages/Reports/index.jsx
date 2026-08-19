@@ -19,6 +19,7 @@ import {
   useGetBillPLQuery,
   useGetMonthlyGstQuery,
   useGetForwardingCourierReportQuery,
+  useGetTransportationChargeReportQuery,
   useGetPerformanceQuery,
   useGetEmergencyApprovalsReportQuery,
   useGetSwitchReportQuery,
@@ -164,6 +165,11 @@ export default function Reports() {
   // Forwarding/Courier checkboxes so either charge type can be viewed on its own.
   const [fcViewMode, setFcViewMode] = useState('combined');
 
+  // Transportation Charge Report state
+  const [tcSearch, setTcSearch] = useState('');
+  const [tcScopeFilter, setTcScopeFilter] = useState('all');
+  const [tcStatusFilter, setTcStatusFilter] = useState('all');
+
   // Monthly GST Report state
   const [gstMonthFilter, setGstMonthFilter] = useState('all');
   // 'combined' | 'sales' | 'purchase' — driven by the GST Out (Sales) / GST In (Purchase)
@@ -215,6 +221,7 @@ export default function Reports() {
   const performanceRef = useRef(null);
   const monthlyGstRef = useRef(null);
   const forwardingCourierRef = useRef(null);
+  const transportationChargeRef = useRef(null);
   const auditorTaxRef = useRef(null);
   const emergencyApprovalsRef = useRef(null);
   const switchReportRef = useRef(null);
@@ -267,6 +274,7 @@ export default function Reports() {
   const { data: monthlyGstRaw } = useGetMonthlyGstQuery(headerDateParams);
   const { data: performanceRaw } = useGetPerformanceQuery(headerDateParams);
   const { data: forwardingCourierRaw } = useGetForwardingCourierReportQuery(headerDateParams);
+  const { data: transportationChargeRaw } = useGetTransportationChargeReportQuery(headerDateParams);
   const { data: emergencyApprovalsRaw } = useGetEmergencyApprovalsReportQuery(headerDateParams);
   const { data: switchReportRaw } = useGetSwitchReportQuery(headerDateParams);
 
@@ -280,6 +288,10 @@ export default function Reports() {
   const apiForwardingCourier = useMemo(
     () => forwardingCourierRaw || { data: [], monthlyHotelData: [], summary: {} },
     [forwardingCourierRaw]
+  );
+  const apiTransportationCharge = useMemo(
+    () => transportationChargeRaw || { data: [], scopeData: [], statusSummary: [], summary: {} },
+    [transportationChargeRaw]
   );
   const apiEmergencyApprovals = useMemo(
     () => emergencyApprovalsRaw || { data: [], summary: {}, chartData: [] },
@@ -586,6 +598,27 @@ export default function Reports() {
   };
   const exportFcPdf = () => exportRefToPdf(forwardingCourierRef, 'Forwarding_Courier_Charges_Report.pdf');
 
+  const tcFilteredForExport = (apiTransportationCharge.data || []).filter(r => {
+    const matchScope = tcScopeFilter === 'all' || r.transportCostScope === tcScopeFilter;
+    const matchStatus = tcStatusFilter === 'all' || r.paymentStatus === tcStatusFilter;
+    const q = tcSearch.toLowerCase();
+    const matchSearch = !q
+      || (r.hotel || '').toLowerCase().includes(q)
+      || (r.invoiceNo || '').toLowerCase().includes(q)
+      || (r.orderCode || '').toLowerCase().includes(q);
+    return matchScope && matchStatus && matchSearch;
+  });
+  const exportTcExcel = () => {
+    const headers = ['S.No', 'Hotel', 'Order Code', 'Invoice No', 'Invoice Date', 'Sales Person', 'Transport Cost Scope', 'Forwarding Charge Applicable', 'Forwarding Charge Amount', 'Paid Amount', 'Pending Amount', 'Payment Status'];
+    const rows = tcFilteredForExport.map((r, i) => [
+      i + 1, r.hotel, r.orderCode, r.invoiceNo, r.invoiceDate, r.salesPerson,
+      r.transportCostScope, r.forwardingChargeApplicable, r.forwardingChargeAmount,
+      r.paidAmount, r.pendingAmount, r.paymentStatus,
+    ]);
+    exportToExcel(headers, rows, 'Transportation_Charge_Report.csv');
+  };
+  const exportTcPdf = () => exportRefToPdf(transportationChargeRef, 'Transportation_Charge_Report.pdf');
+
   // GST/Non-GST bucket keys off Invoice.invoiceType (the statutory distinction — same field
   // the backend's dedicated /reports/auditor-tax endpoint filters on), not the computed tax
   // amount — a GST-type invoice with a 0%-rated line item would otherwise be miscategorized
@@ -694,6 +727,7 @@ export default function Reports() {
     performance: { excel: exportPerformanceExcel, pdf: exportPerformancePdf },
     monthly_gst: { excel: exportGstExcel, pdf: exportGstPdf },
     forwarding_courier: { excel: exportFcExcel, pdf: exportFcPdf },
+    transportation_charge: { excel: exportTcExcel, pdf: exportTcPdf },
     auditor_tax: { excel: exportAuditorExcel, pdf: exportAuditorPdf },
     emergency_approvals: { excel: exportEaExcel, pdf: exportEaPdf },
     switch_report: { excel: exportSwExcel, pdf: exportSwPdf },
@@ -2585,6 +2619,261 @@ export default function Reports() {
                             {fcViewMode === 'combined' && (
                               <Table.Summary.Cell><Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(tTot ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                             )}
+                          </Table.Summary.Row>
+                        );
+                      }}
+                    />
+                  </Card>
+                  </div>
+                </div>
+              );
+            })(),
+          },
+
+          /* ─────────── TRANSPORTATION CHARGE REPORT ─────────── */
+          {
+            key: 'transportation_charge',
+            label: 'Transportation Charge Report',
+            children: (() => {
+              const scopeOptions = Array.from(new Set((apiTransportationCharge.data || []).map(r => r.transportCostScope))).filter(Boolean);
+              const statusOptions = ['Paid', 'Partially Paid', 'Pending'];
+
+              const filteredTcRows = (apiTransportationCharge.data || []).filter(r => {
+                const matchScope = tcScopeFilter === 'all' || r.transportCostScope === tcScopeFilter;
+                const matchStatus = tcStatusFilter === 'all' || r.paymentStatus === tcStatusFilter;
+                const q = tcSearch.toLowerCase();
+                const matchSearch = !q
+                  || (r.hotel || '').toLowerCase().includes(q)
+                  || (r.invoiceNo || '').toLowerCase().includes(q)
+                  || (r.orderCode || '').toLowerCase().includes(q);
+                return matchScope && matchStatus && matchSearch;
+              });
+
+              const totalCharge = filteredTcRows.reduce((s, r) => s + r.forwardingChargeAmount, 0);
+              const totalPaid = filteredTcRows.reduce((s, r) => s + r.paidAmount, 0);
+              const totalPending = filteredTcRows.reduce((s, r) => s + r.pendingAmount, 0);
+
+              // Real per-status counts/amounts (whole-charge, not the ratio-split paid/pending
+              // money above) — same figures the Scope × Status matrix below is built from, so
+              // the KPI row and the matrix always agree on "how many orders are in each status".
+              const statusSummaryMap = {};
+              (apiTransportationCharge.statusSummary || []).forEach(s => { statusSummaryMap[s.status] = s; });
+              const paidCount = statusSummaryMap.Paid?.count || 0;
+              const partialCount = statusSummaryMap['Partially Paid']?.count || 0;
+              const pendingCount = statusSummaryMap.Pending?.count || 0;
+              const partialAmount = statusSummaryMap['Partially Paid']?.amount || 0;
+
+              // Scope × Status matrix — one row per Transport Cost Scope (Client/HNG/Unspecified)
+              // with Paid/Partially Paid/Pending count+amount side by side, plus a Total row, so
+              // "how many Client orders are still pending" is readable directly instead of only
+              // inferable from filtering the order-wise table one scope/status at a time.
+              const scopeRows = apiTransportationCharge.scopeData || [];
+              const matrixTotals = { Paid: { count: 0, amount: 0 }, 'Partially Paid': { count: 0, amount: 0 }, Pending: { count: 0, amount: 0 } };
+              scopeRows.forEach(s => {
+                statusOptions.forEach(status => {
+                  const b = s.statusBreakdown?.[status] || { count: 0, amount: 0 };
+                  matrixTotals[status].count += b.count;
+                  matrixTotals[status].amount += b.amount;
+                });
+              });
+
+              const scopeChartData = scopeRows.map(s => ({
+                name: s.scope,
+                Paid: s.statusBreakdown?.Paid?.amount || 0,
+                'Partially Paid': s.statusBreakdown?.['Partially Paid']?.amount || 0,
+                Pending: s.statusBreakdown?.Pending?.amount || 0,
+              }));
+
+              const tcColumns = [
+                { title: 'S.No', key: 'sno', width: 55, align: 'center', fixed: 'left', render: (_, __, i) => <Text style={{ fontSize: 12 }}>{i + 1}</Text> },
+                { title: 'Hotel', dataIndex: 'hotel', key: 'hotel', width: 160, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                { title: 'Order Code', dataIndex: 'orderCode', key: 'orderCode', width: 120, render: v => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                { title: 'Invoice No', dataIndex: 'invoiceNo', key: 'invoiceNo', width: 130, render: v => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                { title: 'Invoice Date', dataIndex: 'invoiceDate', key: 'invoiceDate', width: 110, render: v => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                { title: 'Sales Person', dataIndex: 'salesPerson', key: 'salesPerson', width: 130, render: v => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                {
+                  title: 'Transport Cost Scope', dataIndex: 'transportCostScope', key: 'transportCostScope', width: 140,
+                  render: v => <Tag color={v === 'CLIENT' ? 'blue' : v === 'HNG' ? 'purple' : 'default'} style={{ borderRadius: 20 }}>{v}</Tag>,
+                },
+                {
+                  title: 'Forwarding Charge Applicable', dataIndex: 'forwardingChargeApplicable', key: 'forwardingChargeApplicable', width: 150, align: 'center',
+                  render: () => <Tag color="orange" style={{ borderRadius: 20 }}>Yes</Tag>,
+                },
+                { title: 'Forwarding Charge Amount', dataIndex: 'forwardingChargeAmount', key: 'forwardingChargeAmount', width: 160, render: v => <Text style={{ color: '#fa8c16', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                { title: 'Paid', dataIndex: 'paidAmount', key: 'paidAmount', width: 120, render: v => <Text style={{ color: '#52c41a', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                { title: 'Pending', dataIndex: 'pendingAmount', key: 'pendingAmount', width: 120, render: v => <Text style={{ color: '#ff4d4f', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                {
+                  title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 130, fixed: 'right',
+                  render: v => <Tag color={statusColor[v] || 'default'} style={{ borderRadius: 20 }}>{v}</Tag>,
+                },
+              ];
+
+              return (
+                <div>
+                  {/* Filter & Search bar */}
+                  <Card style={{ borderRadius: 12, border: 'none', background: cardBg, marginBottom: 14, boxShadow: '0 2px 12px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px' } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                      <Space wrap>
+                        <FilterOutlined style={{ color: '#B11E6A' }} />
+                        <Text strong style={{ color: textColor, fontSize: 13 }}>Scope:</Text>
+                        <Select value={tcScopeFilter} onChange={setTcScopeFilter} style={{ width: 130 }}>
+                          <Option value="all">All Scopes</Option>
+                          {scopeOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
+                        </Select>
+                        <Text strong style={{ color: textColor, fontSize: 13 }}>Payment:</Text>
+                        <Select value={tcStatusFilter} onChange={setTcStatusFilter} style={{ width: 150 }}>
+                          <Option value="all">All Statuses</Option>
+                          {statusOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
+                        </Select>
+                        <Input
+                          prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                          placeholder="Search hotel / invoice / order…"
+                          allowClear
+                          value={tcSearch}
+                          onChange={e => setTcSearch(e.target.value)}
+                          style={{ width: 240, borderRadius: 8 }}
+                        />
+                      </Space>
+                      <Space>
+                        <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportTcExcel}>Excel</Button>
+                        <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportTcPdf}>PDF</Button>
+                      </Space>
+                    </div>
+                  </Card>
+
+                  <div ref={transportationChargeRef}>
+                  {/* Summary KPI cards — one per Payment Status (real order counts, matching the
+                      Scope × Status matrix below) plus the overall charge total. */}
+                  <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                    {[
+                      { label: 'Total Forwarding Charges', value: `₹${(totalCharge ?? 0).toLocaleString()}`, color: '#fa8c16', sub: `${filteredTcRows.length} orders` },
+                      { label: 'Paid', value: `₹${(totalPaid ?? 0).toLocaleString()}`, color: '#52c41a', sub: `${paidCount} orders fully paid` },
+                      { label: 'Partially Paid', value: `₹${(partialAmount ?? 0).toLocaleString()}`, color: '#B11E6A', sub: `${partialCount} orders partially paid` },
+                      { label: 'Pending', value: `₹${(totalPending ?? 0).toLocaleString()}`, color: '#ff4d4f', sub: `${pendingCount} orders pending` },
+                    ].map((s, i) => (
+                      <Col xs={24} sm={12} md={6} key={s.label}>
+                        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
+                          <Card style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: `linear-gradient(135deg,${s.color}22,${s.color}08)` }} styles={{ body: { padding: '12px 14px' } }}>
+                            <Text style={{ fontSize: 10, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 3 }}>{s.label}</Text>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: s.color }}>{s.value}</div>
+                            <Text style={{ fontSize: 10, color: '#aaa' }}>{s.sub}</Text>
+                          </Card>
+                        </motion.div>
+                      </Col>
+                    ))}
+                  </Row>
+
+                  {/* Scope-wise Paid / Partially Paid / Pending chart */}
+                  <Card
+                    title={<Text strong style={{ color: textColor }}>Forwarding Charge — Paid / Partially Paid / Pending, by Transport Cost Scope</Text>}
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginBottom: 14 }}
+                    styles={{ body: { padding: '12px 16px 16px' } }}
+                  >
+                    <ResponsiveContainer width="100%" height={220}>
+                      <BarChart data={scopeChartData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
+                        <XAxis dataKey="name" tick={{ fill: tickColor, fontSize: 11 }} />
+                        <YAxis tick={{ fill: tickColor, fontSize: 11 }} tickFormatter={v => `₹${(v ?? 0).toLocaleString()}`} />
+                        <Tooltip formatter={v => `₹${(v ?? 0).toLocaleString()}`} contentStyle={{ background: isDark ? '#1E1E2E' : '#fff', borderRadius: 8 }} />
+                        <Legend />
+                        <Bar dataKey="Paid" fill="#52c41a" name="Paid" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="Partially Paid" fill="#B11E6A" name="Partially Paid" radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="Pending" fill="#ff4d4f" name="Pending" radius={[4, 4, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </Card>
+
+                  {/* Scope × Payment-Status detail matrix */}
+                  <Card
+                    title={<Text strong style={{ color: textColor }}>Transport Cost Scope vs Payment Status — Detailed Breakdown</Text>}
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginBottom: 14 }}
+                    styles={{ body: { padding: 16 } }}
+                  >
+                    <Table
+                      size="small"
+                      bordered
+                      scroll={{ x: 'max-content' }}
+                      pagination={false}
+                      rowKey="scope"
+                      dataSource={scopeRows}
+                      locale={{ emptyText: <Empty description="No forwarding-charge-applicable orders found" /> }}
+                      columns={[
+                        {
+                          title: 'Transport Cost Scope', dataIndex: 'scope', key: 'scope', width: 160, fixed: 'left',
+                          render: v => <Tag color={v === 'CLIENT' ? 'blue' : v === 'HNG' ? 'purple' : 'default'} style={{ borderRadius: 20 }}>{v}</Tag>,
+                        },
+                        {
+                          title: 'Paid', key: 'paidStatus', width: 150, align: 'center',
+                          render: (_, r) => {
+                            const b = r.statusBreakdown?.Paid || { count: 0, amount: 0 };
+                            return <div><Text strong style={{ color: '#52c41a', fontSize: 13 }}>₹{b.amount.toLocaleString()}</Text><br /><Text style={{ fontSize: 11, color: '#aaa' }}>{b.count} orders</Text></div>;
+                          },
+                        },
+                        {
+                          title: 'Partially Paid', key: 'partialStatus', width: 150, align: 'center',
+                          render: (_, r) => {
+                            const b = r.statusBreakdown?.['Partially Paid'] || { count: 0, amount: 0 };
+                            return <div><Text strong style={{ color: '#B11E6A', fontSize: 13 }}>₹{b.amount.toLocaleString()}</Text><br /><Text style={{ fontSize: 11, color: '#aaa' }}>{b.count} orders</Text></div>;
+                          },
+                        },
+                        {
+                          title: 'Pending', key: 'pendingStatus', width: 150, align: 'center',
+                          render: (_, r) => {
+                            const b = r.statusBreakdown?.Pending || { count: 0, amount: 0 };
+                            return <div><Text strong style={{ color: '#ff4d4f', fontSize: 13 }}>₹{b.amount.toLocaleString()}</Text><br /><Text style={{ fontSize: 11, color: '#aaa' }}>{b.count} orders</Text></div>;
+                          },
+                        },
+                        {
+                          title: 'Total', key: 'totalStatus', width: 160, align: 'center', fixed: 'right',
+                          render: (_, r) => <div><Text strong style={{ fontSize: 13 }}>₹{(r.totalAmount ?? 0).toLocaleString()}</Text><br /><Text style={{ fontSize: 11, color: '#aaa' }}>{r.count} orders</Text></div>,
+                        },
+                      ]}
+                      summary={() => (
+                        <Table.Summary.Row style={{ fontWeight: 700, background: isDark ? '#2a1a2e' : '#fdf5fa' }}>
+                          <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>Grand Total</Text></Table.Summary.Cell>
+                          {statusOptions.map(status => (
+                            <Table.Summary.Cell key={status}>
+                              <Text strong style={{ fontSize: 12 }}>₹{matrixTotals[status].amount.toLocaleString()}</Text><br />
+                              <Text style={{ fontSize: 11, color: '#aaa' }}>{matrixTotals[status].count} orders</Text>
+                            </Table.Summary.Cell>
+                          ))}
+                          <Table.Summary.Cell>
+                            <Text strong style={{ fontSize: 12 }}>₹{(totalCharge ?? 0).toLocaleString()}</Text><br />
+                            <Text style={{ fontSize: 11, color: '#aaa' }}>{filteredTcRows.length} orders</Text>
+                          </Table.Summary.Cell>
+                        </Table.Summary.Row>
+                      )}
+                    />
+                  </Card>
+
+                  {/* Order-wise table */}
+                  <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                      <Title level={5} style={{ color: textColor, margin: 0 }}>Transportation Charge Report — Order wise</Title>
+                      <Text type="secondary" style={{ fontSize: 12 }}>{filteredTcRows.length} records</Text>
+                    </div>
+                    <Table
+                      size="small"
+                      bordered
+                      scroll={{ x: 'max-content' }}
+                      dataSource={filteredTcRows}
+                      columns={tcColumns}
+                      rowKey="key"
+                      pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                      locale={{ emptyText: <Empty description="No forwarding-charge-applicable orders found" /> }}
+                      summary={(data) => {
+                        const tCharge = data.reduce((s, r) => s + r.forwardingChargeAmount, 0);
+                        const tPaid = data.reduce((s, r) => s + r.paidAmount, 0);
+                        const tPending = data.reduce((s, r) => s + r.pendingAmount, 0);
+                        return (
+                          <Table.Summary.Row style={{ fontWeight: 700, background: isDark ? '#2a1a2e' : '#fdf5fa' }}>
+                            <Table.Summary.Cell colSpan={8}>
+                              <Text strong style={{ fontSize: 12 }}>Grand Total</Text>
+                            </Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tCharge ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(tPaid ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell><Text strong style={{ color: '#ff4d4f', fontSize: 12 }}>₹{(tPending ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell />
                           </Table.Summary.Row>
                         );
                       }}

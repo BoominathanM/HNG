@@ -387,3 +387,69 @@ exports.payLocalPurchase = asyncHandler(async (req, res, next) => {
 
   res.status(200).json({ success: true, data: lp });
 });
+
+// ─── REIMBURSEMENT — LR PAYMENT ──────────────────────────────────────────────
+// Purchase's LR Upload marks a shipment's freight/LR as 'Paid' or 'Not Paid' at
+// upload time (PurchaseOrder.lrPaymentStatus). A "Not Paid"/"Partial Paid" LR needs
+// Finance to settle it directly with the vendor/transporter, so it's listed here
+// instead of under Pickup Expense (which is reserved for Pickup Team out-of-pocket
+// claims — see getPickupExpenses above). alertConfigQueries.js rings Finance
+// automatically once the expected delivery date arrives, until this is fully Paid.
+exports.getLrPayments = asyncHandler(async (req, res) => {
+  const filter = { lrPaymentStatus: { $ne: null } };
+  if (req.query.paymentStatus) filter.lrPaymentStatus = req.query.paymentStatus;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const [records, total] = await Promise.all([
+    PurchaseOrder.find(filter)
+      .populate('vendorId', 'name phone')
+      .sort('expectedDeliveryDate')
+      .skip((page - 1) * limit)
+      .limit(limit),
+    PurchaseOrder.countDocuments(filter),
+  ]);
+  res.status(200).json({ success: true, total, page, data: records });
+});
+
+exports.payLrPayment = asyncHandler(async (req, res, next) => {
+  const order = await PurchaseOrder.findById(req.params.id).populate('vendorId', 'name');
+  if (!order) return next(new AppError('Purchase order not found', 404));
+
+  const proofUrl = req.file?.path || req.body.proofUrl;
+  const paidBy = req.body.paidBy || req.body.paid_by || req.user.fullName;
+  const remaining = Math.max(0, (order.amount || 0) - (order.lrPaidAmount || 0));
+  const rawAmount = req.body.amount ?? req.body.paidAmount;
+  const payAmount = rawAmount !== undefined ? Math.min(Math.max(0, Number(rawAmount) || 0), remaining) : remaining;
+
+  order.lrPaidAmount = (order.lrPaidAmount || 0) + payAmount;
+  order.lrPaymentStatus = order.lrPaidAmount >= (order.amount || 0) ? 'Paid' : (order.lrPaidAmount > 0 ? 'Partial Paid' : 'Not Paid');
+  await order.save({ validateBeforeSave: false });
+
+  // Keep the linked Dispatch "Pick Up Order" entry in sync — its paymentStatus is
+  // binary (Unpaid/Paid), so only flip it once the LR is fully settled.
+  await PickupOrder.findOneAndUpdate(
+    { purchaseOrderId: order._id },
+    { paymentStatus: order.lrPaymentStatus === 'Paid' ? 'Paid' : 'Unpaid' }
+  );
+
+  const expCode = await generateCode('EXP');
+  const balanceAfter = Math.max(0, (order.amount || 0) - order.lrPaidAmount);
+  await Expense.create({
+    expenseCode: expCode,
+    expenseDate: new Date(),
+    category: 'Shipping / Transportation',
+    description: `LR payment ${order.lrPaymentStatus === 'Paid' ? 'paid in full' : 'part-paid'} — ${order.itemName || order.poCode}${order.lrNumber ? ` (LR ${order.lrNumber})` : ''} — ${order.vendorId?.name || 'Vendor'}${balanceAfter > 0 ? ` — Balance: Rs.${balanceAfter.toFixed(2)}` : ''}`,
+    amount: payAmount,
+    paidAmount: payAmount,
+    vendorPayee: order.vendorId?.name,
+    proofUrl,
+    paymentStatus: 'Paid',
+    paidDate: new Date(),
+    paidBy,
+    expenseSource: 'reimbursement',
+    createdBy: req.user._id,
+  });
+
+  notifyRoles({ modules: ['Financial', 'Purchase'], type: 'purchase', title: 'LR Payment Settled', message: `LR payment of ₹${payAmount?.toLocaleString()} recorded for ${order.itemName || order.poCode} (LR ${order.lrNumber || 'N/A'}) — now ${order.lrPaymentStatus}.`, link: '/financial' }).catch(() => {});
+  res.status(200).json({ success: true, data: order });
+});
