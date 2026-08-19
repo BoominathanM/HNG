@@ -259,6 +259,8 @@ const DELETED_SOURCES = {
   vendors: { model: 'Vendor', module: 'Vendors', label: (d) => d.name },
   staff: { model: 'Staff', module: 'Staff Management', label: (d) => d.fullName || d.name },
   users: { model: 'User', module: 'Settings', label: (d) => d.fullName },
+  tasks: { model: 'Task', module: 'Task Management', label: (d) => d.taskCode || d.taskName || d.product },
+  queue_rows: { model: 'HiddenQueueRow', module: 'Operations', label: (d) => `${d.tab || 'Queue'} — ${d.product || d.orderCode || d.rowKey}` },
 };
 
 const getModel = (name) => {

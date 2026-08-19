@@ -1,11 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Radio, Rate, Row, Space, Statistic, Steps, Table, Tag, Typography,
+  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Radio, Rate, Row, Space, Statistic, Steps, Table, Tag, Timeline, Typography,
 } from 'antd';
 import {
   AlertFilled, ArrowLeftOutlined, BellOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  ExclamationCircleOutlined, ExperimentOutlined, FieldTimeOutlined, PlayCircleOutlined, UserOutlined,
+  ExclamationCircleOutlined, ExperimentOutlined, FieldTimeOutlined, PauseCircleOutlined, PlayCircleOutlined, UserOutlined,
 } from '@ant-design/icons';
 import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
@@ -23,7 +23,9 @@ const { Text, Title } = Typography;
 
 const typeColor = { Production: '#B11E6A', 'Sticker Work': '#8a1652', Packing: '#C94F8A', Procurement: '#D85C9E', Internal: '#6b1240' };
 const priorityColor = { Urgent: '#6b1240', High: '#B11E6A', Medium: '#C94F8A', Normal: '#D85C9E' };
-const statusColor = { 'In Progress': '#B11E6A', Pending: '#C94F8A', Completed: '#6b1240', Done: '#6b1240' };
+const statusColor = { 'In Progress': '#B11E6A', Pending: '#C94F8A', Paused: '#fa8c16', Completed: '#6b1240', Done: '#6b1240' };
+const timelineIcon = { Start: <PlayCircleOutlined />, Resume: <PlayCircleOutlined />, Pause: <PauseCircleOutlined />, Completion: <CheckCircleOutlined /> };
+const timelineColor = { Start: 'blue', Resume: 'blue', Pause: 'orange', Completion: 'green' };
 const paymentColor = { Paid: 'success', Pending: 'warning', Partial: 'orange' };
 
 const labelStyle = {
@@ -85,13 +87,40 @@ export default function TaskDetail() {
           product: s.product || '—',
           assignee: names.join(', ') || '—',
           status: s.status === 'Done' ? 'Completed' : s.status,
-          due: s.dueDate ? s.dueDate.slice(0, 10) : '—',
+          // Task.dueDate is almost never set (nothing in the Assign Task flows sends
+          // it) — fall back to the order's expected delivery date, same as the Task
+          // Management list's "Due" column.
+          due: s.dueDate ? s.dueDate.slice(0, 10)
+            : (s.orderId?.expectedDeliveryDate ? s.orderId.expectedDeliveryDate.slice(0, 10) : '—'),
         };
       });
   }, [allTasksData, orderId, id]);
 
-  const pendingCount = siblingTasks.filter((s) => s.status === 'Pending' || s.status === 'In Progress').length;
+  const pendingCount = siblingTasks.filter((s) => s.status === 'Pending' || s.status === 'In Progress' || s.status === 'Paused').length;
   const doneCount = siblingTasks.filter((s) => s.status === 'Completed').length;
+
+  // Live-ticking "worked so far" clock while the task is actively In Progress — re-renders
+  // every second so the Time & Performance card reflects real elapsed time, not just the
+  // value from the last fetch. Frozen (no interval) once Paused or Done.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    if (t?.status !== 'In Progress') return undefined;
+    const iv = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(iv);
+  }, [t?.status]);
+
+  // Worked time excludes every completed pause span (t.pausedDurationSec) — while
+  // currently Paused, the clock is frozen at the moment the pause began (t.lastPausedAt);
+  // while In Progress, it ticks live off nowTick; once Done, the backend's own
+  // actualDurationSec (computed the same way) is authoritative.
+  const liveWorkedSec = useMemo(() => {
+    if (!t?.startedAt) return 0;
+    const startMs = new Date(t.startedAt).getTime();
+    const pausedSec = t.pausedDurationSec || 0;
+    if (t.status === 'In Progress') return Math.max(0, Math.round((nowTick - startMs) / 1000) - pausedSec);
+    if (t.status === 'Paused' && t.lastPausedAt) return Math.max(0, Math.round((new Date(t.lastPausedAt).getTime() - startMs) / 1000) - pausedSec);
+    return t.actualDurationSec || 0;
+  }, [t, nowTick]);
 
   const handleStatus = async (status) => {
     try {
@@ -167,13 +196,27 @@ export default function TaskDetail() {
               </Button>
             )}
             {t.status === 'In Progress' && (
+              <Button icon={<PauseCircleOutlined />}
+                style={{ color: '#fa8c16', borderColor: '#fa8c16' }}
+                onClick={() => handleStatus('Paused')}>
+                Pause Task
+              </Button>
+            )}
+            {t.status === 'In Progress' && (
               <Button type="primary" icon={<CheckCircleOutlined />}
                 style={{ background: '#52c41a', border: 'none' }}
                 onClick={() => { setFeedbackText(t.feedback || ''); setCompleteModalOpen(true); }}>
                 Mark Done
               </Button>
             )}
-            {(t.status === 'Pending' || t.status === 'In Progress' || (t.status === 'Done' && t.paymentStatus !== 'Paid')) && !isSample && (
+            {t.status === 'Paused' && (
+              <Button type="primary" icon={<PlayCircleOutlined />}
+                style={{ background: '#1890ff', border: 'none' }}
+                onClick={() => handleStatus('In Progress')}>
+                Resume Task
+              </Button>
+            )}
+            {(t.status === 'Pending' || t.status === 'In Progress' || t.status === 'Paused' || (t.status === 'Done' && t.paymentStatus !== 'Paid')) && !isSample && (
               <Button danger icon={<ExclamationCircleOutlined />}
                 onClick={() => { setEmergencyReason(''); setEmergencyScope('task'); setEmergencyModalOpen(true); }}>
                 {t.emergencyRequested ? 'View Emergency Status' : 'Emergency Dispatch'}
@@ -235,21 +278,35 @@ export default function TaskDetail() {
           </Card>
 
           {/* Time & Performance */}
-          {(t.estimatedDurationSec > 0 || t.actualDurationSec > 0 || t.rating != null) && (
+          {(t.estimatedDurationSec > 0 || t.actualDurationSec > 0 || t.rating != null || liveWorkedSec > 0) && (
             <Card
               title={<Text style={labelStyle}><FieldTimeOutlined /> Time &amp; Performance</Text>}
               style={{ ...cardStyle, marginTop: 16 }}
               styles={{ body: { padding: 16 } }}
             >
+              {(t.status === 'In Progress' || t.status === 'Paused') && (
+                <Tag color={t.status === 'In Progress' ? 'processing' : 'warning'} icon={t.status === 'In Progress' ? <ClockCircleOutlined /> : <PauseCircleOutlined />} style={{ marginBottom: 12 }}>
+                  {t.status === 'In Progress' ? 'Timer running' : 'Timer paused'}
+                </Tag>
+              )}
               <Row gutter={[16, 16]}>
                 {t.estimatedDurationSec > 0 && (
                   <Col xs={8}>
                     <Statistic title="Estimated" value={secToHuman(t.estimatedDurationSec)} valueStyle={{ fontSize: 18, color: '#7c3aed' }} />
                   </Col>
                 )}
-                {t.actualDurationSec > 0 && (
+                {t.status === 'Done' && t.actualDurationSec > 0 ? (
                   <Col xs={8}>
                     <Statistic title="Actual" value={secToHuman(t.actualDurationSec)} valueStyle={{ fontSize: 18, color: '#B11E6A' }} />
+                  </Col>
+                ) : (t.status === 'In Progress' || t.status === 'Paused') && liveWorkedSec > 0 && (
+                  <Col xs={8}>
+                    <Statistic title="Worked (so far)" value={secToHuman(liveWorkedSec)} valueStyle={{ fontSize: 18, color: '#B11E6A' }} />
+                  </Col>
+                )}
+                {t.pausedDurationSec > 0 && (
+                  <Col xs={8}>
+                    <Statistic title="Paused Time" value={secToHuman(t.pausedDurationSec)} valueStyle={{ fontSize: 18, color: '#fa8c16' }} />
                   </Col>
                 )}
                 {t.efficiencyPct != null && (
@@ -274,6 +331,32 @@ export default function TaskDetail() {
               {t.feedback && (
                 <Alert type="info" showIcon style={{ marginTop: 12, borderRadius: 8 }} message="Feedback" description={t.feedback} />
               )}
+            </Card>
+          )}
+
+          {/* Task Timeline — every Start/Pause/Resume/Completion event, timestamped */}
+          {t.timeline?.length > 0 && (
+            <Card
+              title={<Text style={labelStyle}><FieldTimeOutlined /> Task Timeline</Text>}
+              style={{ ...cardStyle, marginTop: 16 }}
+              styles={{ body: { padding: '16px 20px' } }}
+            >
+              <Timeline
+                items={t.timeline.map((ev, i) => ({
+                  key: i,
+                  color: timelineColor[ev.event] || 'gray',
+                  dot: timelineIcon[ev.event],
+                  children: (
+                    <Space direction="vertical" size={0}>
+                      <Text strong>{ev.event}</Text>
+                      <Text type="secondary" style={{ fontSize: 12 }}>
+                        {ev.at ? new Date(ev.at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—'}
+                        {ev.byName ? ` · ${ev.byName}` : ''}
+                      </Text>
+                    </Space>
+                  ),
+                }))}
+              />
             </Card>
           )}
 
@@ -514,7 +597,9 @@ export default function TaskDetail() {
       >
         {(() => {
           const estSec = t.estimatedDurationSec || 0;
-          const actualSec = t.startedAt ? Math.max(0, Math.round((Date.now() - new Date(t.startedAt).getTime()) / 1000)) : 0;
+          const actualSec = t.startedAt
+            ? Math.max(0, Math.round((Date.now() - new Date(t.startedAt).getTime()) / 1000) - (t.pausedDurationSec || 0))
+            : 0;
           const preview = ratingFromDurations(estSec, actualSec);
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>

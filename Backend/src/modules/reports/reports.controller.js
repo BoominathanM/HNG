@@ -3,6 +3,8 @@ const PurchaseOrder = require('../../models/PurchaseOrder');
 const LocalPurchase = require('../../models/LocalPurchase');
 const Expense = require('../../models/Expense');
 const Order = require('../../models/Order');
+const Task = require('../../models/Task');
+const StickerRequest = require('../../models/StickerRequest');
 const InventoryItem = require('../../models/InventoryItem');
 const User = require('../../models/User');
 const Complaint = require('../../models/Complaint');
@@ -995,6 +997,372 @@ exports.getPerformance = asyncHandler(async (req, res) => {
     .sort((a, b) => MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month));
 
   res.status(200).json({ success: true, data: { leaderboard, monthlyData } });
+});
+
+// ─── EMERGENCY / PAYMENT / DESIGN / DISPATCH APPROVALS REPORT ─────────────────
+// There is no single shared "Approval" collection in this app — every approval-with-reason
+// workflow bolts its own fields onto its own model:
+//   • Emergency Dispatch (Sales Head + Ops Head dual approval)     → Task
+//   • Design / Sticker / Printing (Sales + Ops Head dual approval) → StickerRequest
+//   • Dispatch mismatches (Transport name / Packages+Destination / Invoice) → Order
+// This report queries all three sources and normalizes them into one row shape so every
+// approval — both the "sent/requested" and the "approved/rejected" side — can be reviewed
+// together, filtered by order, date range, or approval type.
+//
+// "Payment Approval" has no dedicated workflow of its own anywhere in the app — the
+// Emergency Dispatch dual-approval IS the mechanism that bypasses the payment-pending
+// dispatch gate (see tasks.controller.js dispatchOrder), so it is surfaced under the
+// 'emergency' bucket rather than invented as a separate empty category.
+const fmtDate = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '');
+const fmtTime = (d) => (d ? new Date(d).toISOString().slice(11, 16) : '');
+const userName = (u) => (u && typeof u === 'object' ? (u.fullName || '') : '');
+const userRole = (u) => (u && typeof u === 'object' ? (u.role || '') : '');
+// Later of two (possibly absent) decision timestamps — used for dual-approval types where
+// either Sales or Ops may have signed off last, so the row's overall "Approved" timestamp
+// isn't tied to one fixed field.
+const maxDate = (a, b) => {
+  const da = a ? new Date(a) : null;
+  const db = b ? new Date(b) : null;
+  if (da && db) return da > db ? da : db;
+  return da || db || null;
+};
+
+const APPROVAL_MODULES = ['emergency', 'design', 'transport_mismatch', 'lr_mismatch', 'invoice_mismatch'];
+
+exports.getEmergencyApprovalsReport = asyncHandler(async (req, res) => {
+  const userSelect = 'fullName role';
+  const orderSelect = { path: 'orderId', select: 'orderCode clientName salesPerson assignedTo', populate: { path: 'assignedTo', select: 'fullName' } };
+
+  const [emergencyTasks, stickerRequests, mismatchOrders] = await Promise.all([
+    Task.find({ emergencyRequested: true, deletedAt: null })
+      .populate(orderSelect)
+      .populate('emergencyRequestedBy', userSelect)
+      .populate('emergencySalesApprovedBy', userSelect)
+      .populate('emergencyOpsApprovedBy', userSelect),
+    StickerRequest.find({})
+      .populate(orderSelect)
+      .populate('createdBy', userSelect)
+      .populate('salesApprovedBy', userSelect)
+      .populate('opsHeadApprovedBy', userSelect),
+    Order.find({
+      deletedAt: null,
+      $or: [
+        { dispatchTransportMismatchStatus: { $ne: 'none' } },
+        { dispatchLrMismatchStatus: { $ne: 'none' } },
+        { dispatchInvoiceMismatchStatus: { $ne: 'none' } },
+      ],
+    })
+      .select([
+        'orderCode', 'clientName', 'salesPerson', 'assignedTo',
+        'dispatchTransportMismatchStatus', 'dispatchTransportMismatchExpected', 'dispatchTransportMismatchScanned',
+        'dispatchTransportMismatchReportedAt', 'dispatchTransportMismatchRequestedBy', 'dispatchTransportMismatchDecidedBy', 'dispatchTransportMismatchDecidedAt',
+        'dispatchLrMismatchStatus', 'dispatchLrMismatchReason', 'dispatchLrMismatchRequestedBy', 'dispatchLrMismatchRequestedAt',
+        'dispatchLrMismatchSalesApproved', 'dispatchLrMismatchSalesApprovedBy', 'dispatchLrMismatchSalesApprovedAt',
+        'dispatchLrMismatchOpsApproved', 'dispatchLrMismatchOpsApprovedBy', 'dispatchLrMismatchOpsApprovedAt',
+        'dispatchInvoiceMismatchStatus', 'dispatchInvoiceMismatchReason', 'dispatchInvoiceMismatchRequestedBy',
+        'dispatchInvoiceMismatchRequestedAt', 'dispatchInvoiceMismatchDecidedBy', 'dispatchInvoiceMismatchDecidedAt', 'dispatchInvoiceMismatchDecisionNote',
+      ].join(' '))
+      .populate('assignedTo', userSelect)
+      .populate('dispatchTransportMismatchRequestedBy', userSelect)
+      .populate('dispatchTransportMismatchDecidedBy', userSelect)
+      .populate('dispatchLrMismatchRequestedBy', userSelect)
+      .populate('dispatchLrMismatchSalesApprovedBy', userSelect)
+      .populate('dispatchLrMismatchOpsApprovedBy', userSelect)
+      .populate('dispatchInvoiceMismatchRequestedBy', userSelect)
+      .populate('dispatchInvoiceMismatchDecidedBy', userSelect),
+  ]);
+
+  const rows = [];
+
+  // ── Emergency Dispatch / Payment Approval (Sales Head → Ops Head) ──
+  emergencyTasks.forEach((t) => {
+    const order = t.orderId && typeof t.orderId === 'object' ? t.orderId : null;
+    rows.push({
+      key: `emergency-${t._id}`,
+      module: 'emergency',
+      type: 'Emergency Dispatch / Payment Approval',
+      raisedByTeam: 'Task Management (Sales/Ops)',
+      orderId: order?._id || t.orderId || '',
+      orderCode: order?.orderCode || '',
+      clientName: order?.clientName || '',
+      salesPerson: order?.salesPerson || userName(order?.assignedTo) || '',
+      reason: t.emergencyReason || '',
+      sentAtRaw: t.emergencyRequestedAt,
+      sentBy: userName(t.emergencyRequestedBy),
+      sentByRole: userRole(t.emergencyRequestedBy),
+      approver1Role: 'Sales Head',
+      approver1Name: userName(t.emergencySalesApprovedBy),
+      approver1At: t.emergencySalesApprovedAt,
+      approver1Decision: t.emergencySalesApproved ? 'Approved' : 'Pending',
+      approver2Role: 'Ops Head',
+      approver2Name: userName(t.emergencyOpsApprovedBy),
+      approver2At: t.emergencyOpsApprovedAt,
+      approver2Decision: t.emergencyOpsApproved ? 'Approved' : 'Pending',
+      status: t.emergencyApproved ? 'Approved' : 'Pending',
+      approvedAtRaw: t.emergencyApproved ? t.emergencyApprovedAt : null,
+      approvedReason: '',
+    });
+  });
+
+  // ── Design / Sticker / Printing Approval (Sales + Ops Head dual) ──
+  stickerRequests.forEach((s) => {
+    const order = s.orderId && typeof s.orderId === 'object' ? s.orderId : null;
+    const status = (s.salesApproved && s.opsHeadApproved) ? 'Approved'
+      : s.status === 'Design Change' ? 'Sent Back for Change'
+      : 'Pending';
+    rows.push({
+      key: `design-${s._id}`,
+      module: 'design',
+      type: 'Design / Sticker / Printing Approval',
+      raisedByTeam: 'Operations (Design/Print)',
+      orderId: order?._id || s.orderId || '',
+      orderCode: order?.orderCode || '',
+      clientName: order?.clientName || s.hotelName || '',
+      salesPerson: order?.salesPerson || userName(order?.assignedTo) || '',
+      reason: [s.stickerType, s.product, s.hotelName].filter(Boolean).join(' — '),
+      sentAtRaw: s.createdAt,
+      sentBy: userName(s.createdBy),
+      sentByRole: userRole(s.createdBy),
+      approver1Role: 'Sales',
+      approver1Name: userName(s.salesApprovedBy),
+      approver1At: s.salesApprovedAt,
+      approver1Decision: s.salesApproved ? 'Approved' : 'Pending',
+      approver2Role: 'Ops Head',
+      approver2Name: userName(s.opsHeadApprovedBy),
+      approver2At: s.opsHeadApprovedAt,
+      approver2Decision: s.opsHeadApproved ? 'Approved' : 'Pending',
+      status,
+      approvedAtRaw: (s.salesApproved && s.opsHeadApproved) ? maxDate(s.salesApprovedAt, s.opsHeadApprovedAt) : null,
+      approvedReason: '',
+    });
+  });
+
+  // ── Dispatch mismatch flows (all three live on Order) ──
+  mismatchOrders.forEach((o) => {
+    const base = {
+      orderId: o._id,
+      orderCode: o.orderCode || '',
+      clientName: o.clientName || '',
+      salesPerson: o.salesPerson || userName(o.assignedTo) || '',
+      raisedByTeam: 'Dispatch',
+    };
+    if (o.dispatchTransportMismatchStatus && o.dispatchTransportMismatchStatus !== 'none') {
+      rows.push({
+        ...base,
+        key: `transport-${o._id}`,
+        module: 'transport_mismatch',
+        type: 'Transport Mismatch Approval',
+        reason: `Expected "${o.dispatchTransportMismatchExpected || ''}" vs scanned "${o.dispatchTransportMismatchScanned || ''}"`,
+        sentAtRaw: o.dispatchTransportMismatchReportedAt,
+        sentBy: userName(o.dispatchTransportMismatchRequestedBy),
+        sentByRole: userRole(o.dispatchTransportMismatchRequestedBy),
+        approver1Role: 'Sales',
+        approver1Name: userName(o.dispatchTransportMismatchDecidedBy),
+        approver1At: o.dispatchTransportMismatchDecidedAt,
+        approver1Decision: o.dispatchTransportMismatchStatus === 'approved' ? 'Approved' : o.dispatchTransportMismatchStatus === 'rejected' ? 'Rejected' : 'Pending',
+        approver2Role: '', approver2Name: '', approver2At: null, approver2Decision: '',
+        status: o.dispatchTransportMismatchStatus === 'approved' ? 'Approved' : o.dispatchTransportMismatchStatus === 'rejected' ? 'Rejected' : 'Pending',
+        approvedAtRaw: ['approved', 'rejected'].includes(o.dispatchTransportMismatchStatus) ? o.dispatchTransportMismatchDecidedAt : null,
+        approvedReason: '',
+      });
+    }
+    if (o.dispatchLrMismatchStatus && o.dispatchLrMismatchStatus !== 'none') {
+      rows.push({
+        ...base,
+        key: `lr-${o._id}`,
+        module: 'lr_mismatch',
+        type: 'Packages/Destination Mismatch Approval',
+        reason: o.dispatchLrMismatchReason || '',
+        sentAtRaw: o.dispatchLrMismatchRequestedAt,
+        sentBy: userName(o.dispatchLrMismatchRequestedBy),
+        sentByRole: userRole(o.dispatchLrMismatchRequestedBy),
+        approver1Role: 'Sales',
+        approver1Name: userName(o.dispatchLrMismatchSalesApprovedBy),
+        approver1At: o.dispatchLrMismatchSalesApprovedAt,
+        approver1Decision: o.dispatchLrMismatchSalesApproved ? 'Approved' : (o.dispatchLrMismatchStatus === 'rejected' ? 'Rejected' : 'Pending'),
+        approver2Role: 'Ops',
+        approver2Name: userName(o.dispatchLrMismatchOpsApprovedBy),
+        approver2At: o.dispatchLrMismatchOpsApprovedAt,
+        approver2Decision: o.dispatchLrMismatchOpsApproved ? 'Approved' : (o.dispatchLrMismatchStatus === 'rejected' ? 'Rejected' : 'Pending'),
+        status: o.dispatchLrMismatchStatus === 'approved' ? 'Approved' : o.dispatchLrMismatchStatus === 'rejected' ? 'Rejected' : 'Pending',
+        approvedAtRaw: ['approved', 'rejected'].includes(o.dispatchLrMismatchStatus)
+          ? maxDate(o.dispatchLrMismatchSalesApprovedAt, o.dispatchLrMismatchOpsApprovedAt)
+          : null,
+        approvedReason: '',
+      });
+    }
+    if (o.dispatchInvoiceMismatchStatus && o.dispatchInvoiceMismatchStatus !== 'none') {
+      rows.push({
+        ...base,
+        key: `invoice-${o._id}`,
+        module: 'invoice_mismatch',
+        type: 'Dispatch Mismatch Approval (Report Mismatch)',
+        reason: o.dispatchInvoiceMismatchReason || '',
+        sentAtRaw: o.dispatchInvoiceMismatchRequestedAt,
+        sentBy: userName(o.dispatchInvoiceMismatchRequestedBy),
+        sentByRole: userRole(o.dispatchInvoiceMismatchRequestedBy),
+        approver1Role: 'Sales (Order Owner)',
+        approver1Name: userName(o.dispatchInvoiceMismatchDecidedBy),
+        approver1At: o.dispatchInvoiceMismatchDecidedAt,
+        approver1Decision: o.dispatchInvoiceMismatchStatus === 'approved' ? 'Approved' : o.dispatchInvoiceMismatchStatus === 'rejected' ? 'Rejected' : 'Pending',
+        approver1Note: o.dispatchInvoiceMismatchDecisionNote || '',
+        approver2Role: '', approver2Name: '', approver2At: null, approver2Decision: '',
+        status: o.dispatchInvoiceMismatchStatus === 'approved' ? 'Approved' : o.dispatchInvoiceMismatchStatus === 'rejected' ? 'Rejected' : 'Pending',
+        approvedAtRaw: ['approved', 'rejected'].includes(o.dispatchInvoiceMismatchStatus) ? o.dispatchInvoiceMismatchDecidedAt : null,
+        approvedReason: o.dispatchInvoiceMismatchDecisionNote || '',
+      });
+    }
+  });
+
+  // Date filter applied uniformly across every source's own "sent/requested" timestamp,
+  // and optional type/order filters — done row-side (not per-query) since the three
+  // sources have different date fields and Order alone holds three of them at once.
+  const start = req.query.startDate ? new Date(req.query.startDate) : null;
+  const end = req.query.endDate ? new Date(req.query.endDate) : null;
+  let filtered = rows.filter((r) => {
+    if (start && (!r.sentAtRaw || new Date(r.sentAtRaw) < start)) return false;
+    if (end && (!r.sentAtRaw || new Date(r.sentAtRaw) > end)) return false;
+    return true;
+  });
+  if (req.query.type && APPROVAL_MODULES.includes(req.query.type)) {
+    filtered = filtered.filter((r) => r.module === req.query.type);
+  }
+  if (req.query.orderId) {
+    filtered = filtered.filter((r) => String(r.orderId) === String(req.query.orderId));
+  }
+  if (req.query.status) {
+    filtered = filtered.filter((r) => r.status === req.query.status);
+  }
+
+  filtered.sort((a, b) => new Date(b.sentAtRaw || 0) - new Date(a.sentAtRaw || 0));
+
+  const data = filtered.map((r) => ({
+    ...r,
+    sentDate: fmtDate(r.sentAtRaw),
+    sentTime: fmtTime(r.sentAtRaw),
+    sentReason: r.reason || '',
+    approvedDate: fmtDate(r.approvedAtRaw),
+    approvedTime: fmtTime(r.approvedAtRaw),
+    approvedReason: r.approvedReason || '',
+    approver1Date: fmtDate(r.approver1At),
+    approver1Time: fmtTime(r.approver1At),
+    approver2Date: fmtDate(r.approver2At),
+    approver2Time: fmtTime(r.approver2At),
+    sentAtRaw: undefined,
+    approvedAtRaw: undefined,
+    approver1At: undefined,
+    approver2At: undefined,
+  }));
+
+  const monthlyMap = {};
+  data.forEach((r) => {
+    const key = r.sentDate ? r.sentDate.slice(0, 7) : 'Unknown';
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, count: 0 };
+    monthlyMap[key].count += 1;
+  });
+
+  const summary = {
+    total: data.length,
+    pending: data.filter((r) => r.status === 'Pending').length,
+    approved: data.filter((r) => r.status === 'Approved').length,
+    rejected: data.filter((r) => r.status === 'Rejected').length,
+    byType: APPROVAL_MODULES.map((m) => ({ module: m, count: data.filter((r) => r.module === m).length })),
+  };
+
+  res.status(200).json({
+    success: true,
+    data,
+    summary,
+    chartData: Object.values(monthlyMap).sort((a, b) => a.month.localeCompare(b.month)),
+  });
+});
+
+// ─── SWITCH REPORT (Task reassignment + Vendor/Printing Supplier switch) ──────
+// Two independent "switch" actions exist in the app, each logging its own history array
+// (see Task.switchHistory / StickerRequest.switchHistory, populated by tasks.controller
+// reassignTask and operations.controller reassignStickerRequest):
+//   • Task Management > Reassign column — admin switches a Pending task's assignee
+//   • Operations > Design/Vendors > Printing Supplier — switches a design/print request's vendor
+// This report flattens both histories (one row per switch event, oldest actions are just as
+// visible as the latest) into one shape: Switch From / Switch To / Switch Date & Time / Switch By.
+const SWITCH_MODULES = ['task', 'vendor'];
+
+exports.getSwitchReport = asyncHandler(async (req, res) => {
+  const [tasks, stickerRequests] = await Promise.all([
+    Task.find({ 'switchHistory.0': { $exists: true }, deletedAt: null })
+      .select('taskCode taskName product orderId switchHistory')
+      .populate({ path: 'orderId', select: 'orderCode clientName' }),
+    StickerRequest.find({ 'switchHistory.0': { $exists: true } })
+      .select('stickerType product hotelName orderId switchHistory')
+      .populate({ path: 'orderId', select: 'orderCode clientName' }),
+  ]);
+
+  const rows = [];
+
+  tasks.forEach((t) => {
+    const order = t.orderId && typeof t.orderId === 'object' ? t.orderId : null;
+    (t.switchHistory || []).forEach((h, i) => {
+      rows.push({
+        key: `task-${t._id}-${i}`,
+        module: 'task',
+        type: 'Task Reassignment',
+        reference: t.taskName || t.product || t.taskCode || 'Task',
+        taskCode: t.taskCode || '',
+        orderCode: order?.orderCode || '',
+        clientName: order?.clientName || '',
+        switchFrom: h.fromName || '—',
+        switchTo: h.toName || '—',
+        switchBy: h.byName || '',
+        switchAtRaw: h.at,
+      });
+    });
+  });
+
+  stickerRequests.forEach((s) => {
+    const order = s.orderId && typeof s.orderId === 'object' ? s.orderId : null;
+    (s.switchHistory || []).forEach((h, i) => {
+      rows.push({
+        key: `vendor-${s._id}-${i}`,
+        module: 'vendor',
+        type: 'Printing Supplier Switch',
+        reference: [s.stickerType, s.product].filter(Boolean).join(' — ') || 'Design/Print Request',
+        taskCode: '',
+        orderCode: order?.orderCode || '',
+        clientName: order?.clientName || s.hotelName || '',
+        switchFrom: h.fromName || '—',
+        switchTo: h.toName || '—',
+        switchBy: h.byName || '',
+        switchAtRaw: h.at,
+      });
+    });
+  });
+
+  const start = req.query.startDate ? new Date(req.query.startDate) : null;
+  const end = req.query.endDate ? new Date(req.query.endDate) : null;
+  let filtered = rows.filter((r) => {
+    if (start && (!r.switchAtRaw || new Date(r.switchAtRaw) < start)) return false;
+    if (end && (!r.switchAtRaw || new Date(r.switchAtRaw) > end)) return false;
+    return true;
+  });
+  if (req.query.type && SWITCH_MODULES.includes(req.query.type)) {
+    filtered = filtered.filter((r) => r.module === req.query.type);
+  }
+
+  filtered.sort((a, b) => new Date(b.switchAtRaw || 0) - new Date(a.switchAtRaw || 0));
+
+  const data = filtered.map((r) => ({
+    ...r,
+    switchDate: fmtDate(r.switchAtRaw),
+    switchTime: fmtTime(r.switchAtRaw),
+    switchAtRaw: undefined,
+  }));
+
+  const summary = {
+    total: data.length,
+    byType: SWITCH_MODULES.map((m) => ({ module: m, count: data.filter((r) => r.module === m).length })),
+  };
+
+  res.status(200).json({ success: true, data, summary });
 });
 
 // ─── EXPORT HELPERS ───────────────────────────────────────────────────────────

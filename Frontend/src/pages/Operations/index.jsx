@@ -25,6 +25,7 @@ import {
   Tooltip,
   Typography,
   Upload,
+  Popconfirm,
 } from 'antd';
 import {
   AlertFilled,
@@ -32,6 +33,7 @@ import {
   CheckCircleOutlined,
   ContainerOutlined,
   CopyOutlined,
+  DeleteOutlined,
   ExperimentOutlined,
   EyeOutlined,
   FileImageOutlined,
@@ -77,6 +79,8 @@ import {
   useGetHotelDesignsQuery,
   useUploadStickerInvoiceMutation,
   useDecideLrMismatchOpsMutation,
+  useGetHiddenQueueRowsQuery,
+  useHideQueueRowMutation,
 } from '../../store/api/apiSlice';
 import {
   buildProductionQueues,
@@ -192,6 +196,32 @@ export default function Operations() {
   const [lrMismatchOpsOrder, setLrMismatchOpsOrder] = useState(null);
   const [decidingLrMismatchOps, setDecidingLrMismatchOps] = useState(false);
   const { data: emergencyRequestsRaw } = useGetEmergencyRequestsQuery();
+  // Queue row visibility (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other tabs) —
+  // Admin/Management-only removal of a single row from one packaging queue tab, without
+  // touching the underlying Order. Restorable from Settings > Deleted Records.
+  const { data: hiddenQueueRowsData } = useGetHiddenQueueRowsQuery();
+  const [hideQueueRow] = useHideQueueRowMutation();
+  const hiddenQueueRowKeys = useMemo(
+    () => new Set((hiddenQueueRowsData?.data || []).map((r) => `${r.orderId}:${r.rowKey}`)),
+    [hiddenQueueRowsData],
+  );
+  const isAdminDept = currentUser?.department === 'Admin' || currentUser?.department === 'Management' || currentUser?.role === 'Super Admin';
+  const handleHideQueueRow = async (row, tab) => {
+    try {
+      const ord = apiOrders.find((o) => o.id === row.orderId);
+      await hideQueueRow({
+        orderId: ord?.key || row.orderId,
+        rowKey: row.key,
+        tab,
+        orderCode: row.orderId,
+        product: row.product,
+        qty: row.qty,
+      }).unwrap();
+      enqueueSnackbar(`Removed from ${tab} queue — visible in Deleted Records`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to remove row', { variant: 'error' });
+    }
+  };
   // Group active emergency-dispatch requests by order — one entry per product/Task
   // that raised "Emergency Dispatch" in Task Management (see Sales/index.jsx for the
   // matching map — an order can have several products each with their own request).
@@ -245,7 +275,7 @@ export default function Operations() {
   const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
 
   // Vendor users from Settings (department = Vendors, role = Sticker/Box/Ziplock)
-  const { data: usersData } = useGetUsersQuery();
+  const { data: usersData } = useGetUsersQuery({ limit: 1000 });
   const vendorUsers = useMemo(() => (usersData?.data || []).filter(
     u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(u.role)
   ), [usersData]);
@@ -631,13 +661,16 @@ export default function Operations() {
     const isMyVendorRole = currentUser?.department === 'Vendors' && currentUser?.role === autoKeyForType;
     if (!isMyVendorRole) return rows;
     return rows.filter((r) => {
-      // A matching request already passed the backend's per-vendor visibility filter
-      // (mine, or legacy/unassigned) — trust it. No request yet means a brand-new,
-      // unclaimed row: show it only to whoever is currently the Auto vendor for this
-      // type, since that's who it'll be routed to once actioned.
       const sr = findStickerReq(r);
-      if (sr) return true;
-      return automationVendors[autoKeyForType] === currentUser._id;
+      // No request anywhere for this row yet — a brand-new, unclaimed row: show it
+      // only to whoever is currently the Auto vendor for this type, since that's who
+      // it'll be routed to once actioned.
+      if (!sr) return automationVendors[autoKeyForType] === currentUser._id;
+      // Backend marks a request routed to a different teammate this way (redacted,
+      // no vendorId exposed) — it's no longer mine to see, even if I'm still the
+      // type's Auto default; a request that's mine or legacy-unassigned comes through
+      // in full and is always visible.
+      return !sr.assignedElsewhere;
     });
   };
   // Local overrides take priority (immediate post-action feedback);
@@ -1138,19 +1171,23 @@ export default function Operations() {
         },
       },
       {
-        title: 'Vendor',
+        title: 'Printing Supplier',
         key: 'vendor',
         width: 150,
         render: (_, record) => {
           if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
           const sr = findStickerReq(record);
-          if (!sr?._id) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
           // Role values on the User are 'Ziplock', not the StickerRequest's 'Frosted Ziplock'.
           const roleForLabel = label === 'Frosted Ziplock' ? 'Ziplock' : label;
           const options = vendorUsers
             .filter(u => u.role === roleForLabel)
             .map(u => ({ value: u._id, label: u.fullName }));
-          const currentVendorId = sr.vendorId?._id || sr.vendorId || undefined;
+          // Before any request exists yet, show who it WOULD auto-route to (Vendors &
+          // Suppliers > Vendor Team Members "Auto" pick) so the name/switch is visible
+          // from the first Pending row, not only after an action creates the request.
+          const currentVendorId = sr
+            ? (sr.vendorId?._id || sr.vendorId || undefined)
+            : (automationVendors[roleForLabel] || undefined);
           return (
             <Select
               size="small"
@@ -1161,10 +1198,26 @@ export default function Operations() {
               options={options}
               onChange={async (val) => {
                 try {
-                  await reassignStickerRequest({ id: sr._id, vendorId: val || null }).unwrap();
-                  enqueueSnackbar('Vendor reassigned — existing design & approval stay attached', { variant: 'success' });
+                  if (sr?._id) {
+                    await reassignStickerRequest({ id: sr._id, vendorId: val || null }).unwrap();
+                  } else {
+                    // No StickerRequest yet — create it now with the chosen supplier so the
+                    // order is fully moved to them from the start, not just once actioned.
+                    const ord = apiOrders.find((o) => o.id === record.orderId);
+                    await createStickerRequest({
+                      orderId: ord?.key,
+                      hotelLogo: record.hotelLogo,
+                      product: record.product,
+                      category: record.category || '',
+                      stickerType: label,
+                      quantity: record.qty,
+                      stickerSize: record.stickerSize || record.size,
+                      vendorId: val || null,
+                    }).unwrap();
+                  }
+                  enqueueSnackbar('Printing supplier reassigned — existing design & approval stay attached', { variant: 'success' });
                 } catch (err) {
-                  enqueueSnackbar(err?.data?.message || 'Failed to reassign vendor', { variant: 'error' });
+                  enqueueSnackbar(err?.data?.message || 'Failed to reassign printing supplier', { variant: 'error' });
                 }
               }}
             />
@@ -1568,6 +1621,25 @@ export default function Operations() {
           );
         },
       },
+      // Admin/Management-department-only (or Super Admin role): removes this row from
+      // THIS queue tab only — the underlying Order/items are untouched. Restorable from
+      // Settings > Deleted Records.
+      ...(isAdminDept ? [{
+        title: '', key: 'delete', width: 50,
+        render: (_, record) => (
+          <Popconfirm
+            title="Remove this row from the queue?"
+            description={`It will disappear from the ${label} queue only and can be restored from Settings → Deleted Records.`}
+            onConfirm={(e) => { e?.stopPropagation?.(); handleHideQueueRow(record, label); }}
+            onCancel={(e) => e?.stopPropagation?.()}
+            okText="Remove" okButtonProps={{ danger: true }} cancelText="Cancel"
+          >
+            <Tooltip title="Remove from queue">
+              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+            </Tooltip>
+          </Popconfirm>
+        ),
+      }] : []),
     ];
   };
 
@@ -1632,11 +1704,19 @@ export default function Operations() {
       const d = rowDateStr(r);
       return d >= dateRange[0] && d <= dateRange[1];
     };
+    // A row is hidden (Admin/Management "delete from this queue") if its order's real _id
+    // + row key pair is in the archive fetched via getHiddenQueueRows. Row objects carry the
+    // order CODE as `orderId`, so resolve the real _id through apiOrders the same way it was
+    // stored when the row was hidden.
+    const isRowHidden = (r) => {
+      const ord = apiOrders.find((o) => o.id === r.orderId);
+      return hiddenQueueRowKeys.has(`${ord?.key || r.orderId}:${r.key}`);
+    };
     const closedRows = visibleRows.filter((r) => getQueueStep(r) === 6).filter(matchesDateRange);
     const activeRows = allActive.filter((r) => {
       const q = (search || '').toLowerCase();
       return !q || (r.orderId || '').toLowerCase().includes(q) || (r.hotelLogo || '').toLowerCase().includes(q) || (r.product || '').toLowerCase().includes(q);
-    }).filter(matchesDateRange);
+    }).filter(matchesDateRange).filter((r) => !isRowHidden(r));
 
     // For Box/Frosted tabs: group only true kit orders (kitDisplayUnit set) under one
     // shared parent row. Non-kit orders with multiple products stay as individual rows.
@@ -1785,7 +1865,7 @@ export default function Operations() {
       const ca = CATEGORY_ORDER[a.category] ?? 3;
       const cb = CATEGORY_ORDER[b.category] ?? 3;
       return ca - cb;
-    });
+    }).filter((r) => !isRowHidden(r));
 
     return (
       <div>

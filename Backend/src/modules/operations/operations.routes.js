@@ -32,6 +32,11 @@ router.post('/stickers/:id/send-design-confirmation', ctrl.sendDesignConfirmatio
 router.get('/hotel-designs', ctrl.getHotelDesigns);
 router.post('/hotel-designs', ctrl.saveHotelDesign);
 
+// Queue row visibility (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other tabs) —
+// Admin/Management-only removal of a single row from one packaging queue tab.
+router.get('/queue-rows/hidden', ctrl.getHiddenQueueRows);
+router.post('/queue-rows', ctrl.hideQueueRow);
+
 // Packaging tab invoices (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other) — each :type
 // is backed by its own model/collection (see packagingInvoices.controller.js MODELS map).
 router.get('/invoices/:type', invoiceCtrl.getPackagingInvoices);

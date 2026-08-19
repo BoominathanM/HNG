@@ -20,5 +20,7 @@ router.get('/auditor-tax/export', ctrl.exportSalesReport);
 router.get('/forwarding-courier', ctrl.getForwardingCourierReport);
 router.get('/my-performance', ctrl.getMyPerformance);
 router.get('/performance', ctrl.getPerformance);
+router.get('/emergency-approvals', ctrl.getEmergencyApprovalsReport);
+router.get('/switches', ctrl.getSwitchReport);
 
 module.exports = router;

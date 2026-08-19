@@ -143,6 +143,7 @@ const orderSchema = new mongoose.Schema({
   dispatchTransportMismatchExpected: String,
   dispatchTransportMismatchScanned: String,
   dispatchTransportMismatchReportedAt: Date,
+  dispatchTransportMismatchRequestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   dispatchTransportMismatchDecidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   dispatchTransportMismatchDecidedAt: Date,
   // Dispatch LR mismatch on fields OTHER than Weight/Transport Name (e.g. Packages/Boxes,

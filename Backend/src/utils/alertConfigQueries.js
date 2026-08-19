@@ -72,6 +72,7 @@ async function getPendingRecordsForConfig(config) {
     const items = await Task.find({
       assignedTo: { $ne: null },
       status: { $ne: 'Done' },
+      deletedAt: null,
     }).lean();
     return items.map((r) => ({
       recordType: 'Task',

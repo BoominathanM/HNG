@@ -50,10 +50,10 @@ exports.getKPIs = asyncHandler(async (req, res) => {
     ]),
     Order.countDocuments({ status: 'Dispatch Ready', deletedAt: null }),
     Party.countDocuments({ type: 'Customer', deletedAt: null }),
-    Task.countDocuments(dateFilter),
+    Task.countDocuments({ ...dateFilter, deletedAt: null }),
     Complaint.countDocuments({ status: 'Open' }),
-    Task.countDocuments({ status: 'Pending' }),
-    Task.countDocuments({ status: 'Done', ...dateFilter }),
+    Task.countDocuments({ status: 'Pending', deletedAt: null }),
+    Task.countDocuments({ status: 'Done', ...dateFilter, deletedAt: null }),
     Invoice.countDocuments({ status: { $in: ['Pending', 'Overdue'] } }),
     InventoryItem.countDocuments({ $expr: { $lt: ['$currentStock', '$minStock'] }, deletedAt: null }),
     Lead.countDocuments({ ...dateFilter, deletedAt: null }),
@@ -78,7 +78,7 @@ exports.getKPIs = asyncHandler(async (req, res) => {
       totalTasks,
       activeComplaints,
       upcomingReminders,
-      todaysTasks: await Task.countDocuments({ createdAt: { $gte: today } }),
+      todaysTasks: await Task.countDocuments({ createdAt: { $gte: today }, deletedAt: null }),
       pendingTasks,
       completedTasks,
       pendingInvoices,
@@ -160,6 +160,7 @@ exports.getTopProducts = asyncHandler(async (req, res) => {
 
 exports.getTaskStatusDistribution = asyncHandler(async (req, res) => {
   const agg = await Task.aggregate([
+    { $match: { deletedAt: null } },
     { $group: { _id: '$status', count: { $sum: 1 } } },
   ]);
   res.status(200).json({ success: true, data: agg });

@@ -25,7 +25,7 @@ const taskSchema = new mongoose.Schema({
   description: String,
   status: {
     type: String,
-    enum: ['Pending', 'In Progress', 'Done', 'Emergency'],
+    enum: ['Pending', 'In Progress', 'Paused', 'Done', 'Emergency'],
     default: 'Pending',
   },
   // sub-task breakdown by quantity (Assign Task modal)
@@ -38,13 +38,27 @@ const taskSchema = new mongoose.Schema({
   }],
   startedAt: Date,
   completedAt: Date,
+  // ── Pause/Resume tracking ────────────────────────────────────────────────
+  // Set while status === 'Paused' (when the current pause span began); folded into
+  // pausedDurationSec and cleared on Resume/Done so actualDurationSec below can
+  // exclude time spent paused.
+  lastPausedAt: Date,
+  pausedDurationSec: { type: Number, default: 0 },
+  // Full Start/Pause/Resume/Completion history with timestamps, for detailed task
+  // tracking (Task Detail's Timeline). Supports multiple pause/resume cycles per task.
+  timeline: [{
+    event: { type: String, enum: ['Start', 'Pause', 'Resume', 'Completion'] },
+    at: Date,
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    byName: String,
+  }],
   // ── Time management ──────────────────────────────────────────────────────
   // Snapshot taken at assign time so later config edits don't rewrite history.
   timePerUnitSec: Number,            // configured time for 1 unit of this task
   estimatedDurationSec: Number,      // timePerUnitSec × qty
   plannedStartTime: Date,            // auto-filled with the assignment time
   plannedEndTime: Date,              // plannedStartTime + estimatedDurationSec
-  // Computed on completion from startedAt → completedAt.
+  // Computed on completion from startedAt → completedAt, minus pausedDurationSec.
   actualDurationSec: Number,
   // Auto rating from actual-vs-estimated time + an optional written note.
   rating: { type: Number, min: 0, max: 5 },
@@ -54,6 +68,7 @@ const taskSchema = new mongoose.Schema({
   isEmergency: { type: Boolean, default: false },
   emergencyRequested: { type: Boolean, default: false },
   emergencyRequestedAt: Date,
+  emergencyRequestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   emergencyReason: String,
   emergencySalesApproved: { type: Boolean, default: false },
   emergencySalesApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
@@ -65,6 +80,23 @@ const taskSchema = new mongoose.Schema({
   emergencyApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   emergencyApprovedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  // Full history of admin "Switch assignee" actions (Task Management > Reassign column),
+  // for the Reports > Switch Report tab. Separate from the live assignedTo/assigneeName
+  // fields above so past switches remain visible after a later reassignment overwrites them.
+  switchHistory: [{
+    from: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    fromName: String,
+    to: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    toName: String,
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    byName: String,
+    at: { type: Date, default: Date.now },
+  }],
+  // Soft-delete (Admin department only, via Task Management > Current Task) — mirrors
+  // the same deletedAt/deletedBy convention as User/Vendor/Lead/etc. so this task
+  // surfaces in Settings > Deleted Records and can be restored from there.
+  deletedAt: { type: Date, default: null },
+  deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Task', taskSchema);

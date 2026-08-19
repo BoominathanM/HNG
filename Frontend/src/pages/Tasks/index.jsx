@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Select, Input, Tabs, Typography, Space,
   Badge, Avatar, Progress, Alert, Descriptions, Divider, Tooltip, Steps, Radio,
-  DatePicker, InputNumber, Rate, Empty,
+  DatePicker, InputNumber, Rate, Empty, Popconfirm,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
-  PlayCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
+  PlayCircleOutlined, PauseCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
   FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
   EditOutlined, DeleteOutlined, FieldTimeOutlined, RobotOutlined, TeamOutlined,
   InfoCircleOutlined, GiftOutlined,
@@ -28,6 +28,7 @@ import {
   useLazyGetOrderDispatchReadinessQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
+  useReassignTaskMutation,
   useDispatchTaskOrderMutation,
   useRequestEmergencyDispatchMutation,
   useRequestEmergencyDispatchForOrderMutation,
@@ -46,7 +47,10 @@ const { Option } = Select;
 
 const typeColor = { Production: '#B11E6A', 'Sticker Work': '#8a1652', Packing: '#C94F8A', Procurement: '#D85C9E', Internal: '#6b1240' };
 const priorityColor = { Urgent: '#6b1240', High: '#B11E6A', Medium: '#C94F8A', Low: '#D85C9E' };
-const statusColor = { 'In Progress': '#B11E6A', Pending: '#C94F8A', Completed: '#6b1240' };
+const statusColor = { 'In Progress': '#B11E6A', Pending: '#C94F8A', Paused: '#fa8c16', Completed: '#6b1240' };
+// Kanban's "In Progress" column groups Paused tasks alongside actively-worked ones —
+// a paused task is still mid-flight (not Pending, not Completed), just temporarily halted.
+const IN_PROGRESS_GROUP = new Set(['In Progress', 'Paused']);
 const paymentColor = { Paid: 'success', Pending: 'warning', Partial: 'orange' };
 
 // Once an order has been forwarded to the Dispatch queue (either automatically, when
@@ -285,6 +289,15 @@ function kitPrintGate() {
 export default function Tasks() {
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
+  const currentUser = useSelector((s) => s.auth.user);
+  // Reassigning an existing task's assignee is an admin-only action (same bypass rule
+  // usePageAccess uses everywhere else in this codebase — there's no separate "Admin
+  // department" field to check against).
+  const isAdmin = currentUser?.role === 'Super Admin' || currentUser?.role === 'Admin';
+  // Deleting a task is restricted to Admin/Management department logins, plus the
+  // Super Admin role (which may carry any department) — matches the same gate
+  // enforced server-side in tasks.controller.js's deleteTask.
+  const isAdminDept = currentUser?.department === 'Admin' || currentUser?.department === 'Management' || currentUser?.role === 'Super Admin';
   // Guaranteed-unique row IDs for Task Breakdown rows — Date.now() alone can collide
   // when "Add Task" fires twice in the same millisecond, which was silently merging
   // two different-named tasks (updates to one row's fields hit both rows at once).
@@ -336,6 +349,7 @@ export default function Tasks() {
   );
   const [createTask] = useCreateTaskMutation();
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
+  const [reassignTask, { isLoading: reassigning }] = useReassignTaskMutation();
   const [dispatchTaskOrder, { isLoading: dispatching }] = useDispatchTaskOrderMutation();
   const [fetchOrderDispatchReadiness] = useLazyGetOrderDispatchReadinessQuery();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
@@ -509,6 +523,12 @@ export default function Tasks() {
       : (Array.isArray(t.assignedToMany) && t.assignedToMany.length)
         ? t.assignedToMany.map((u) => u?.fullName).filter(Boolean)
         : [t.assignedTo?.fullName || t.assigneeName].filter(Boolean);
+    // Task.dueDate is only ever set for the rare task created with one explicitly —
+    // nothing in the Assign Task flows sends it, so it's null for virtually every task
+    // and the "Due" column showed blank. Fall back to the order's expected delivery
+    // date (already fetched for the "Delivery Date" column below) — that's the real
+    // deadline this task is working toward when no task-specific due date was set.
+    const deliveryDateStr = t.orderId?.expectedDeliveryDate ? t.orderId.expectedDeliveryDate.slice(0, 10) : null;
     return {
     key: t._id,
     id: t.taskCode,
@@ -519,13 +539,18 @@ export default function Tasks() {
     orderId: (typeof t.orderId === 'object' ? t.orderId?._id : t.orderId)?.toString() || null,
     orderItems: t.orderId?.items || [],
     orderStatus: t.orderId?.status || '',
-    deliveryDate: t.orderId?.expectedDeliveryDate ? t.orderId.expectedDeliveryDate.slice(0, 10) : null,
+    deliveryDate: deliveryDateStr,
     client: t.orderId?.clientName || t.clientName || '—',
     product: t.product || '—',
     assignedTo: assigneeNameList.join(', ') || '—',
     assignee: assigneeNameList.join(', ') || '',
     assigneeList: assigneeNameList,
     assigneeRole: t.assignedTo?.role || '',
+    // Raw id of the single assignee (+ whether this task has multiple assignees) —
+    // needed to drive the admin Reassign dropdown and exclude the current assignee
+    // from its options.
+    assignedToId: t.assignedTo?._id || null,
+    hasMultipleAssignees: Array.isArray(t.assignedToMany) && t.assignedToMany.length > 0,
     // Backend stores 'Done'; the UI keys everything off 'Completed'. Normalize for display.
     status: t.status === 'Done' ? 'Completed' : t.status,
     priority: t.priority || (t.isEmergency ? 'High' : 'Normal'),
@@ -541,13 +566,17 @@ export default function Tasks() {
     salesPerson: t.assignedTo?.fullName || t.assigneeName || '—',
     // Sample orders need no payment follow-up; only regular completed+unpaid orders do.
     salesFollowup: t.orderId?.orderCategory !== 'SAMPLE' && t.orderId?.leadId?.leadType !== 'SAMPLE' && t.status === 'Done' && (t.paymentStatus || 'Pending') !== 'Paid',
-    due: t.dueDate ? t.dueDate.slice(0, 10) : undefined,
+    due: t.dueDate ? t.dueDate.slice(0, 10) : deliveryDateStr,
     qty: t.qty,
     subTasks: t.subTasks || [],
     description: t.description || '',
     printingType: t.printingType || '',
     startTime: t.startedAt || null,
     endTime: t.completedAt || null,
+    // Pause/Resume tracking
+    lastPausedAt: t.lastPausedAt || null,
+    pausedDurationSec: t.pausedDurationSec ?? 0,
+    timeline: t.timeline || [],
     // Time management
     timePerUnitSec: t.timePerUnitSec ?? null,
     estimatedDurationSec: t.estimatedDurationSec ?? null,
@@ -899,11 +928,48 @@ export default function Tasks() {
     }
   };
 
+  // Same 'In Progress' transition as Start — the backend tells Start and Resume apart by
+  // whether the task is currently Paused (see updateTaskStatus), so this is intentionally
+  // just handleStartTask under another name for callers where "Resume" reads clearer.
+  const handleResumeTask = handleStartTask;
+
+  const handlePauseTask = async (taskId) => {
+    try {
+      await updateTaskStatus({ id: resolveTaskId(taskId), status: 'Paused' }).unwrap();
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to pause task', { variant: 'error' });
+    }
+  };
+
+  // Admin-only: move a not-yet-started task from its current assignee to a new one.
+  // Backend re-checks status === 'Pending' + admin role independently — this is just
+  // the UI-side gate. Task Management's own list is already filtered by assignedTo
+  // (see getTasks), so once the mutation invalidates 'Tasks' the task disappears from
+  // the old assignee's view and appears in the new assignee's automatically.
+  const handleReassignTask = async (taskKey, newAssignedTo) => {
+    if (!newAssignedTo) return;
+    try {
+      await reassignTask({ id: taskKey, assignedTo: newAssignedTo }).unwrap();
+      enqueueSnackbar('Task reassigned', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to reassign task', { variant: 'error' });
+    }
+  };
+
   const handleCompleteTask = async (taskId) => {
     try {
       await updateTaskStatus({ id: resolveTaskId(taskId), status: 'Done' }).unwrap();
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to complete task', { variant: 'error' });
+    }
+  };
+
+  const handleDeleteTask = async (record) => {
+    try {
+      await deleteTask(record.key).unwrap();
+      enqueueSnackbar(`Task "${record.id}" moved to Deleted Records`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to delete task', { variant: 'error' });
     }
   };
 
@@ -1346,6 +1412,38 @@ export default function Tasks() {
         )
         : <Tag color="default" style={{ color: '#999', fontSize: 11 }}>Unassigned</Tag>,
     },
+    // Admin-only: switch this task's assignee before work has started. Hidden entirely
+    // for non-admins — reassignment is not a Task Management staff self-service action.
+    ...(isAdmin ? [{
+      title: 'Reassign',
+      key: 'reassign',
+      width: 190,
+      render: (_, r) => {
+        if (r.hasMultipleAssignees) {
+          return <Tooltip title="Tasks with multiple assignees can't be reassigned here"><Text type="secondary" style={{ fontSize: 11 }}>—</Text></Tooltip>;
+        }
+        if (r.status !== 'Pending') {
+          return <Tooltip title="Only a task that hasn't started can be reassigned"><Text type="secondary" style={{ fontSize: 11 }}>—</Text></Tooltip>;
+        }
+        const options = assignableUsers.filter((u) => u._id !== r.assignedToId);
+        return (
+          <Select
+            placeholder="Switch assignee"
+            size="small"
+            style={{ width: 170 }}
+            showSearch
+            optionFilterProp="children"
+            loading={reassigning}
+            disabled={reassigning}
+            value={undefined}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(value) => handleReassignTask(r.key, value)}
+          >
+            {options.map((u) => <Option key={u._id} value={u._id}>{u.fullName}</Option>)}
+          </Select>
+        );
+      },
+    }] : []),
     { title: 'Priority', dataIndex: 'priority', responsive: ['sm'], render: (v) => <Tag color={priorityColor[v]}>{v}</Tag> },
     {
       title: 'Payment', dataIndex: 'paymentStatus', responsive: ['lg'],
@@ -1374,7 +1472,7 @@ export default function Tasks() {
       ),
     },
     { title: 'Status', dataIndex: 'status', render: (v) => <Tag color={statusColor[v]}>{v}</Tag> },
-    { title: 'Due', dataIndex: 'due', responsive: ['lg'] },
+    { title: 'Due', dataIndex: 'due', responsive: ['lg'], render: (v) => v || '—' },
     {
       title: 'Action', key: 'action',
       render: (_, r) => (
@@ -1388,9 +1486,22 @@ export default function Tasks() {
           {r.status === 'In Progress' && (
             <Space direction="vertical" size={3}>
               <Tag color="processing" icon={<ClockCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>In Process</Tag>
+              <Button size="small" icon={<PauseCircleOutlined />}
+                onClick={(e) => { e.stopPropagation(); handlePauseTask(r.id); }} style={{ color: '#fa8c16', borderColor: '#fa8c16' }}>
+                Pause
+              </Button>
               <Button size="small" type="primary" icon={<CheckOutlined />}
                 onClick={(e) => { e.stopPropagation(); handleCompleteTask(r.id); }} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>
                 Done
+              </Button>
+            </Space>
+          )}
+          {r.status === 'Paused' && (
+            <Space direction="vertical" size={3}>
+              <Tag color="warning" icon={<PauseCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>Paused</Tag>
+              <Button size="small" type="primary" icon={<PlayCircleOutlined />}
+                onClick={(e) => { e.stopPropagation(); handleResumeTask(r.id); }} style={{ background: '#1890ff', border: 'none' }}>
+                Resume
               </Button>
             </Space>
           )}
@@ -1434,6 +1545,24 @@ export default function Tasks() {
         </Space>
       ),
     },
+    // Admin-department-only: delete moves the task to Settings > Deleted Records
+    // (soft-delete) — hidden entirely for every other department's login.
+    ...(isAdminDept ? [{
+      title: '', key: 'delete', width: 50,
+      render: (_, r) => (
+        <Popconfirm
+          title="Delete this task?"
+          description="It will move to Settings → Deleted Records and can be restored anytime."
+          onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteTask(r); }}
+          onCancel={(e) => e?.stopPropagation?.()}
+          okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+        >
+          <Tooltip title="Delete task">
+            <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+          </Tooltip>
+        </Popconfirm>
+      ),
+    }] : []),
   ];
 
   const followupTasks = taskList.filter((t) => t.salesFollowup);
@@ -1470,7 +1599,7 @@ export default function Tasks() {
       ...g,
       total: g.tasks.length,
       done: g.tasks.filter((t) => t.status === 'Completed').length,
-      inProgress: g.tasks.filter((t) => t.status === 'In Progress').length,
+      inProgress: g.tasks.filter((t) => IN_PROGRESS_GROUP.has(t.status)).length,
       pending: g.tasks.filter((t) => t.status === 'Pending').length,
       hasEmergency: g.tasks.some((t) => t.isEmergency || t.priority === 'Urgent'),
     }));
@@ -1783,7 +1912,7 @@ export default function Tasks() {
       {/* Summary stats */}
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
         {kanbanCols.map((col) => {
-          const count = taskList.filter((t) => t.status === col.key).length;
+          const count = taskList.filter((t) => (col.key === 'In Progress' ? IN_PROGRESS_GROUP.has(t.status) : t.status === col.key)).length;
           return (
             <Col xs={8} key={col.key}>
               <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}>
@@ -2410,13 +2539,13 @@ export default function Tasks() {
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <div style={{ width: 10, height: 10, borderRadius: '50%', background: col.color }} />
                               <Text strong>{col.label}</Text>
-                              <Badge count={taskList.filter((t) => t.status === col.key).length} style={{ background: col.color }} />
+                              <Badge count={taskList.filter((t) => (col.key === 'In Progress' ? IN_PROGRESS_GROUP.has(t.status) : t.status === col.key)).length} style={{ background: col.color }} />
                             </div>
                           }
                           style={{ borderRadius: 14, border: draggedTaskId ? `1px dashed ${col.color}` : 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', minHeight: 400 }}
                           styles={{ body: { padding: '8px' } }}
                         >
-                          {filtered.filter((t) => t.status === col.key).map((task) => (
+                          {filtered.filter((t) => (col.key === 'In Progress' ? IN_PROGRESS_GROUP.has(t.status) : t.status === col.key)).map((task) => (
                             <motion.div
                               key={task.id}
                               whileHover={{ y: -2 }}
@@ -2454,7 +2583,14 @@ export default function Tasks() {
                                   {task.status === 'In Progress' && (
                                     <>
                                       <Tag color="processing" icon={<ClockCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>In Process</Tag>
+                                      <Button size="small" icon={<PauseCircleOutlined />} onClick={() => handlePauseTask(task.id)} style={{ color: '#fa8c16', borderColor: '#fa8c16', width: '100%', marginBottom: 4 }}>Pause</Button>
                                       <Button size="small" type="primary" icon={<CheckOutlined />} onClick={() => handleCompleteTask(task.id)} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', width: '100%' }}>Done</Button>
+                                    </>
+                                  )}
+                                  {task.status === 'Paused' && (
+                                    <>
+                                      <Tag color="warning" icon={<PauseCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Paused</Tag>
+                                      <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => handleResumeTask(task.id)} style={{ background: '#1890ff', border: 'none', width: '100%' }}>Resume</Button>
                                     </>
                                   )}
                                   {task.status === 'Completed' && (
@@ -2484,6 +2620,17 @@ export default function Tasks() {
                                   )}
                                   {task.startTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Started: {new Date(task.startTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
                                   {task.endTime && <Text style={{ fontSize: 11, color: '#666', display: 'block', textAlign: 'center' }}>Ended: {new Date(task.endTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
+                                  {isAdminDept && (
+                                    <Popconfirm
+                                      title="Delete this task?"
+                                      description="It will move to Settings → Deleted Records and can be restored anytime."
+                                      onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteTask(task); }}
+                                      onCancel={(e) => e?.stopPropagation?.()}
+                                      okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+                                    >
+                                      <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} style={{ width: '100%' }}>Delete</Button>
+                                    </Popconfirm>
+                                  )}
                                 </Space>
                               </Card>
                             </motion.div>
@@ -3163,7 +3310,7 @@ export default function Tasks() {
           const siblingTasks = selectedTask.orderId
             ? taskList.filter((t) => t.orderId === selectedTask.orderId && t.key !== selectedTask.key)
             : [];
-          const pendingCount = siblingTasks.filter((t) => t.status === 'Pending' || t.status === 'In Progress').length;
+          const pendingCount = siblingTasks.filter((t) => t.status === 'Pending' || IN_PROGRESS_GROUP.has(t.status)).length;
           const doneCount = siblingTasks.filter((t) => t.status === 'Completed').length;
           const labelStyle = { fontSize: 11, color: '#B11E6A', letterSpacing: 1, textTransform: 'uppercase', fontWeight: 600 };
 

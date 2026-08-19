@@ -20,6 +20,8 @@ import {
   useGetMonthlyGstQuery,
   useGetForwardingCourierReportQuery,
   useGetPerformanceQuery,
+  useGetEmergencyApprovalsReportQuery,
+  useGetSwitchReportQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -189,6 +191,13 @@ export default function Reports() {
   // Performance state
   const [perfTab, setPerfTab] = useState('leaderboard');
 
+  // Emergency Approval Report state
+  const [eaTypeFilter, setEaTypeFilter] = useState('all');
+  const [eaStatusFilter, setEaStatusFilter] = useState('all');
+  const [eaSearch, setEaSearch] = useState('');
+  const [swTypeFilter, setSwTypeFilter] = useState('all');
+  const [swSearch, setSwSearch] = useState('');
+
   // Header-level global date filter — applies to every tab. Tabs with their own date
   // picker (Sales/Purchase/P&L) let that picker override this default; tabs with no picker
   // of their own (Bill-wise P&L/Monthly GST/Forwarding & Courier/Performance) use this
@@ -207,6 +216,8 @@ export default function Reports() {
   const monthlyGstRef = useRef(null);
   const forwardingCourierRef = useRef(null);
   const auditorTaxRef = useRef(null);
+  const emergencyApprovalsRef = useRef(null);
+  const switchReportRef = useRef(null);
 
   const handlePeriodChange = (period) => {
     setHeaderPeriod(period);
@@ -256,6 +267,8 @@ export default function Reports() {
   const { data: monthlyGstRaw } = useGetMonthlyGstQuery(headerDateParams);
   const { data: performanceRaw } = useGetPerformanceQuery(headerDateParams);
   const { data: forwardingCourierRaw } = useGetForwardingCourierReportQuery(headerDateParams);
+  const { data: emergencyApprovalsRaw } = useGetEmergencyApprovalsReportQuery(headerDateParams);
+  const { data: switchReportRaw } = useGetSwitchReportQuery(headerDateParams);
 
   const apiSalesData = useMemo(() => salesReportRaw || { data: [], summary: {}, chartData: [] }, [salesReportRaw]);
   const apiPurchaseData = useMemo(() => purchaseReportRaw || { data: [], summary: {}, chartData: [] }, [purchaseReportRaw]);
@@ -267,6 +280,14 @@ export default function Reports() {
   const apiForwardingCourier = useMemo(
     () => forwardingCourierRaw || { data: [], monthlyHotelData: [], summary: {} },
     [forwardingCourierRaw]
+  );
+  const apiEmergencyApprovals = useMemo(
+    () => emergencyApprovalsRaw || { data: [], summary: {}, chartData: [] },
+    [emergencyApprovalsRaw]
+  );
+  const apiSwitchReport = useMemo(
+    () => switchReportRaw || { data: [], summary: {} },
+    [switchReportRaw]
   );
 
   const handleExport = async (type) => {
@@ -616,6 +637,51 @@ export default function Reports() {
   };
   const exportPerformancePdf = () => exportRefToPdf(performanceRef, 'Performance_Report.pdf');
 
+  const eaFilteredRows = (apiEmergencyApprovals.data || []).filter((r) => {
+    const matchType = eaTypeFilter === 'all' || r.module === eaTypeFilter;
+    const matchStatus = eaStatusFilter === 'all' || r.status === eaStatusFilter;
+    const q = eaSearch.toLowerCase();
+    const matchSearch = !q
+      || r.orderCode?.toLowerCase().includes(q)
+      || r.clientName?.toLowerCase().includes(q)
+      || r.sentBy?.toLowerCase().includes(q)
+      || r.reason?.toLowerCase().includes(q);
+    return matchType && matchStatus && matchSearch;
+  });
+  const exportEaExcel = () => {
+    const headers = ['Type', 'Order Code', 'Client', 'Sent Date', 'Sent Time', 'Sent By', 'Sent Reason', 'Approved Date', 'Approved Time', 'Approver 1 Role', 'Approver 1', 'Approver 1 Decision', 'Approver 1 Date', 'Approver 2 Role', 'Approver 2', 'Approver 2 Decision', 'Approver 2 Date', 'Status'];
+    const rows = eaFilteredRows.map((r) => [
+      r.type, r.orderCode, r.clientName, r.sentDate, r.sentTime, r.sentBy, r.reason,
+      r.approvedDate, r.approvedTime,
+      r.approver1Role, r.approver1Name, r.approver1Decision, r.approver1Date,
+      r.approver2Role, r.approver2Name, r.approver2Decision, r.approver2Date,
+      r.status,
+    ]);
+    exportToExcel(headers, rows, 'Approval_Report.csv');
+  };
+  const exportEaPdf = () => exportRefToPdf(emergencyApprovalsRef, 'Emergency_Approval_Report.pdf');
+
+  const swFilteredRows = (apiSwitchReport.data || []).filter((r) => {
+    const matchType = swTypeFilter === 'all' || r.module === swTypeFilter;
+    const q = swSearch.toLowerCase();
+    const matchSearch = !q
+      || r.reference?.toLowerCase().includes(q)
+      || r.orderCode?.toLowerCase().includes(q)
+      || r.clientName?.toLowerCase().includes(q)
+      || r.switchFrom?.toLowerCase().includes(q)
+      || r.switchTo?.toLowerCase().includes(q)
+      || r.switchBy?.toLowerCase().includes(q);
+    return matchType && matchSearch;
+  });
+  const exportSwExcel = () => {
+    const headers = ['Type', 'Reference', 'Order Code', 'Client', 'Switch From', 'Switch To', 'Switch By', 'Switch Date', 'Switch Time'];
+    const rows = swFilteredRows.map((r) => [
+      r.type, r.reference, r.orderCode, r.clientName, r.switchFrom, r.switchTo, r.switchBy, r.switchDate, r.switchTime,
+    ]);
+    exportToExcel(headers, rows, 'Switch_Report.csv');
+  };
+  const exportSwPdf = () => exportRefToPdf(switchReportRef, 'Switch_Report.pdf');
+
   // Freshly built every render from the functions above (not persisted via ref — mutating a
   // ref during render is unsafe/disallowed) so the header's Excel/PDF buttons can dispatch
   // to whichever tab is currently active.
@@ -629,6 +695,8 @@ export default function Reports() {
     monthly_gst: { excel: exportGstExcel, pdf: exportGstPdf },
     forwarding_courier: { excel: exportFcExcel, pdf: exportFcPdf },
     auditor_tax: { excel: exportAuditorExcel, pdf: exportAuditorPdf },
+    emergency_approvals: { excel: exportEaExcel, pdf: exportEaPdf },
+    switch_report: { excel: exportSwExcel, pdf: exportSwPdf },
   };
 
   return (
@@ -2764,6 +2832,309 @@ export default function Reports() {
                       }}
                     />
                   </Card>
+                  </div>
+                </div>
+              );
+            })(),
+          },
+
+          /* ─────────── EMERGENCY APPROVAL REPORT ─────────── */
+          {
+            key: 'emergency_approvals',
+            label: 'Approval Report',
+            children: (() => {
+              const typeMeta = {
+                emergency: { label: 'Emergency Dispatch / Payment', color: '#B11E6A' },
+                design: { label: 'Design / Sticker / Printing', color: '#7c3aed' },
+                transport_mismatch: { label: 'Transport Mismatch', color: '#fa8c16' },
+                lr_mismatch: { label: 'Packages/Destination Mismatch', color: '#1890ff' },
+                invoice_mismatch: { label: 'Dispatch Mismatch', color: '#eb2f96' },
+              };
+              const eaStatusColor = { Pending: '#fa8c16', Approved: '#52c41a', Rejected: '#ff4d4f', 'Sent Back for Change': '#7c3aed' };
+              const summary = apiEmergencyApprovals.summary || {};
+
+              const columns = [
+                {
+                  title: 'Type', dataIndex: 'module', key: 'module', width: 190, fixed: 'left',
+                  render: (v) => (
+                    <Tag style={{ background: `${typeMeta[v]?.color}18`, color: typeMeta[v]?.color, border: `1px solid ${typeMeta[v]?.color}44`, borderRadius: 20, fontSize: 11 }}>
+                      {typeMeta[v]?.label || v}
+                    </Tag>
+                  ),
+                },
+                {
+                  title: 'Order', key: 'order', width: 170,
+                  render: (_, r) => (
+                    <div>
+                      <Text strong style={{ fontSize: 12, color: '#B11E6A' }}>{r.orderCode || '—'}</Text>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>{r.clientName || ''}</div>
+                    </div>
+                  ),
+                },
+                {
+                  title: 'Sent (Date / Time)', key: 'sent', width: 140,
+                  render: (_, r) => (
+                    <div>
+                      <div style={{ fontSize: 12 }}>{r.sentDate || '—'}</div>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>{r.sentTime || ''}</div>
+                    </div>
+                  ),
+                },
+                {
+                  title: 'Sent By', key: 'sentBy', width: 150,
+                  render: (_, r) => (
+                    <div>
+                      <Text style={{ fontSize: 12 }}>{r.sentBy || '—'}</Text>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>{r.sentByRole || r.raisedByTeam}</div>
+                    </div>
+                  ),
+                },
+                { title: 'Sent Reason', dataIndex: 'reason', key: 'reason', width: 220, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+                {
+                  title: 'Approved (Date / Time)', key: 'approved', width: 150,
+                  render: (_, r) => (r.approvedDate || r.approvedTime) ? (
+                    <div>
+                      <div style={{ fontSize: 12 }}>{r.approvedDate || '—'}</div>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>{r.approvedTime || ''}</div>
+                    </div>
+                  ) : <Text style={{ fontSize: 12, color: '#aaa' }}>—</Text>,
+                },
+                {
+                  title: 'Approver 1', key: 'approver1', width: 180,
+                  render: (_, r) => r.approver1Role ? (
+                    <div>
+                      <Text style={{ fontSize: 12 }}>{r.approver1Name || '—'}</Text>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>{r.approver1Role}</div>
+                      <Tag style={{ marginTop: 2, fontSize: 10, background: `${eaStatusColor[r.approver1Decision] || '#888'}18`, color: eaStatusColor[r.approver1Decision] || '#888', border: 'none' }}>
+                        {r.approver1Decision}{r.approver1Date ? ` · ${r.approver1Date}` : ''}
+                      </Tag>
+                    </div>
+                  ) : <Text style={{ fontSize: 12, color: '#aaa' }}>—</Text>,
+                },
+                {
+                  title: 'Approver 2', key: 'approver2', width: 180,
+                  render: (_, r) => r.approver2Role ? (
+                    <div>
+                      <Text style={{ fontSize: 12 }}>{r.approver2Name || '—'}</Text>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>{r.approver2Role}</div>
+                      <Tag style={{ marginTop: 2, fontSize: 10, background: `${eaStatusColor[r.approver2Decision] || '#888'}18`, color: eaStatusColor[r.approver2Decision] || '#888', border: 'none' }}>
+                        {r.approver2Decision}{r.approver2Date ? ` · ${r.approver2Date}` : ''}
+                      </Tag>
+                    </div>
+                  ) : <Text style={{ fontSize: 12, color: '#aaa' }}>—</Text>,
+                },
+                {
+                  title: 'Status', dataIndex: 'status', key: 'status', width: 110, fixed: 'right',
+                  render: (v) => <Tag style={{ background: `${eaStatusColor[v] || '#888'}18`, color: eaStatusColor[v] || '#888', border: `1px solid ${eaStatusColor[v] || '#888'}44`, borderRadius: 20, fontWeight: 700, fontSize: 11 }}>{v}</Tag>,
+                },
+              ];
+
+              return (
+                <div>
+                  <Card style={{ borderRadius: 12, border: 'none', background: cardBg, marginBottom: 14, boxShadow: '0 2px 12px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px' } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                      <Space wrap>
+                        <FilterOutlined style={{ color: '#B11E6A' }} />
+                        <Text strong style={{ color: textColor, fontSize: 13 }}>Filter by:</Text>
+                        <Select value={eaTypeFilter} onChange={setEaTypeFilter} style={{ width: 230 }}>
+                          <Option value="all">All Approval Types</Option>
+                          {Object.entries(typeMeta).map(([k, m]) => <Option key={k} value={k}>{m.label}</Option>)}
+                        </Select>
+                        <Select value={eaStatusFilter} onChange={setEaStatusFilter} style={{ width: 160 }}>
+                          <Option value="all">All Statuses</Option>
+                          <Option value="Pending">Pending</Option>
+                          <Option value="Approved">Approved</Option>
+                          <Option value="Rejected">Rejected</Option>
+                        </Select>
+                        <Input
+                          prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                          placeholder="Search order, client, sender, reason…"
+                          allowClear
+                          value={eaSearch}
+                          onChange={(e) => setEaSearch(e.target.value)}
+                          style={{ width: 240, borderRadius: 8 }}
+                        />
+                      </Space>
+                      <Space>
+                        <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportEaExcel}>Excel</Button>
+                        <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportEaPdf}>PDF</Button>
+                      </Space>
+                    </div>
+                  </Card>
+
+                  <div ref={emergencyApprovalsRef}>
+                    <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                      {[
+                        { label: 'Total Approvals', value: summary.total ?? 0, color: '#B11E6A', sub: 'Across Sales, Ops & Dispatch' },
+                        { label: 'Pending', value: summary.pending ?? 0, color: '#fa8c16', sub: 'Awaiting decision' },
+                        { label: 'Approved', value: summary.approved ?? 0, color: '#52c41a', sub: 'Fully approved' },
+                        { label: 'Rejected', value: summary.rejected ?? 0, color: '#ff4d4f', sub: 'Rejected / declined' },
+                      ].map((s, i) => (
+                        <Col xs={12} sm={6} key={s.label}>
+                          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
+                            <Card style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: `linear-gradient(135deg,${s.color}22,${s.color}08)` }} styles={{ body: { padding: '12px 14px' } }}>
+                              <Text style={{ fontSize: 10, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 3 }}>{s.label}</Text>
+                              <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+                              <Text style={{ fontSize: 10, color: '#aaa' }}>{s.sub}</Text>
+                            </Card>
+                          </motion.div>
+                        </Col>
+                      ))}
+                    </Row>
+
+                    <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                      {(summary.byType || []).map((t) => (
+                        <Col xs={12} sm={8} md={4} key={t.module}>
+                          <Card style={{ borderRadius: 10, border: `1px solid ${typeMeta[t.module]?.color}22`, background: cardBg }} styles={{ body: { padding: '10px 12px' } }}>
+                            <Text style={{ fontSize: 10, color: typeMeta[t.module]?.color, fontWeight: 700, display: 'block' }}>{typeMeta[t.module]?.label}</Text>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: textColor }}>{t.count}</div>
+                          </Card>
+                        </Col>
+                      ))}
+                    </Row>
+
+                    <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                        <Title level={5} style={{ color: textColor, margin: 0 }}>Approval Report — Sales · Operations · Dispatch</Title>
+                        <Text type="secondary" style={{ fontSize: 12 }}>{eaFilteredRows.length} records</Text>
+                      </div>
+                      <Table
+                        size="small"
+                        bordered
+                        scroll={{ x: 'max-content' }}
+                        dataSource={eaFilteredRows}
+                        columns={columns}
+                        rowKey="key"
+                        pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                        locale={{ emptyText: <Empty description="No emergency, payment, design or dispatch approvals found for this range" /> }}
+                      />
+                    </Card>
+                  </div>
+                </div>
+              );
+            })(),
+          },
+
+          /* ─────────── SWITCH REPORT ─────────── */
+          {
+            key: 'switch_report',
+            label: 'Switch Report',
+            children: (() => {
+              const swTypeMeta = {
+                task: { label: 'Task Reassignment', color: '#1890ff' },
+                vendor: { label: 'Printing Supplier Switch', color: '#7c3aed' },
+              };
+              const summary = apiSwitchReport.summary || {};
+
+              const columns = [
+                {
+                  title: 'Type', dataIndex: 'module', key: 'module', width: 190, fixed: 'left',
+                  render: (v) => (
+                    <Tag style={{ background: `${swTypeMeta[v]?.color}18`, color: swTypeMeta[v]?.color, border: `1px solid ${swTypeMeta[v]?.color}44`, borderRadius: 20, fontSize: 11 }}>
+                      {swTypeMeta[v]?.label || v}
+                    </Tag>
+                  ),
+                },
+                {
+                  title: 'Reference', key: 'reference', width: 200,
+                  render: (_, r) => (
+                    <div>
+                      <Text strong style={{ fontSize: 12 }}>{r.reference || '—'}</Text>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>
+                        {r.orderCode ? `${r.orderCode}${r.clientName ? ' · ' + r.clientName : ''}` : (r.clientName || '')}
+                      </div>
+                    </div>
+                  ),
+                },
+                {
+                  title: 'Switch From', dataIndex: 'switchFrom', key: 'switchFrom', width: 160,
+                  render: (v) => <Tag style={{ background: '#ff4d4f18', color: '#ff4d4f', border: '1px solid #ff4d4f44', borderRadius: 20, fontSize: 11 }}>{v || '—'}</Tag>,
+                },
+                {
+                  title: 'Switch To', dataIndex: 'switchTo', key: 'switchTo', width: 160,
+                  render: (v) => <Tag style={{ background: '#52c41a18', color: '#52c41a', border: '1px solid #52c41a44', borderRadius: 20, fontSize: 11 }}>{v || '—'}</Tag>,
+                },
+                {
+                  title: 'Switch Date / Time', key: 'switchAt', width: 150,
+                  render: (_, r) => (
+                    <div>
+                      <div style={{ fontSize: 12 }}>{r.switchDate || '—'}</div>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>{r.switchTime || ''}</div>
+                    </div>
+                  ),
+                },
+                {
+                  title: 'Switch By', dataIndex: 'switchBy', key: 'switchBy', width: 160, fixed: 'right',
+                  render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
+                },
+              ];
+
+              return (
+                <div>
+                  <Card style={{ borderRadius: 12, border: 'none', background: cardBg, marginBottom: 14, boxShadow: '0 2px 12px rgba(177,30,106,0.06)' }} styles={{ body: { padding: '12px 16px' } }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10 }}>
+                      <Space wrap>
+                        <FilterOutlined style={{ color: '#B11E6A' }} />
+                        <Text strong style={{ color: textColor, fontSize: 13 }}>Filter by:</Text>
+                        <Select value={swTypeFilter} onChange={setSwTypeFilter} style={{ width: 230 }}>
+                          <Option value="all">All Switch Types</Option>
+                          {Object.entries(swTypeMeta).map(([k, m]) => <Option key={k} value={k}>{m.label}</Option>)}
+                        </Select>
+                        <Input
+                          prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                          placeholder="Search reference, order, client, from/to, switched by…"
+                          allowClear
+                          value={swSearch}
+                          onChange={(e) => setSwSearch(e.target.value)}
+                          style={{ width: 260, borderRadius: 8 }}
+                        />
+                      </Space>
+                      <Space>
+                        <Button icon={<FileExcelOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44' }} onClick={exportSwExcel}>Excel</Button>
+                        <Button icon={<FilePdfOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={exportSwPdf}>PDF</Button>
+                      </Space>
+                    </div>
+                  </Card>
+
+                  <div ref={switchReportRef}>
+                    <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
+                      {[
+                        { label: 'Total Switches', value: summary.total ?? 0, color: '#B11E6A', sub: 'Task + Vendor switches' },
+                        ...(summary.byType || []).map((t) => ({
+                          label: swTypeMeta[t.module]?.label || t.module,
+                          value: t.count,
+                          color: swTypeMeta[t.module]?.color || '#888',
+                          sub: t.module === 'task' ? 'Task Management' : 'Operations Design/Vendors',
+                        })),
+                      ].map((s, i) => (
+                        <Col xs={12} sm={8} key={s.label}>
+                          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
+                            <Card style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: `linear-gradient(135deg,${s.color}22,${s.color}08)` }} styles={{ body: { padding: '12px 14px' } }}>
+                              <Text style={{ fontSize: 10, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 3 }}>{s.label}</Text>
+                              <div style={{ fontSize: 20, fontWeight: 800, color: s.color }}>{s.value}</div>
+                              <Text style={{ fontSize: 10, color: '#aaa' }}>{s.sub}</Text>
+                            </Card>
+                          </motion.div>
+                        </Col>
+                      ))}
+                    </Row>
+
+                    <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                        <Title level={5} style={{ color: textColor, margin: 0 }}>Switch Report — Task Management · Operations</Title>
+                        <Text type="secondary" style={{ fontSize: 12 }}>{swFilteredRows.length} records</Text>
+                      </div>
+                      <Table
+                        size="small"
+                        bordered
+                        scroll={{ x: 'max-content' }}
+                        dataSource={swFilteredRows}
+                        columns={columns}
+                        rowKey="key"
+                        pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10 }}
+                        locale={{ emptyText: <Empty description="No task or vendor switches found for this range" /> }}
+                      />
+                    </Card>
                   </div>
                 </div>
               );

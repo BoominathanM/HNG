@@ -3,6 +3,7 @@ const Order = require('../../models/Order');
 const Lead = require('../../models/Lead');
 const DispatchRecord = require('../../models/DispatchRecord');
 const StickerRequest = require('../../models/StickerRequest');
+const User = require('../../models/User');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -97,7 +98,7 @@ async function forwardOrderToDispatch(orderId, userId) {
 }
 
 exports.getTasks = asyncHandler(async (req, res) => {
-  const filter = {};
+  const filter = { deletedAt: null };
   if (req.query.status) filter.status = req.query.status;
   if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo;
   if (req.query.orderId) filter.orderId = req.query.orderId;
@@ -1014,21 +1015,58 @@ exports.createTask = asyncHandler(async (req, res, next) => {
 
 exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
   const { status } = req.body;
-  const update = { status };
-  if (status === 'In Progress') update.startedAt = Date.now();
-  if (status === 'Done') update.completedAt = Date.now();
-  if (status === 'Emergency') update.isEmergency = true;
-
-  const task = await Task.findByIdAndUpdate(req.params.id, update, { new: true });
+  const task = await Task.findById(req.params.id);
   if (!task) return next(new AppError('Task not found', 404));
 
-  // On completion: measure actual time (start → done) and auto-rate vs the estimate.
+  const now = new Date();
+  const pushTimeline = (event) => {
+    task.timeline = task.timeline || [];
+    task.timeline.push({ event, at: now, by: req.user?._id, byName: req.user?.fullName || '' });
+  };
+  // Folds the currently-open pause span (lastPausedAt → now) into pausedDurationSec.
+  // Shared by Resume and by the Done safety-net below (a task shouldn't normally reach
+  // Done while Paused — the UI requires Resume first — but this keeps the duration math
+  // correct even if it does).
+  const closeOpenPause = () => {
+    if (!task.lastPausedAt) return;
+    task.pausedDurationSec = (task.pausedDurationSec || 0)
+      + Math.max(0, Math.round((now.getTime() - new Date(task.lastPausedAt).getTime()) / 1000));
+    task.lastPausedAt = null;
+  };
+
+  if (status === 'Paused') {
+    if (task.status !== 'In Progress') return next(new AppError('Only an in-progress task can be paused', 400));
+    task.lastPausedAt = now;
+    pushTimeline('Pause');
+    task.status = 'Paused';
+  } else if (status === 'In Progress') {
+    if (task.status === 'Paused') {
+      closeOpenPause();
+      pushTimeline('Resume');
+    } else if (!task.startedAt) {
+      task.startedAt = now;
+      pushTimeline('Start');
+    }
+    task.status = 'In Progress';
+  } else if (status === 'Done') {
+    closeOpenPause();
+    task.completedAt = now;
+    pushTimeline('Completion');
+    task.status = 'Done';
+  } else {
+    task.status = status;
+    if (status === 'Emergency') task.isEmergency = true;
+  }
+
+  // On completion: measure actual worked time (start → done, excluding paused spans)
+  // and auto-rate vs the estimate.
   if (status === 'Done') {
     const startMs = task.startedAt ? new Date(task.startedAt).getTime()
       : task.plannedStartTime ? new Date(task.plannedStartTime).getTime()
       : new Date(task.createdAt).getTime();
     const endMs = task.completedAt ? new Date(task.completedAt).getTime() : Date.now();
-    task.actualDurationSec = Math.max(0, Math.round((endMs - startMs) / 1000));
+    const rawSec = Math.max(0, Math.round((endMs - startMs) / 1000));
+    task.actualDurationSec = Math.max(0, rawSec - (task.pausedDurationSec || 0));
     const { rating, ratingReason, efficiencyPct } = computeRating(task.estimatedDurationSec, task.actualDurationSec);
     if (rating !== null) {
       task.rating = rating;
@@ -1036,8 +1074,9 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
       task.efficiencyPct = efficiencyPct;
     }
     if (req.body.feedback !== undefined) task.feedback = req.body.feedback;
-    await task.save();
   }
+
+  await task.save();
 
   // Sync to Operations: the emergency-gate check (areAllEmergencyItemsDone in
   // Frontend/Operations/data.js) reads StickerRequest.status, but staff mark work
@@ -1162,7 +1201,7 @@ exports.approveEmergency = asyncHandler(async (req, res, next) => {
 // emergency request — Sales/Operations need one row per task, not a single
 // order-level snapshot, or requests raised after the first one get hidden.
 exports.getEmergencyRequests = asyncHandler(async (req, res) => {
-  const filter = { emergencyRequested: true };
+  const filter = { emergencyRequested: true, deletedAt: null };
   if (req.query.orderId) filter.orderId = req.query.orderId;
   const tasks = await Task.find(filter)
     .sort('-emergencyRequestedAt')
@@ -1178,6 +1217,7 @@ exports.requestEmergencyDispatch = asyncHandler(async (req, res, next) => {
 
   task.emergencyRequested = true;
   task.emergencyRequestedAt = new Date();
+  task.emergencyRequestedBy = req.user._id;
   task.emergencyReason = req.body.reason || '';
   task.isEmergency = true;
   await task.save();
@@ -1214,6 +1254,7 @@ exports.requestEmergencyDispatchForOrder = asyncHandler(async (req, res, next) =
   await Promise.all(tasks.map((task) => {
     task.emergencyRequested = true;
     task.emergencyRequestedAt = requestedAt;
+    task.emergencyRequestedBy = req.user._id;
     task.emergencyReason = reason;
     task.isEmergency = true;
     return task.save();
@@ -1319,8 +1360,88 @@ exports.approveEmergencyOps = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: task });
 });
 
-exports.deleteTask = asyncHandler(async (req, res, next) => {
-  const task = await Task.findByIdAndDelete(req.params.id);
+// Move a not-yet-started task to a different Task Management staff member (e.g. the
+// original assignee is on leave). Admin-only, and only while the task is still
+// 'Pending' — once work has started its timeline/duration tracking is tied to the
+// current assignee, so swapping mid-flight is not allowed. Tasks with multiple
+// assignees (assignedToMany — Personalized/Separate Kit Packing) are out of scope
+// here: "the" assignee doesn't mean anything when several people already share it.
+// Visibility is driven entirely by getTasks' assignedTo filter above, so once this
+// saves, the task disappears from the old assignee's Task Management view and
+// appears in the new assignee's — no separate frontend filtering needed.
+exports.reassignTask = asyncHandler(async (req, res, next) => {
+  if (!req.user || (req.user.role !== 'Super Admin' && req.user.role !== 'Admin')) {
+    return next(new AppError('Only an Admin can reassign tasks', 403));
+  }
+
+  const task = await Task.findById(req.params.id);
   if (!task) return next(new AppError('Task not found', 404));
+  if (task.status !== 'Pending') return next(new AppError('Only a task that has not started can be reassigned', 400));
+  if (task.assignedToMany && task.assignedToMany.length) {
+    return next(new AppError('This task has multiple assignees and cannot be reassigned here', 400));
+  }
+
+  const { assignedTo } = req.body;
+  if (!assignedTo) return next(new AppError('assignedTo is required', 400));
+  const newUser = await User.findOne({ _id: assignedTo, department: 'Task Management' }).select('_id fullName').lean();
+  if (!newUser) return next(new AppError('Selected user is not a Task Management staff member', 400));
+
+  const previousAssignedTo = task.assignedTo;
+  const previousAssigneeName = task.assigneeName;
+  task.assignedTo = newUser._id;
+  task.assigneeName = newUser.fullName;
+  task.switchHistory = task.switchHistory || [];
+  task.switchHistory.push({
+    from: previousAssignedTo || null,
+    fromName: previousAssigneeName || '',
+    to: newUser._id,
+    toName: newUser.fullName,
+    by: req.user._id,
+    byName: req.user.fullName,
+    at: new Date(),
+  });
+  await task.save();
+
+  notifyRoles({
+    modules: ['Task Management'],
+    userIds: [newUser._id],
+    type: 'task',
+    title: 'Task Reassigned To You',
+    message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} was reassigned to you`,
+    link: '/tasks',
+  }).catch(() => {});
+  if (previousAssignedTo) {
+    notifyRoles({
+      modules: ['Task Management'],
+      userIds: [previousAssignedTo],
+      type: 'task',
+      title: 'Task Reassigned',
+      message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} was reassigned to ${newUser.fullName}`,
+      link: '/tasks',
+    }).catch(() => {});
+  }
+
+  res.status(200).json({ success: true, data: task });
+});
+
+// Soft-delete only — Admin/Management department, or Super Admin role, from Task
+// Management > Current Task. Mirrors settings.controller.js's deleteUser: flags
+// deletedAt/deletedBy instead of a hard delete so the task disappears from every
+// user-facing list (getTasks above already filters deletedAt: null) while remaining
+// recoverable from Settings > Deleted Records.
+exports.deleteTask = asyncHandler(async (req, res, next) => {
+  const canDelete = req.user && (
+    req.user.department === 'Admin' ||
+    req.user.department === 'Management' ||
+    req.user.role === 'Super Admin'
+  );
+  if (!canDelete) {
+    return next(new AppError('Only Admin/Management department or Super Admin can delete tasks', 403));
+  }
+  const task = await Task.findOne({ _id: req.params.id, deletedAt: null });
+  if (!task) return next(new AppError('Task not found', 404));
+  task.deletedAt = Date.now();
+  task.deletedBy = req.user._id;
+  await task.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, message: 'Task deleted' });
 });

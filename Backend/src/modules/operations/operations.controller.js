@@ -395,16 +395,20 @@ exports.getStickerRequests = asyncHandler(async (req, res) => {
   if (req.query.type) filter.stickerType = req.query.type;
   if (req.query.status) filter.status = req.query.status;
   // Vendor Team Members (Sticker/Box/Ziplock/Butter Paper role, department 'Vendors')
-  // only see requests routed to them personally — not every teammate sharing their
-  // role — so switching who's marked "Auto" actually redirects the work, not just
-  // the badge. Legacy requests created before this existed (vendorId still null)
-  // stay visible to any teammate of that role so nothing already in flight vanishes.
+  // only see full details for requests routed to them personally — not every teammate
+  // sharing their role — so switching who's marked "Auto" (or a per-order reassign)
+  // actually redirects the work, not just the badge. Legacy requests created before
+  // this existed (vendorId still null) stay visible to any teammate of that role so
+  // nothing already in flight vanishes.
   const myStickerType = req.user && ROLE_TO_STICKER_TYPE[req.user.role];
-  if (req.user?.department === 'Vendors' && myStickerType) {
-    filter.$or = [
-      { vendorId: req.user._id },
-      { vendorId: null, stickerType: myStickerType },
-    ];
+  const isVendorScoped = !!(req.user?.department === 'Vendors' && myStickerType);
+  if (isVendorScoped) {
+    // Fetch every request of MY type (not just mine/unassigned) so one already
+    // reassigned to a teammate is recognized as claimed below, instead of the old
+    // vendor's own request list simply omitting it — which is indistinguishable from
+    // "never assigned" and made a reassigned-away row silently reappear for them
+    // whenever they're still the type's configured Auto default.
+    filter.stickerType = myStickerType;
   }
   const stickers = await StickerRequest.find(filter)
     .populate('orderId', 'orderCode clientName')
@@ -412,7 +416,26 @@ exports.getStickerRequests = asyncHandler(async (req, res) => {
     .populate('opsHeadApprovedBy', 'fullName')
     .populate('vendorId', 'fullName email')
     .sort('-createdAt');
-  res.status(200).json({ success: true, data: stickers });
+
+  let data = stickers;
+  if (isVendorScoped) {
+    data = stickers.map((s) => {
+      const isMine = s.vendorId && String(s.vendorId._id) === String(req.user._id);
+      if (isMine || !s.vendorId) return s;
+      // Routed to a different teammate of the same type — expose only enough to mark
+      // the row claimed (so it stops showing under my login); hide their design,
+      // approval and invoice detail, which isn't mine to see.
+      return {
+        _id: s._id,
+        orderId: s.orderId,
+        product: s.product,
+        category: s.category,
+        stickerType: s.stickerType,
+        assignedElsewhere: true,
+      };
+    });
+  }
+  res.status(200).json({ success: true, data });
 });
 
 exports.createStickerRequest = asyncHandler(async (req, res) => {
@@ -455,12 +478,31 @@ exports.reassignStickerRequest = asyncHandler(async (req, res, next) => {
   if (!sticker) return next(new AppError('Sticker request not found', 404));
 
   let vendorId = req.body.vendorId || null;
+  let newVendorName = '';
   if (vendorId) {
-    const asTeamMember = await User.findOne({ _id: vendorId, department: 'Vendors' }).select('_id').lean();
+    const asTeamMember = await User.findOne({ _id: vendorId, department: 'Vendors' }).select('_id fullName').lean();
     if (!asTeamMember) return next(new AppError('Selected user is not a Vendor Team Member', 400));
+    newVendorName = asTeamMember.fullName || '';
+  }
+
+  const previousVendorId = sticker.vendorId;
+  let previousVendorName = '';
+  if (previousVendorId) {
+    const prevUser = await User.findById(previousVendorId).select('fullName').lean();
+    previousVendorName = prevUser?.fullName || '';
   }
 
   sticker.vendorId = vendorId;
+  sticker.switchHistory = sticker.switchHistory || [];
+  sticker.switchHistory.push({
+    from: previousVendorId || null,
+    fromName: previousVendorName,
+    to: vendorId || null,
+    toName: newVendorName,
+    by: req.user._id,
+    byName: req.user.fullName,
+    at: new Date(),
+  });
   await sticker.save();
 
   notifyRoles({
@@ -639,4 +681,34 @@ exports.approveStickerRequest = asyncHandler(async (req, res, next) => {
   await sticker.populate('salesApprovedBy', 'fullName');
   await sticker.populate('opsHeadApprovedBy', 'fullName');
   res.status(200).json({ success: true, data: sticker });
+});
+
+// ─── Queue row visibility (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other tabs) ─────
+// Hides a single order-line row from ONE packaging queue tab only — it does not touch
+// the Order or its items, so dispatch/Sales/every other module is unaffected. Admin/
+// Management department (or Super Admin role) only, mirroring the Task delete gate.
+const HiddenQueueRow = require('../../models/HiddenQueueRow');
+
+exports.getHiddenQueueRows = asyncHandler(async (req, res) => {
+  const rows = await HiddenQueueRow.find({ deletedAt: { $ne: null } }).lean();
+  res.status(200).json({ success: true, data: rows });
+});
+
+exports.hideQueueRow = asyncHandler(async (req, res, next) => {
+  const canDelete = req.user && (
+    req.user.department === 'Admin' ||
+    req.user.department === 'Management' ||
+    req.user.role === 'Super Admin'
+  );
+  if (!canDelete) {
+    return next(new AppError('Only Admin/Management department or Super Admin can remove queue rows', 403));
+  }
+  const { orderId, rowKey, tab, orderCode, product, qty } = req.body;
+  if (!orderId || !rowKey) return next(new AppError('orderId and rowKey are required', 400));
+  const doc = await HiddenQueueRow.findOneAndUpdate(
+    { orderId, rowKey },
+    { orderId, rowKey, tab, orderCode, product, qty, deletedAt: Date.now(), deletedBy: req.user._id },
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+  res.status(200).json({ success: true, data: doc });
 });

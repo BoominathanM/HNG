@@ -45,6 +45,18 @@ const stickerRequestSchema = new mongoose.Schema({
   // Suppliers page (CompanySettings.automationVendors), unless manually overridden.
   vendorId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  // Full history of "Printing Supplier" switches (Operations > Design/Vendors reassign
+  // dropdown), for the Reports > Switch Report tab. Separate from the live vendorId field
+  // above so past switches remain visible after a later reassignment overwrites it.
+  switchHistory: [{
+    from: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    fromName: String,
+    to: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    toName: String,
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    byName: String,
+    at: { type: Date, default: Date.now },
+  }],
 }, { timestamps: true });
 
 module.exports = mongoose.model('StickerRequest', stickerRequestSchema);

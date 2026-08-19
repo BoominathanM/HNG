@@ -100,7 +100,7 @@ async function visibleOrderIds(user) {
 async function attachOrderTasks(dispatches) {
   const orderIds = [...new Set(dispatches.map((d) => d.orderId?._id || d.orderId).filter(Boolean).map(String))];
   if (orderIds.length === 0) return;
-  const tasks = await Task.find({ orderId: { $in: orderIds } })
+  const tasks = await Task.find({ orderId: { $in: orderIds }, deletedAt: null })
     .select('orderId productIndex taskType assignedTo assignedToMany')
     .lean();
   const tasksByOrder = new Map();
@@ -753,6 +753,7 @@ exports.reportTransportMismatch = asyncHandler(async (req, res, next) => {
     dispatchTransportMismatchExpected: expectedTransportName || '',
     dispatchTransportMismatchScanned: scannedTransportName || '',
     dispatchTransportMismatchReportedAt: Date.now(),
+    dispatchTransportMismatchRequestedBy: req.user._id,
     dispatchTransportMismatchDecidedBy: null,
     dispatchTransportMismatchDecidedAt: null,
   });

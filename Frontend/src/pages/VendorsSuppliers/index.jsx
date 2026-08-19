@@ -3,7 +3,7 @@ import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
   Typography, Space, DatePicker, Upload, InputNumber, Divider, List, Tabs, Descriptions,
-  Collapse, Checkbox, Avatar, Badge
+  Collapse, Checkbox, Avatar, Badge, Popconfirm, Tooltip
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -11,7 +11,7 @@ import {
   EyeOutlined, FileTextOutlined, ContactsOutlined, TeamOutlined,
   LeftOutlined, CheckOutlined, ThunderboltOutlined, RobotOutlined,
   CameraOutlined, SafetyCertificateOutlined, ShoppingOutlined,
-  WalletOutlined, WarningOutlined, ShopOutlined, UserOutlined
+  WalletOutlined, WarningOutlined, ShopOutlined, UserOutlined, DeleteOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -90,6 +90,11 @@ export default function VendorsSuppliers() {
   const { filterTabs } = useTabAccess('Vendors & Suppliers');
   const { requireAccess } = usePageAccess('Vendors & Suppliers');
   const isDark = useSelector((s) => s.theme.isDark);
+  const currentUser = useSelector((s) => s.auth.user);
+  // Deleting a printing supplier (Sticker/Box/Ziplock/etc.) is restricted to
+  // Admin/Management department logins, plus the Super Admin role — mirrors the
+  // same gate used for Task deletion.
+  const isAdminDept = currentUser?.department === 'Admin' || currentUser?.department === 'Management' || currentUser?.role === 'Super Admin';
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
@@ -98,7 +103,7 @@ export default function VendorsSuppliers() {
   const visibleModules = watchedRole ? MODULES : [];
 
   /* ── Users state — RTK Query ── */
-  const { data: usersData } = useGetUsersQuery();
+  const { data: usersData } = useGetUsersQuery({ limit: 1000 });
   const [createUser] = useCreateUserMutation();
   const [updateUser] = useUpdateUserMutation();
   const [deleteUser] = useDeleteUserMutation();
@@ -388,6 +393,15 @@ export default function VendorsSuppliers() {
     }
   };
 
+  const handleDeletePrintingSupplier = async (record) => {
+    if (!requireAccess('delete')) return;
+    try {
+      await deleteUser(record.key).unwrap();
+      enqueueSnackbar(`Supplier "${record.name}" moved to Deleted Records`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to delete supplier', { variant: 'error' });
+    }
+  };
 
   const totalPaid = vendors.reduce((s, v) => s + (v.totalPaid || 0), 0);
   const totalPending = vendors.reduce((s, v) => s + (v.pending || 0), 0);
@@ -727,6 +741,25 @@ export default function VendorsSuppliers() {
                           { title: 'Name', dataIndex: 'name', width: 180, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
                           { title: 'Phone', dataIndex: 'phone', width: 145, render: v => <Text>{v || '—'}</Text> },
                           { title: 'Email', dataIndex: 'email', width: 200, render: v => <Text>{v || '—'}</Text> },
+                          // Admin-department-only: delete moves the supplier's user account
+                          // to Settings > Deleted Records (soft-delete) — hidden for every
+                          // other department's login.
+                          ...(isAdminDept ? [{
+                            title: '', key: 'delete', width: 50,
+                            render: (_, r) => (
+                              <Popconfirm
+                                title="Delete this supplier?"
+                                description="It will move to Settings → Deleted Records and can be restored anytime."
+                                onConfirm={(e) => { e?.stopPropagation?.(); handleDeletePrintingSupplier(r); }}
+                                onCancel={(e) => e?.stopPropagation?.()}
+                                okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+                              >
+                                <Tooltip title="Delete supplier">
+                                  <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+                                </Tooltip>
+                              </Popconfirm>
+                            ),
+                          }] : []),
                         ]}
                       />
                     </div>

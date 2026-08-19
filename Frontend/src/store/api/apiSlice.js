@@ -42,6 +42,7 @@ export const apiSlice = createApi({
     'MaterialStocks', 'PackagingInvoices',
     'AlertConfigs',
     'AiConfig', 'QuotationComparisons',
+    'HiddenQueueRows',
   ],
   endpoints: (builder) => ({
 
@@ -862,6 +863,10 @@ export const apiSlice = createApi({
       query: ({ id, status, feedback }) => ({ url: `/tasks/${id}/status`, method: 'patch', data: { status, ...(feedback !== undefined ? { feedback } : {}) } }),
       invalidatesTags: ['Tasks'],
     }),
+    reassignTask: builder.mutation({
+      query: ({ id, assignedTo }) => ({ url: `/tasks/${id}/reassign`, method: 'patch', data: { assignedTo } }),
+      invalidatesTags: ['Tasks'],
+    }),
     approveEmergency: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}/approve-emergency`, method: 'patch' }),
       invalidatesTags: ['Tasks'],
@@ -892,7 +897,7 @@ export const apiSlice = createApi({
     }),
     deleteTask: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}`, method: 'delete' }),
-      invalidatesTags: ['Tasks'],
+      invalidatesTags: ['Tasks', 'DeletedRecords'],
     }),
     // ── Task Time Management config ────────────────────────────────────────────
     getTaskTimeConfigs: builder.query({
@@ -972,6 +977,16 @@ export const apiSlice = createApi({
     approveStickerRequest: builder.mutation({
       query: ({ id, role }) => ({ url: `/operations/stickers/${id}/approve`, method: 'patch', data: { role } }),
       invalidatesTags: ['Stickers'],
+    }),
+    // Queue row visibility (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other tabs) —
+    // hides a single row from its packaging queue tab only, without touching the Order.
+    getHiddenQueueRows: builder.query({
+      query: () => ({ url: '/operations/queue-rows/hidden' }),
+      providesTags: ['HiddenQueueRows'],
+    }),
+    hideQueueRow: builder.mutation({
+      query: (data) => ({ url: '/operations/queue-rows', method: 'post', data }),
+      invalidatesTags: ['HiddenQueueRows', 'DeletedRecords'],
     }),
     getStickerRequests: builder.query({
       query: (params) => ({ url: '/operations/stickers', params }),
@@ -1217,6 +1232,14 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/performance', params }),
       providesTags: ['Reports'],
     }),
+    getEmergencyApprovalsReport: builder.query({
+      query: (params) => ({ url: '/reports/emergency-approvals', params }),
+      providesTags: ['Reports'],
+    }),
+    getSwitchReport: builder.query({
+      query: (params) => ({ url: '/reports/switches', params }),
+      providesTags: ['Reports'],
+    }),
 
     // ── WhatsApp ────────────────────────────────────────────────────────────
     getWhatsAppConfig: builder.query({
@@ -1439,6 +1462,8 @@ export const {
   useGetHotelDesignsQuery,
   useSaveHotelDesignMutation,
   useApproveStickerRequestMutation,
+  useGetHiddenQueueRowsQuery,
+  useHideQueueRowMutation,
   useUploadDispatchLRMutation,
   useScanDispatchLRMutation,
   useReportTransportMismatchMutation,
@@ -1552,6 +1577,7 @@ export const {
   useLazyGetOrderDispatchReadinessQuery,
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
+  useReassignTaskMutation,
   useApproveEmergencyMutation,
   useDispatchTaskOrderMutation,
   useRequestEmergencyDispatchMutation,
@@ -1626,6 +1652,8 @@ export const {
   useGetForwardingCourierReportQuery,
   useGetMyPerformanceQuery,
   useGetPerformanceQuery,
+  useGetEmergencyApprovalsReportQuery,
+  useGetSwitchReportQuery,
   useUploadFilesMutation,
   useDeleteFileMutation,
   // WhatsApp
