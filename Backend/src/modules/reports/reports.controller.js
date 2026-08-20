@@ -123,46 +123,162 @@ const buildDateFilterOn = (req, field = 'createdAt') => {
   return filter;
 };
 
-// Break a (possibly consolidated/batch) PurchaseOrder into one row per line item.
+// Break a (possibly consolidated/batch) PurchaseOrder into one row per line item, with each
+// row's real GST rate + CGST/SGST/IGST split sourced from the ACTUAL purchase invoice wherever
+// that's known, instead of guessing:
+//   1. order.receivedInvoice{Cgst,Sgst,Igst,Gst}Amount — the invoice's own printed CGST/SGST/
+//      IGST breakdown (captured at receiving, see purchase.controller.receiveOrder), allocated
+//      across items by each item's share of the order amount. This is why an inter-state,
+//      IGST-only bill reports as IGST here instead of being force-split 50/50 into CGST/SGST.
+//   2. order.receivedItems[].gstPercent — the per-line GST rate read off that same invoice
+//      (AI-scanned or manually entered at receiving), matched by itemId/name, used when no
+//      order-level breakdown was captured.
+//   3. InventoryItem.gstPercent (master default) — InventoryItem.gstPercent defaults to 0 and
+//      is frequently never set on Add Item, so a literal 0 here is treated as "unset" (not a
+//      real zero-rated item) and falls through to the flat 18% assumption every other GST
+//      estimate in this file already uses (see buildItemCostIndex's gstIndex).
 // Older single-item POs have no items[] and fall back to their own top-level itemId/qty.
 // Batched POs record qty per item but only one combined `amount` for the whole batch (no
 // per-item price is stored), so each item's share of that amount is allocated proportionally
 // by quantity — the best approximation the schema supports.
 const explodePurchaseOrderItems = (po) => {
   const amount = Number(po.amount) || 0;
+
+  const receivedGstByKey = {};
+  (po.receivedItems || []).forEach((ri) => {
+    if (ri.gstPercent == null || ri.gstPercent <= 0) return;
+    if (ri.itemId) receivedGstByKey[String(ri.itemId)] = Number(ri.gstPercent);
+    const nameKey = (ri.itemName || '').trim().toLowerCase();
+    if (nameKey) receivedGstByKey[nameKey] = Number(ri.gstPercent);
+  });
+  const resolveGstPercent = (idKey, nameKey, masterGst) => {
+    if (idKey && receivedGstByKey[idKey] != null) return receivedGstByKey[idKey];
+    if (nameKey && receivedGstByKey[nameKey] != null) return receivedGstByKey[nameKey];
+    return masterGst > 0 ? masterGst : 18;
+  };
+
+  const invCgst = Number(po.receivedInvoiceCgstAmount) || 0;
+  const invSgst = Number(po.receivedInvoiceSgstAmount) || 0;
+  const invIgst = Number(po.receivedInvoiceIgstAmount) || 0;
+  const invGstTotal = Number(po.receivedInvoiceGstAmount) || (invCgst + invSgst + invIgst);
+  const hasInvoiceBreakdown = invGstTotal > 0 && amount > 0;
+
+  const splitTax = (itemAmount, gstRate) => {
+    if (hasInvoiceBreakdown) {
+      const share = itemAmount / amount;
+      return {
+        taxable: r2(itemAmount - invGstTotal * share),
+        cgst: r2(invCgst * share),
+        sgst: r2(invSgst * share),
+        igst: r2(invIgst * share),
+      };
+    }
+    const taxable = gstRate > 0 ? itemAmount / (1 + gstRate / 100) : itemAmount;
+    const totalTax = itemAmount - taxable;
+    return { taxable: r2(taxable), cgst: r2(totalTax / 2), sgst: r2(totalTax / 2), igst: 0 };
+  };
+
+  // Extra lines (goods the vendor's invoice included that weren't part of this PO at all —
+  // see purchase.controller.receiveOrder) are never in `po.items` and carry no share of
+  // `po.amount`, so they'd otherwise vanish from every report that reads this function. They
+  // DO carry their own per-line purchasePrice (already GST-exclusive/taxable, same convention
+  // as every other purchaseBatches.purchasePrice in this codebase) and gstPercent captured at
+  // receiving, so they're priced off THAT instead of being allocated a share of `amount` —
+  // deliberately not folded into the invoice-level CGST/SGST/IGST proportional split above
+  // (that split's denominator is `amount`, which never included these lines' value, so
+  // reusing it here would misallocate tax); a flat 50/50 CGST/SGST off their own gstPercent
+  // is used instead, same fallback convention explodeLocalPurchaseItems uses below for bills
+  // with no separate CGST/SGST/IGST breakdown.
+  const extraRows = (po.receivedItems || [])
+    .filter((ri) => ri.extra && (Number(ri.receivedQty) || 0) > 0)
+    .map((ri) => {
+      const qty = Number(ri.receivedQty) || 0;
+      const taxable = r2((Number(ri.purchasePrice) || 0) * qty);
+      const gstRate = Number(ri.gstPercent) || 0;
+      const gstAmt = r2(taxable * gstRate / 100);
+      return {
+        itemName: ri.itemName || '',
+        hsnCode: ri.hsn || '',
+        gstPercent: gstRate,
+        qty,
+        amount: r2(taxable + gstAmt),
+        taxable,
+        cgst: r2(gstAmt / 2),
+        sgst: r2(gstAmt / 2),
+        igst: 0,
+      };
+    });
+
   if (po.items?.length) {
     const totalQty = po.items.reduce((s, i) => s + (Number(i.qty) || 0), 0);
     return po.items.map((it) => {
       const share = totalQty > 0 ? (Number(it.qty) || 0) / totalQty : 1 / po.items.length;
+      const itemAmount = r2(amount * share);
+      const idKey = it.itemId?._id ? String(it.itemId._id) : (it.itemId ? String(it.itemId) : '');
+      const nameKey = (it.itemName || it.itemId?.itemName || '').trim().toLowerCase();
+      const gstRate = resolveGstPercent(idKey, nameKey, Number(it.itemId?.gstPercent) || 0);
       return {
         itemName: it.itemId?.itemName || it.itemName || '',
         hsnCode: it.itemId?.hsnCode || '',
-        gstPercent: it.itemId?.gstPercent ?? 18,
+        gstPercent: gstRate,
         qty: Number(it.qty) || 0,
-        amount: r2(amount * share),
+        amount: itemAmount,
+        ...splitTax(itemAmount, gstRate),
       };
-    });
+    }).concat(extraRows);
   }
+  const idKey = po.itemId?._id ? String(po.itemId._id) : (po.itemId ? String(po.itemId) : '');
+  const nameKey = (po.itemName || po.itemId?.itemName || '').trim().toLowerCase();
+  const gstRate = resolveGstPercent(idKey, nameKey, Number(po.itemId?.gstPercent) || 0);
   return [{
     itemName: po.itemId?.itemName || po.itemName || '',
     hsnCode: po.itemId?.hsnCode || '',
-    gstPercent: po.itemId?.gstPercent ?? 18,
+    gstPercent: gstRate,
     qty: Number(po.qty) || 0,
-    amount,
-  }];
+    amount: r2(amount),
+    ...splitTax(amount, gstRate),
+  }].concat(extraRows);
 };
 
-// LocalPurchase invoices carry no HSN/GST breakdown at all (informal vendor bill) — every
-// row is reported taxable-only, with 0% GST rather than fabricating a rate.
+// LocalPurchase entries DO carry their own GST data (lp.gstAmount total + per-line
+// items[].gstPercent, set on the Add Local Purchase form) — each line's own gstPercent is
+// preferred when set; otherwise the invoice's single combined gstAmount is allocated across
+// lines by their share of the line total (same convention explodePurchaseOrderItems uses for
+// a PurchaseOrder's own header-level breakdown). No CGST/SGST/IGST split is captured
+// separately on these informal bills, so the resulting GST is divided evenly CGST/SGST.
 const explodeLocalPurchaseItems = (lp) => {
-  const rows = lp.items?.length ? lp.items : [{ itemName: 'Local Purchase', qty: 0, amount: lp.totalAmount }];
-  return rows.map((it) => ({
-    itemName: it.itemName || 'Local Purchase',
-    hsnCode: '',
-    gstPercent: 0,
-    qty: Number(it.qty) || 0,
-    amount: Number(it.amount) || 0,
-  }));
+  const totalAmount = Number(lp.totalAmount) || 0;
+  const totalGst = Number(lp.gstAmount) || 0;
+  const rows = lp.items?.length ? lp.items : [{ itemName: 'Local Purchase', qty: 0, amount: totalAmount, gstPercent: 0 }];
+  const itemsTotal = rows.reduce((s, it) => s + (Number(it.amount) || 0), 0) || totalAmount;
+  return rows.map((it) => {
+    const amount = Number(it.amount) || 0;
+    const linePercent = Number(it.gstPercent) || 0;
+    let taxable;
+    let gstAmt;
+    if (linePercent > 0) {
+      taxable = amount / (1 + linePercent / 100);
+      gstAmt = amount - taxable;
+    } else if (totalGst > 0 && itemsTotal > 0) {
+      const share = amount / itemsTotal;
+      gstAmt = totalGst * share;
+      taxable = amount - gstAmt;
+    } else {
+      taxable = amount;
+      gstAmt = 0;
+    }
+    return {
+      itemName: it.itemName || 'Local Purchase',
+      hsnCode: '',
+      gstPercent: linePercent,
+      qty: Number(it.qty) || 0,
+      amount: r2(amount),
+      taxable: r2(taxable),
+      cgst: r2(gstAmt / 2),
+      sgst: r2(gstAmt / 2),
+      igst: 0,
+    };
+  });
 };
 
 // Shared purchase-side rows for Purchase Report / Auditor Tax / CSV export — merges
@@ -181,29 +297,26 @@ const buildPurchaseRows = async (dateFilter) => {
   const rows = [];
   orders.forEach((o) => {
     explodePurchaseOrderItems(o).forEach((it, idx) => {
-      const gstRate = it.gstPercent ?? 18;
-      const taxable = gstRate > 0 ? it.amount / (1 + gstRate / 100) : it.amount;
-      const totalTax = it.amount - taxable;
       rows.push({
         key: `po-${o._id}-${idx}`,
         vendor_gst: o.vendorId?.taxId || '',
         supplier: o.vendorId?.name || '',
         product: it.itemName,
         hsn: it.hsnCode,
-        gst_rate: gstRate,
+        gst_rate: it.gstPercent,
         qty: it.qty,
-        unit_price: it.qty ? r2(taxable / it.qty) : 0,
+        unit_price: it.qty ? r2(it.taxable / it.qty) : 0,
         state_code: '',
         state_name: '',
         inv_no: o.invNo || o.billNo || o.poCode || '',
         orig_inv_no: '',
         inv_date: o.createdAt?.toISOString().slice(0, 10) || '',
-        taxable: r2(taxable),
-        cgst: r2(totalTax / 2),
-        sgst: r2(totalTax / 2),
-        igst: 0,
-        total_tax: r2(totalTax),
-        inv_value: r2(it.amount),
+        taxable: it.taxable,
+        cgst: it.cgst,
+        sgst: it.sgst,
+        igst: it.igst,
+        total_tax: r2(it.cgst + it.sgst + it.igst),
+        inv_value: it.amount,
       });
     });
   });
@@ -215,20 +328,20 @@ const buildPurchaseRows = async (dateFilter) => {
         supplier: l.vendorId?.name || l.vendorName || '',
         product: it.itemName,
         hsn: '',
-        gst_rate: 0,
+        gst_rate: it.gstPercent,
         qty: it.qty,
-        unit_price: it.qty ? r2(it.amount / it.qty) : it.amount,
+        unit_price: it.qty ? r2(it.taxable / it.qty) : it.taxable,
         state_code: '',
         state_name: '',
         inv_no: l.invoiceNo || l.lpCode || '',
         orig_inv_no: '',
         inv_date: l.createdAt?.toISOString().slice(0, 10) || '',
-        taxable: r2(it.amount),
-        cgst: 0,
-        sgst: 0,
-        igst: 0,
-        total_tax: 0,
-        inv_value: r2(it.amount),
+        taxable: it.taxable,
+        cgst: it.cgst,
+        sgst: it.sgst,
+        igst: it.igst,
+        total_tax: r2(it.cgst + it.sgst + it.igst),
+        inv_value: it.amount,
       });
     });
   });
@@ -745,19 +858,22 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
   purchaseOrders.forEach((po) => {
     const row = ensureRow(po.createdAt);
     explodePurchaseOrderItems(po).forEach((it) => {
-      const gstRate = it.gstPercent ?? 18;
-      const taxable = gstRate > 0 ? it.amount / (1 + gstRate / 100) : it.amount;
-      const gstAmt = it.amount - taxable;
-      row.pur_taxable += taxable;
-      row.pur_cgst += gstAmt / 2;
-      row.pur_sgst += gstAmt / 2;
-      row.pur_total_gst += gstAmt;
+      row.pur_taxable += it.taxable;
+      row.pur_cgst += it.cgst;
+      row.pur_sgst += it.sgst;
+      row.pur_igst += it.igst;
+      row.pur_total_gst += it.cgst + it.sgst + it.igst;
     });
   });
   localPurchases.forEach((lp) => {
     const row = ensureRow(lp.createdAt);
-    // No GST captured on local/informal purchases — taxable spend only, no input credit.
-    row.pur_taxable += Number(lp.totalAmount) || 0;
+    explodeLocalPurchaseItems(lp).forEach((it) => {
+      row.pur_taxable += it.taxable;
+      row.pur_cgst += it.cgst;
+      row.pur_sgst += it.sgst;
+      row.pur_igst += it.igst;
+      row.pur_total_gst += it.cgst + it.sgst + it.igst;
+    });
   });
 
   const data = Object.values(monthlyMap)

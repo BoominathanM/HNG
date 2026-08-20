@@ -71,6 +71,7 @@ import {
 import { estimateSecFor, secToHuman, perUnitLabel } from '../../utils/taskTime';
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import { downloadFile } from '../../utils/fileDownload';
+import { formatQty } from '../../utils/numberFormat';
 import {
   buildProductionQueues,
   canAssignTaskFromChecks,
@@ -1869,7 +1870,7 @@ export default function OperationDetail() {
         const enough = liveStock >= (record.qty || 0);
         return (
           <Text strong style={{ color: enough ? '#389e0d' : '#cf1322' }}>
-            {liveStock.toLocaleString()}
+            {formatQty(liveStock)}
           </Text>
         );
       },
@@ -1886,10 +1887,10 @@ export default function OperationDetail() {
         const enough = liveStock >= (value || 0);
         return (
           <Space direction="vertical" size={0} style={{ textAlign: 'right' }}>
-            <Text strong>{(value || 0).toLocaleString()}</Text>
+            <Text strong>{formatQty(value)}</Text>
             {!enough && (
               <Tag color="error" style={{ fontSize: 10, margin: 0 }}>
-                Short {Math.max(0, (value || 0) - liveStock).toLocaleString()}
+                Short {formatQty(Math.max(0, (value || 0) - liveStock))}
               </Tag>
             )}
           </Space>

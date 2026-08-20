@@ -417,12 +417,14 @@ exports.payLrPayment = asyncHandler(async (req, res, next) => {
 
   const proofUrl = req.file?.path || req.body.proofUrl;
   const paidBy = req.body.paidBy || req.body.paid_by || req.user.fullName;
-  const remaining = Math.max(0, (order.amount || 0) - (order.lrPaidAmount || 0));
+  // Payable is the LR copy's Bill Total Amount, not the vendor's goods `amount` — see
+  // PurchaseOrder.billTotalAmount.
+  const remaining = Math.max(0, (order.billTotalAmount || 0) - (order.lrPaidAmount || 0));
   const rawAmount = req.body.amount ?? req.body.paidAmount;
   const payAmount = rawAmount !== undefined ? Math.min(Math.max(0, Number(rawAmount) || 0), remaining) : remaining;
 
   order.lrPaidAmount = (order.lrPaidAmount || 0) + payAmount;
-  order.lrPaymentStatus = order.lrPaidAmount >= (order.amount || 0) ? 'Paid' : (order.lrPaidAmount > 0 ? 'Partial Paid' : 'Not Paid');
+  order.lrPaymentStatus = order.lrPaidAmount >= (order.billTotalAmount || 0) ? 'Paid' : (order.lrPaidAmount > 0 ? 'Partial Paid' : 'Not Paid');
   await order.save({ validateBeforeSave: false });
 
   // Keep the linked Dispatch "Pick Up Order" entry in sync — its paymentStatus is
@@ -433,7 +435,7 @@ exports.payLrPayment = asyncHandler(async (req, res, next) => {
   );
 
   const expCode = await generateCode('EXP');
-  const balanceAfter = Math.max(0, (order.amount || 0) - order.lrPaidAmount);
+  const balanceAfter = Math.max(0, (order.billTotalAmount || 0) - order.lrPaidAmount);
   await Expense.create({
     expenseCode: expCode,
     expenseDate: new Date(),

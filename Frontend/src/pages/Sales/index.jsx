@@ -84,6 +84,7 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
 import PhoneInput from '../../components/common/PhoneInput';
 import { emailRules, phoneValidator } from '../../utils/validation';
+import { formatQty } from '../../utils/numberFormat';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -1549,7 +1550,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                           {option.data.category ? <span style={{ fontSize: 10, color: '#888', marginLeft: 6 }}>· {option.data.category}</span> : null}
                         </span>
                         <span style={{ fontSize: 10, color, fontWeight: 600, background: `${color}20`, padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                          {stock} {unit}
+                          {formatQty(stock)} {unit}
                         </span>
                       </div>
                     );
@@ -1628,7 +1629,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                           {option.data.category ? <span style={{ fontSize: 10, color: '#888', marginLeft: 6 }}>· {option.data.category}</span> : null}
                         </span>
                           <span style={{ fontSize: 10, color, fontWeight: 600, background: `${color}20`, padding: '1px 6px', borderRadius: 4, whiteSpace: 'nowrap', flexShrink: 0 }}>
-                            {stock} {unit}
+                            {formatQty(stock)} {unit}
                           </span>
                         </div>
                       );
@@ -1643,7 +1644,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   color={invItem.currentStock <= 0 ? 'red' : invItem.currentStock <= invItem.minStock ? 'orange' : 'green'}
                   style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 5px' }}
                 >
-                  Stock: {invItem.currentStock} {invItem.unit}
+                  Stock: {formatQty(invItem.currentStock)} {invItem.unit}
                 </Tag>
                 {invItem.category && (
                   <Tag style={{ fontSize: 10, margin: 0, lineHeight: '16px', padding: '0 5px', background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', border: '1px solid rgba(0,0,0,0.1)', color: isDark ? '#aaa' : '#666' }}>
@@ -1708,7 +1709,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       marginTop: 2,
                       color: (invItem.currentStock ?? 0) <= 0 ? '#f5222d' : (invItem.currentStock ?? 0) <= (invItem.minStock || 0) ? '#fa8c16' : '#52c41a',
                     }}>
-                      Avail: {invItem.currentStock ?? 0} {invItem.unit || ''}
+                      Avail: {formatQty(invItem.currentStock)} {invItem.unit || ''}
                     </div>
                   )}
                 </Col>

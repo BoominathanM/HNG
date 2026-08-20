@@ -5,6 +5,7 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { motion } from 'framer-motion';
 import StatCard from '../../components/common/StatCard';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import { formatQty } from '../../utils/numberFormat';
 import { useSelector } from 'react-redux';
 import {
   useGetKPIsQuery,
@@ -199,7 +200,7 @@ export default function Dashboard() {
                       <div key={item._id} style={{ marginBottom: 14 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
                           <Text style={{ fontSize: 13, color: textColor }}>{item.itemName}</Text>
-                          <Text style={{ fontSize: 12, color: '#C94F8A', fontWeight: 600 }}>{item.currentStock}/{item.minStock} {item.unit}</Text>
+                          <Text style={{ fontSize: 12, color: '#C94F8A', fontWeight: 600 }}>{formatQty(item.currentStock)}/{formatQty(item.minStock)} {item.unit}</Text>
                         </div>
                         <Progress percent={Math.round((item.currentStock / item.minStock) * 100)} showInfo={false}
                           strokeColor={{ '0%': '#8a1652', '100%': '#D85C9E' }} trailColor={isDark ? '#333' : '#f0f0f0'} size="small" />

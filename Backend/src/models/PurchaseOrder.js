@@ -33,6 +33,11 @@ const purchaseOrderSchema = new mongoose.Schema({
   lrNumber: String,
   trackingUrl: String,
   lrFileUrl: String,
+  // Bill Total Amount as printed on the uploaded LR copy (AI-extracted, or entered
+  // manually as a fallback) — this is what Finance/Pickup Team actually owe the
+  // transporter, distinct from `amount` (the vendor's goods invoice value) which must
+  // never be used as the LR payable amount.
+  billTotalAmount: { type: Number, default: 0 },
   expectedDeliveryDate: Date,
   // Purchase's own Paid/Not Paid toggle captured at LR-upload time, later refined to
   // 'Partial Paid'/'Paid' by Finance settling it in amounts (see lrPaidAmount) — kept
@@ -54,6 +59,16 @@ const purchaseOrderSchema = new mongoose.Schema({
   receivedInvoiceTotalAmount: Number,
   receivedInvoiceVendorGST: String,
   receivedInvoiceVendorAddress: String,
+  // CGST/SGST/IGST breakdown as printed on the received invoice (AI-scanned at scanInvoice,
+  // confirmed by the user on receive) — the GST Report/Purchase Report previously had no real
+  // Input GST source at all beyond guessing a flat 50/50 CGST/SGST split off InventoryItem's
+  // master gstPercent (which defaults to 0 and is rarely set), so Purchase GST always showed
+  // ₹0. These carry the invoice's ACTUAL tax split (including inter-state IGST-only bills)
+  // through to reports.controller.js's explodePurchaseOrderItems.
+  receivedInvoiceCgstAmount: Number,
+  receivedInvoiceSgstAmount: Number,
+  receivedInvoiceIgstAmount: Number,
+  receivedInvoiceGstAmount: Number,
   // Per-line-item breakdown captured at receiving time (from AI invoice scan + manual
   // adjustment) — persists what the frontend previously only tracked in local React state.
   receivedItems: [{
@@ -65,6 +80,16 @@ const purchaseOrderSchema = new mongoose.Schema({
     reason: String,
     hsn: String,
     gst: String,
+    // Taxable (GST-exclusive) per-unit purchase price actually credited to this item's
+    // purchaseBatches — see InventoryItem.purchaseBatches.purchasePrice.
+    purchasePrice: Number,
+    gstPercent: Number,
+    // How the user entered purchasePrice on this line — 'exclusive' or 'inclusive' of GST.
+    priceType: { type: String, enum: ['exclusive', 'inclusive'], default: 'exclusive' },
+    // True when this line was found on the invoice but wasn't part of the original PO —
+    // resolved to an Inventory item (by Item Code, name match, or created new) and credited
+    // to stock same as any ordered line, just flagged here for reporting/audit purposes.
+    extra: { type: Boolean, default: false },
   }],
   // Only set when a shortfall was recorded (dispatchStatus === 'Partially Received').
   missedBy: { type: String, enum: ['vendor', 'lorry', null], default: null },

@@ -60,6 +60,7 @@ import PhoneInput from '../../components/common/PhoneInput';
 import VendorBankFields from '../../components/common/VendorBankFields';
 import { emailRules, phoneValidator } from '../../utils/validation';
 import { downloadFile } from '../../utils/fileDownload';
+import { formatQty } from '../../utils/numberFormat';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -1293,7 +1294,7 @@ export default function Inventory() {
       render: (_, r) => (
         <div style={{ minWidth: 80 }}>
           <Text strong style={{ fontSize: 14, color: r.status === 'Out' ? '#8a1652' : r.status === 'Low' ? '#C94F8A' : '#B11E6A' }}>
-            {(r.current ?? 0).toLocaleString()}
+            {formatQty(r.current)}
           </Text>
           <Text style={{ fontSize: 11, color: '#999', marginLeft: 4 }}>units</Text>
         </div>
@@ -1321,7 +1322,7 @@ export default function Inventory() {
               return (
                 <Tag key={i} style={{ borderRadius: 20, fontSize: 10, background: '#B11E6A12', color: '#B11E6A', border: '1px solid #B11E6A33', margin: 0, display: 'inline-flex', alignItems: 'center', gap: 0, padding: '0 6px 0 8px' }}>
                   <span>{name}</span>
-                  <span style={{ background: '#B11E6A', color: '#fff', borderRadius: 10, padding: '0 6px', fontSize: 9, fontWeight: 700, lineHeight: '16px', marginLeft: 6 }}>{stock} units</span>
+                  <span style={{ background: '#B11E6A', color: '#fff', borderRadius: 10, padding: '0 6px', fontSize: 9, fontWeight: 700, lineHeight: '16px', marginLeft: 6 }}>{formatQty(stock)} units</span>
                 </Tag>
               );
             })}
@@ -1344,7 +1345,7 @@ export default function Inventory() {
         <Space size={4} wrap>
           <div style={{ display: 'flex', alignItems: 'center', background: isDark ? '#2a2a3e' : '#f0f0f0', borderRadius: 6, padding: '2px', border: `1px solid ${borderColor}` }}>
             <Button size="small" type="text" icon={<MinusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Deduction' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
-            <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{r.current}</Text>
+            <Text strong style={{ fontSize: 11, minWidth: 28, textAlign: 'center', color: textColor }}>{formatQty(r.current)}</Text>
             <Button size="small" type="text" icon={<PlusOutlined style={{ fontSize: 10, color: '#B11E6A' }} />} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; adjustForm.resetFields(); setAdjustModal({ open: true, item: r, type: 'Addition' }); }} style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }} />
           </div>
           <Button size="small" icon={<EditOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontSize: 11 }} onClick={(e) => { e.stopPropagation(); if (!requireAccess('edit')) return; setEditingItem(r); setAddItemScope(r.itemType === 'bulk' || r.itemType === 'filled' ? 'bulk_filled' : 'standard'); addItemForm.setFieldsValue({ name: r.name, category: r.category, unit: r.unit, unitValue: r.unitValue, min: r.min, purchase_price: r.value, margin_amount: r.marginAmount, selling_price: r.sellingPrice, gstPercent: r.gstPercent, hsn: r.hsnCode, vendorId: r.vendorId, purchaseDate: dayjs(), addStockQty: undefined, productAttrs: normalizeAttrsForEdit(r.productAttributes, r.name), itemType: r.itemType || 'standard', bulkSourceItemId: r.bulkSourceItemId, fillWastagePercent: r.fillWastagePercent }); setAddItemModal(true); }}>Edit</Button>
@@ -1733,7 +1734,7 @@ export default function Inventory() {
                     { title: 'Item Name', dataIndex: 'item', key: 'item', sorter: (a, b) => a.item.localeCompare(b.item), render: v => <Text strong style={{ color: '#B11E6A', textDecoration: 'underline', cursor: 'pointer' }}>{v}</Text> },
                     { title: 'Code', dataIndex: 'code', key: 'code', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 12 }}>{v}</Text> },
                     { title: 'Category', dataIndex: 'category', key: 'category', render: v => v ? <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> : <Text type="secondary">—</Text> },
-                    { title: 'Current Stock', key: 'current', render: (_, r) => <Text strong>{(r.current ?? 0).toLocaleString()} {r.unit}</Text> },
+                    { title: 'Current Stock', key: 'current', render: (_, r) => <Text strong>{formatQty(r.current)} {r.unit}</Text> },
                   ]}
                   pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                 />
@@ -3263,7 +3264,7 @@ export default function Inventory() {
           return (
             <>
               <Text type="secondary" style={{ fontSize: 12 }}>
-                Packs pieces of &quot;{item.name}&quot; ({fillSize} {item.unit} each{wastage ? `, ${wastage}% wastage` : ''}) from bulk item &quot;{bulkSrc?.name || '—'}&quot; ({bulkSrc?.current ?? '—'} {bulkSrc?.unit || ''} available).
+                Packs pieces of &quot;{item.name}&quot; ({fillSize} {item.unit} each{wastage ? `, ${wastage}% wastage` : ''}) from bulk item &quot;{bulkSrc?.name || '—'}&quot; ({bulkSrc ? formatQty(bulkSrc.current) : '—'} {bulkSrc?.unit || ''} available).
               </Text>
               <div style={{ marginTop: 16 }}>
                 <Text strong style={{ fontSize: 13 }}>Fill Quantity (pieces)</Text>
@@ -3276,8 +3277,8 @@ export default function Inventory() {
                   type={insufficient ? 'error' : 'info'}
                   showIcon
                   message={insufficient
-                    ? `Not enough bulk stock — need ${needed.toFixed(3)} ${bulkSrc?.unit || ''}, only ${bulkSrc?.current ?? 0} ${bulkSrc?.unit || ''} available. Fill is blocked until enough is available.`
-                    : `Will use ${needed.toFixed(3)} ${bulkSrc?.unit || ''} from "${bulkSrc?.name || 'bulk item'}"`}
+                    ? `Not enough bulk stock — need ${formatQty(needed)} ${bulkSrc?.unit || ''}, only ${formatQty(bulkSrc?.current)} ${bulkSrc?.unit || ''} available. Fill is blocked until enough is available.`
+                    : `Will use ${formatQty(needed)} ${bulkSrc?.unit || ''} from "${bulkSrc?.name || 'bulk item'}"`}
                 />
               )}
             </>

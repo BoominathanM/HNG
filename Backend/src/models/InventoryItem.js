@@ -45,6 +45,16 @@ const inventoryItemSchema = new mongoose.Schema({
     purchaseDate: { type: Date, default: Date.now },
     qty: { type: Number, default: 0 },
     remainingQty: { type: Number, default: 0 },
+    // Per-batch cost captured from the purchase invoice at receive time — always the taxable
+    // (GST-exclusive) unit price, regardless of how the invoice quoted it (see priceType).
+    // Distinct from the item-level `purchasePrice` above, which only mirrors the most recent
+    // batch for list/detail display; full price-per-vendor history lives here.
+    purchasePrice: { type: Number, default: 0 },
+    gstPercent: { type: Number, default: 0 },
+    // How the purchasePrice was entered on the source invoice — 'exclusive' (rate excl. GST,
+    // the normal case) or 'inclusive' (rate already includes GST, backed out before saving
+    // the taxable base above). Kept for audit/display only.
+    priceType: { type: String, enum: ['exclusive', 'inclusive'], default: 'exclusive' },
   }],
   productAttributes: { type: mongoose.Schema.Types.Mixed, default: {} },
   deletedAt: Date,

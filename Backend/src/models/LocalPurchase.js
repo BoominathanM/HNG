@@ -20,6 +20,11 @@ const localPurchaseSchema = new mongoose.Schema({
     qty: Number,
     unit: String,
     amount: Number,
+    // GST rate for this line, if the invoice showed one — used with priceType to work out
+    // the taxable (GST-exclusive) unit cost credited to InventoryItem.purchaseBatches.
+    gstPercent: { type: Number, default: 0 },
+    // Whether `amount` (the line total) was entered/scanned as GST-inclusive or -exclusive.
+    priceType: { type: String, enum: ['exclusive', 'inclusive'], default: 'exclusive' },
     // 'standard': added straight to Stock Inventory as normal sellable/usable stock.
     // 'bulk': raw liquid/powder (unit must be Litres/Kg) — lands on Inventory's Bulk tab
     // instead, same as a Bulk item created directly there; filled from later via Fill Stock.

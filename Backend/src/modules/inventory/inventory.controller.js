@@ -23,6 +23,12 @@ const BULK_FILL_UNITS = { Litres: ['ml', 'Litres'], Kg: ['gram', 'Kg'] };
 // Litres/Kg respectively; Litres/Kg fills draw 1:1 from a same-unit bulk item).
 const UNIT_TO_BULK_FACTOR = { ml: 1000, Litres: 1, gram: 1000, Kg: 1 };
 
+// Dividing by UNIT_TO_BULK_FACTOR (e.g. /1000 for ml→Litres) routinely leaves floating-point
+// noise like 0.00999999999999787 instead of 0.01 — round every fill-math result to 6 decimals
+// before it's assigned to currentStock/remainingQty and persisted, so the noise never reaches
+// the database (the frontend also rounds for display, but that can't fix values already saved).
+const round6 = (n) => Math.round((Number(n) || 0) * 1e6) / 1e6;
+
 // Sends the "Stock Checking" WhatsApp template (configured in Integrations → WhatsApp →
 // Event Mapping) whenever a Live Staff Check records a discrepancy — for both Known and
 // Unknown reasons. Recipients come from the mapping's own `recipientUserIds` (selectable
@@ -130,7 +136,10 @@ exports.createItem = asyncHandler(async (req, res, next) => {
     if (body.sellingPrice != null) existing.sellingPrice = body.sellingPrice;
     const batchDate = body.purchaseDate || Date.now();
     if (qtyToAdd > 0) {
-      existing.purchaseBatches.push({ vendorId: vendorId || undefined, vendorName, purchaseDate: batchDate, qty: qtyToAdd, remainingQty: qtyToAdd });
+      existing.purchaseBatches.push({
+        vendorId: vendorId || undefined, vendorName, purchaseDate: batchDate, qty: qtyToAdd, remainingQty: qtyToAdd,
+        purchasePrice: existing.purchasePrice || 0, gstPercent: existing.gstPercent || 0,
+      });
       existing.currentStock = qtyBefore + qtyToAdd;
     }
     await existing.save({ validateBeforeSave: false });
@@ -175,7 +184,10 @@ exports.createItem = asyncHandler(async (req, res, next) => {
     itemCode,
     currentStock: openingStock,
     purchaseBatches: openingStock > 0
-      ? [{ vendorId: body.vendorId || undefined, vendorName, purchaseDate, qty: openingStock, remainingQty: openingStock }]
+      ? [{
+          vendorId: body.vendorId || undefined, vendorName, purchaseDate, qty: openingStock, remainingQty: openingStock,
+          purchasePrice: body.purchasePrice || 0, gstPercent: body.gstPercent || 0,
+        }]
       : [],
     createdBy: req.user._id,
   });
@@ -222,7 +234,10 @@ exports.updateItem = asyncHandler(async (req, res, next) => {
       vendorName = vendor?.name;
     }
     const batchDate = purchaseDate || Date.now();
-    item.purchaseBatches.push({ vendorId: item.vendorId || undefined, vendorName, purchaseDate: batchDate, qty: qtyToAdd, remainingQty: qtyToAdd });
+    item.purchaseBatches.push({
+      vendorId: item.vendorId || undefined, vendorName, purchaseDate: batchDate, qty: qtyToAdd, remainingQty: qtyToAdd,
+      purchasePrice: item.purchasePrice || 0, gstPercent: item.gstPercent || 0,
+    });
     item.currentStock = qtyBefore + qtyToAdd;
     await item.save({ validateBeforeSave: false });
     await StockMovement.create({
@@ -283,14 +298,14 @@ exports.fillStock = asyncHandler(async (req, res, next) => {
   }
 
   const rawNeeded = (fillQty * fillSize) / (1 - wastage / 100);
-  const bulkQtyNeeded = rawNeeded / fillUnitFactor;
+  const bulkQtyNeeded = round6(rawNeeded / fillUnitFactor);
 
   if (bulk.currentStock < bulkQtyNeeded) {
     return next(new AppError(`Not enough bulk stock — need ${bulkQtyNeeded.toFixed(3)} ${bulk.unit} of "${bulk.itemName}", only ${bulk.currentStock} ${bulk.unit} available`, 400));
   }
 
   const bulkQtyBefore = bulk.currentStock;
-  bulk.currentStock = Math.max(0, bulkQtyBefore - bulkQtyNeeded);
+  bulk.currentStock = round6(Math.max(0, bulkQtyBefore - bulkQtyNeeded));
 
   // Draw down oldest purchaseDate batches first, same FIFO convention used when an order
   // deducts a standard item — one StockMovement per vendor batch touched.
@@ -302,8 +317,8 @@ exports.fillStock = asyncHandler(async (req, res, next) => {
   for (const batch of batches) {
     if (remaining <= 0) break;
     const take = Math.min(batch.remainingQty, remaining);
-    batch.remainingQty -= take;
-    remaining -= take;
+    batch.remainingQty = round6(batch.remainingQty - take);
+    remaining = round6(remaining - take);
     segments.push({ qty: take, vendorId: batch.vendorId, vendorName: batch.vendorName, purchaseDate: batch.purchaseDate });
   }
   if (remaining > 0) segments.push({ qty: remaining, vendorId: bulk.vendorId });

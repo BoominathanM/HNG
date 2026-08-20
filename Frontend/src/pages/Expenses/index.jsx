@@ -86,6 +86,7 @@ export default function Expenses() {
     paidDate: e.paidDate?.slice(0, 10),
     paidAmount: e.paidAmount,
     paidDateTime: e.paidDate,
+    paymentHistory: e.paymentHistory || [],
   })), [expData]);
 
   const { filterTabs } = useTabAccess('Expenses');
@@ -94,26 +95,51 @@ export default function Expenses() {
   const handleExport = () => {
     const rows = applyExpFilter(allExpenses);
     if (!rows.length) { enqueueSnackbar('No data to export', { variant: 'warning' }); return; }
-    const headers = ['Expense ID', 'Date', 'Category', 'Description', 'Vendor', 'Amount', 'Paid Amount', 'Paid Date & Time', 'Status'];
-    const csv = [
-      headers.join(','),
-      ...rows.map(r => {
-        const cat = EXPENSE_CATEGORIES.find(x => x.value === r.category);
-        const catLabel = r.category === 'OTHER' ? (r.customCategory || 'Other') : (cat?.label || r.category);
-        const paidDateTime = r.paidDateTime ? dayjs(r.paidDateTime).format('YYYY-MM-DD HH:mm:ss') : '';
-        return [
-          `"${r.expenseCode || ''}"`,
-          r.date || '',
-          `"${catLabel}"`,
-          `"${(r.desc || '').replace(/"/g, '""')}"`,
-          `"${(r.vendor || '').replace(/"/g, '""')}"`,
-          r.amount || 0,
-          r.paidAmount || 0,
-          paidDateTime,
-          r.status || '',
-        ].join(',');
-      }),
-    ].join('\n');
+    const headers = ['Expense ID', 'Date', 'Category', 'Description', 'Vendor', 'Amount', 'Paid Amount', 'Paid Date & Time', 'Status', 'Note'];
+    const csvLines = [headers.join(',')];
+    rows.forEach(r => {
+      const cat = EXPENSE_CATEGORIES.find(x => x.value === r.category);
+      const catLabel = r.category === 'OTHER' ? (r.customCategory || 'Other') : (cat?.label || r.category);
+      const paidDateTime = r.paidDateTime ? dayjs(r.paidDateTime).format('YYYY-MM-DD HH:mm:ss') : '';
+      const history = Array.isArray(r.paymentHistory) ? r.paymentHistory : [];
+      const isMultiPayment = history.length > 1;
+      const summaryNote = isMultiPayment ? `Paid in ${history.length} installments` : '';
+      csvLines.push([
+        `"${r.expenseCode || ''}"`,
+        r.date || '',
+        `"${catLabel}"`,
+        `"${(r.desc || '').replace(/"/g, '""')}"`,
+        `"${(r.vendor || '').replace(/"/g, '""')}"`,
+        r.amount || 0,
+        r.paidAmount || 0,
+        paidDateTime,
+        r.status || '',
+        `"${summaryNote}"`,
+      ].join(','));
+
+      if (isMultiPayment) {
+        history
+          .slice()
+          .sort((a, b) => new Date(a.paidDate) - new Date(b.paidDate))
+          .forEach((p, idx) => {
+            const payDateTime = p.paidDate ? dayjs(p.paidDate).format('YYYY-MM-DD HH:mm:ss') : '';
+            const note = [p.paidBy ? `Paid by ${p.paidBy}` : '', p.note || ''].filter(Boolean).join(' - ');
+            csvLines.push([
+              `"    Payment ${idx + 1} of ${history.length}"`,
+              '',
+              '',
+              '',
+              '',
+              '',
+              p.amount || 0,
+              payDateTime,
+              '',
+              `"${note.replace(/"/g, '""')}"`,
+            ].join(','));
+          });
+      }
+    });
+    const csv = csvLines.join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

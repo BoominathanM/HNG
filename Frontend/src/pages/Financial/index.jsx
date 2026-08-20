@@ -249,9 +249,11 @@ export default function Financial() {
     lrNumber: o.lrNumber || '—',
     lrFileUrl: o.lrFileUrl || null,
     expectedDeliveryDate: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
-    amount: o.amount || 0,
+    // The LR copy's Bill Total Amount — what's actually payable here, not the vendor's
+    // goods `amount`.
+    amount: o.billTotalAmount || 0,
     lrPaidAmount: o.lrPaidAmount || 0,
-    balance: Math.max(0, (o.amount || 0) - (o.lrPaidAmount || 0)),
+    balance: Math.max(0, (o.billTotalAmount || 0) - (o.lrPaidAmount || 0)),
     paymentStatus: o.lrPaymentStatus || 'Not Paid',
     dispatchStatus: o.dispatchStatus,
   })), [lrPaymentsData]);
@@ -1177,7 +1179,7 @@ export default function Financial() {
                                       );
                                     }
                                   },
-                                  { title: 'Amount', dataIndex: 'amount', key: 'amount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
+                                  { title: 'Bill Total Amount', dataIndex: 'amount', key: 'amount', width: 105, align: 'right', render: v => <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{v?.toLocaleString()}</Text> },
                                   {
                                     title: 'Payment Status', dataIndex: 'paymentStatus', key: 'paymentStatus', width: 150, align: 'center',
                                     render: (v, r) => (
@@ -1862,7 +1864,7 @@ export default function Financial() {
               <Text strong style={{ display: 'block', marginBottom: 4 }}>{lrPayTarget.item} ({lrPayTarget.poCode})</Text>
               <Text style={{ color: '#B11E6A' }}>{lrPayTarget.vendorName}</Text>
               <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>LR Number: {lrPayTarget.lrNumber} · Expected Delivery: {lrPayTarget.expectedDeliveryDate || '—'}</Text>
-              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Amount: ₹{lrPayTarget.amount?.toLocaleString()}</Text>
+              <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Bill Total Amount: ₹{lrPayTarget.amount?.toLocaleString()}</Text>
               {lrPayTarget.lrPaidAmount > 0 && (
                 <Text type="secondary" style={{ display: 'block', fontSize: 11 }}>Already Paid: ₹{lrPayTarget.lrPaidAmount.toLocaleString()} · Balance: ₹{lrPayTarget.balance.toLocaleString()}</Text>
               )}

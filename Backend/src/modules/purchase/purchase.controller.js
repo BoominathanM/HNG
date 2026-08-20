@@ -271,9 +271,14 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
   // kept separate from `receivedQty` (which the frontend pre-fills from it, but the user can
   // then hand-adjust) so the ordered-vs-invoice mismatch check below stays accurate even after
   // manual edits in the modal.
+  const matchedScannedItems = new Set();
   const items = orderedLines.map((line) => {
     const match = scannedItems.find((si) => norm(si.name).includes(norm(line.itemName)) || norm(line.itemName).includes(norm(si.name)));
+    if (match) matchedScannedItems.add(match);
     const invoiceQty = match ? Number(match.qty) || 0 : 0;
+    // GST rate as a plain number (e.g. "18%" -> 18) so the frontend can compute the
+    // GST-exclusive base price without re-parsing the tag string.
+    const gstPercent = match?.gst ? Number(String(match.gst).replace(/[^0-9.]/g, '')) || 0 : 0;
     return {
       itemId: line.itemId,
       itemName: line.itemName,
@@ -283,9 +288,42 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
       unit: line.unit,
       hsn: match?.hsn || '',
       gst: match?.gst || '',
+      // Per-unit purchase price read off the invoice for this line (rate, or amount/qty when
+      // no rate column was printed) — pre-fills the Received Order modal's editable Purchase
+      // Price column so the batch can be costed without retyping it.
+      price: match ? (Number(match.rate) || 0) : 0,
+      gstPercent,
       matched: !!match,
     };
   });
+
+  // Invoice lines that don't correspond to anything on this PO at all (e.g. the vendor bundled
+  // an extra product into the same delivery/invoice) were previously dropped on the floor —
+  // never shown, never stocked. Surface them separately, attempting an exact-name Inventory
+  // match so the frontend can show "matches existing item" vs. "needs an Item Code" the same
+  // way Local Purchase's invoice-scan flow already does.
+  const unmatchedScanned = scannedItems.filter((si) => !matchedScannedItems.has(si));
+  const extraItems = await Promise.all(unmatchedScanned.map(async (si, idx) => {
+    const name = (si.name || '').trim();
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const inventoryMatch = name
+      ? await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null }).select('itemCode itemName itemType currentStock unit')
+      : null;
+    const gstPercent = si.gst ? Number(String(si.gst).replace(/[^0-9.]/g, '')) || 0 : 0;
+    return {
+      key: `extra-${idx}`,
+      itemName: name,
+      qty: Number(si.qty) || 0,
+      unit: si.unit || '',
+      hsn: si.hsn || '',
+      gst: si.gst || '',
+      gstPercent,
+      price: Number(si.rate) || 0,
+      matchedItemId: inventoryMatch ? String(inventoryMatch._id) : null,
+      matchedItemCode: inventoryMatch ? inventoryMatch.itemCode : null,
+      matchedItemName: inventoryMatch ? inventoryMatch.itemName : null,
+    };
+  }));
 
   // Flag when the invoice's printed vendor doesn't look like the vendor this PO was raised
   // against — e.g. a mixed-up delivery — so Purchase can catch it before confirming receipt.
@@ -310,11 +348,19 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
     success: true,
     data: {
       items,
+      extraItems,
       vendorName: scannedVendorName || poVendorName,
       vendorPhone: extracted.vendorPhone,
       vendorAddress: extracted.vendorAddress,
       vendorGST: extracted.vendorGST,
       invoiceNo: extracted.invoiceNo,
+      // Taxable amount (before GST) + CGST/SGST/IGST breakdown + combined GST + grand total,
+      // shown as separate figures on the Received Order modal instead of only the total.
+      amount: Math.max((Number(extracted.totalAmount) || 0) - (Number(extracted.gstAmount) || 0), 0),
+      cgstAmount: extracted.cgstAmount,
+      sgstAmount: extracted.sgstAmount,
+      igstAmount: extracted.igstAmount,
+      gstAmount: extracted.gstAmount,
       totalAmount: extracted.totalAmount,
       vendorMismatch,
       poVendorName,
@@ -338,6 +384,13 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
   if (req.body.totalAmount) order.receivedInvoiceTotalAmount = Number(req.body.totalAmount) || undefined;
   if (req.body.vendorGST) order.receivedInvoiceVendorGST = req.body.vendorGST;
   if (req.body.vendorAddress) order.receivedInvoiceVendorAddress = req.body.vendorAddress;
+  // Real CGST/SGST/IGST breakdown printed on the invoice (see scanInvoice above) — persisted
+  // so the GST Report can use the invoice's actual tax split instead of assuming a flat 50/50
+  // CGST/SGST divide with no IGST at all.
+  if (req.body.cgstAmount !== undefined && req.body.cgstAmount !== '') order.receivedInvoiceCgstAmount = Number(req.body.cgstAmount) || 0;
+  if (req.body.sgstAmount !== undefined && req.body.sgstAmount !== '') order.receivedInvoiceSgstAmount = Number(req.body.sgstAmount) || 0;
+  if (req.body.igstAmount !== undefined && req.body.igstAmount !== '') order.receivedInvoiceIgstAmount = Number(req.body.igstAmount) || 0;
+  if (req.body.gstAmount !== undefined && req.body.gstAmount !== '') order.receivedInvoiceGstAmount = Number(req.body.gstAmount) || 0;
 
   let lines;
   try {
@@ -349,19 +402,96 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
     lines = [{ itemId: order.itemId, itemName: order.itemName, orderedQty: order.qty, receivedQty: order.qty }];
   }
 
+  let extraLines;
+  try {
+    extraLines = req.body.extraItems ? JSON.parse(req.body.extraItems) : [];
+  } catch {
+    return next(new AppError('Invalid extra items payload', 400));
+  }
+
+  // Extra invoice lines (products the vendor's invoice listed that weren't part of this PO)
+  // resolve the same way Local Purchase resolves its free-text items: an explicit Item Code
+  // merges into that exact Inventory item (validated up front so a typo'd code never silently
+  // fails to merge instead of creating a duplicate); no code falls back to an exact
+  // case-insensitive name match; no match at all creates a brand-new Inventory item so the
+  // goods still "arrive" in stock instead of being silently dropped, mirroring
+  // addLocalPurchaseStock above.
+  if (extraLines.length) {
+    const codesEntered = [...new Set(extraLines.map((li) => String(li.itemCode || '').trim().toUpperCase()).filter(Boolean))];
+    if (codesEntered.length) {
+      const found = await InventoryItem.find({ itemCode: { $in: codesEntered }, deletedAt: null }).select('itemCode');
+      const foundCodes = new Set(found.map((f) => f.itemCode));
+      const missing = codesEntered.filter((c) => !foundCodes.has(c));
+      if (missing.length) return next(new AppError(`No item found with code(s): ${missing.join(', ')}`, 400));
+    }
+
+    for (const li of extraLines) {
+      const name = String(li.itemName || '').trim();
+      const qty = Number(li.receivedQty) || 0;
+      if (!name || qty <= 0) continue;
+      const codeRaw = String(li.itemCode || '').trim().toUpperCase();
+      let item = codeRaw ? await InventoryItem.findOne({ itemCode: codeRaw, deletedAt: null }) : null;
+      if (!item) {
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        item = await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null });
+      }
+      if (!item) {
+        const itemCode = await generateCode('ITEM');
+        item = await InventoryItem.create({
+          itemCode,
+          itemName: name,
+          itemType: 'standard',
+          unit: aiService.normalizeUnit(li.unit) || 'Pcs',
+          currentStock: 0,
+          createdBy: req.user._id,
+        });
+      }
+      lines.push({
+        itemId: item._id,
+        itemName: item.itemName,
+        orderedQty: 0,
+        receivedQty: qty,
+        reason: li.reason || '',
+        hsn: li.hsn || '',
+        gst: li.gst || '',
+        purchasePrice: li.purchasePrice,
+        gstPercent: li.gstPercent,
+        priceType: li.priceType,
+        extra: true,
+      });
+    }
+  }
+
   const missedBy = ['vendor', 'lorry'].includes(req.body.missedBy) ? req.body.missedBy : null;
   const vendorMissedAction = ['new_order', 'attach_upcoming'].includes(req.body.vendorMissedAction) ? req.body.vendorMissedAction : null;
 
-  order.receivedItems = lines.map((li) => ({
-    itemId: li.itemId || undefined,
-    itemName: li.itemName,
-    orderedQty: Number(li.orderedQty) || 0,
-    receivedQty: Number(li.receivedQty) || 0,
-    missingQty: Math.max(0, (Number(li.orderedQty) || 0) - (Number(li.receivedQty) || 0)),
-    reason: li.reason || '',
-    hsn: li.hsn || '',
-    gst: li.gst || '',
-  }));
+  // Back out the taxable (GST-exclusive) unit cost regardless of how the user marked this
+  // line's price — 'inclusive' means the entered purchasePrice already has GST baked in.
+  const toBasePrice = (rawPrice, gstPercent, priceType) => {
+    const price = Number(rawPrice) || 0;
+    const gst = Number(gstPercent) || 0;
+    return priceType === 'inclusive' && gst > 0 ? price / (1 + gst / 100) : price;
+  };
+
+  order.receivedItems = lines.map((li) => {
+    const priceType = li.priceType === 'inclusive' ? 'inclusive' : 'exclusive';
+    const gstPercent = Number(li.gstPercent) || 0;
+    const purchasePrice = toBasePrice(li.purchasePrice, gstPercent, priceType);
+    return {
+      itemId: li.itemId || undefined,
+      itemName: li.itemName,
+      orderedQty: Number(li.orderedQty) || 0,
+      receivedQty: Number(li.receivedQty) || 0,
+      missingQty: Math.max(0, (Number(li.orderedQty) || 0) - (Number(li.receivedQty) || 0)),
+      reason: li.reason || '',
+      hsn: li.hsn || '',
+      gst: li.gst || '',
+      purchasePrice,
+      gstPercent,
+      priceType,
+      extra: !!li.extra,
+    };
+  });
   const isPartial = order.receivedItems.some((li) => li.missingQty > 0);
 
   order.dispatchStatus = isPartial ? 'Partially Received' : 'Received';
@@ -387,8 +517,15 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
       purchaseDate: Date.now(),
       qty: li.receivedQty,
       remainingQty: li.receivedQty,
+      purchasePrice: li.purchasePrice || 0,
+      gstPercent: li.gstPercent || 0,
+      priceType: li.priceType || 'exclusive',
     });
     item.currentStock = before + li.receivedQty;
+    // Mirror the latest batch's cost/GST onto the item for list/detail display — full
+    // per-vendor price history stays on purchaseBatches above.
+    if (li.purchasePrice) item.purchasePrice = li.purchasePrice;
+    if (li.gstPercent) item.gstPercent = li.gstPercent;
     await item.save({ validateBeforeSave: false });
     await StockMovement.create({
       itemId: item._id,
@@ -402,7 +539,7 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
       vendorId: vendorId || undefined,
       vendorName,
       purchaseDate: Date.now(),
-      supplyPrice: li.orderedQty ? order.amount / li.orderedQty : undefined,
+      supplyPrice: li.purchasePrice || (li.orderedQty ? order.amount / li.orderedQty : undefined),
       approvalStatus: 'Approved',
       approvedBy: req.user._id,
       approvedAt: Date.now(),
@@ -462,8 +599,37 @@ exports.resolveMissingOrder = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: order });
 });
 
+// POST /api/purchase/orders/:id/scan-lr — the lorry receipt file is already on Cloudinary
+// (uploaded via the LR Dragger); scan it with AI to extract LR number, transport, and the
+// Bill Total Amount so Purchase doesn't have to key them in by hand.
+exports.scanLR = asyncHandler(async (req, res, next) => {
+  const { fileUrl, mimetype, originalName } = req.body;
+  if (!fileUrl) return next(new AppError('fileUrl is required', 400));
+
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) return next(new AppError('AI is not configured — add an API key in Settings', 400));
+
+  let extracted;
+  try {
+    extracted = await aiService.extractLorryReceiptFields({
+      apiKey,
+      model: config.model,
+      file: { url: fileUrl, mimetype: mimetype || 'application/pdf', originalName: originalName || 'lr.pdf' },
+    });
+  } catch (err) {
+    return next(new AppError(err.message || 'AI extraction failed', err.statusCode || 502));
+  }
+
+  // The LR's freight/amount-charged line IS the bill's total amount — comes back as
+  // printed (may include a currency symbol/commas), so strip to a plain number.
+  const billTotalAmount = Number(String(extracted.freight || '').replace(/[^0-9.]/g, '')) || 0;
+
+  res.status(200).json({ success: true, data: { ...extracted, billTotalAmount } });
+});
+
 exports.uploadLR = asyncHandler(async (req, res, next) => {
-  const { lrNumber, trackingUrl, expectedDeliveryDate, paymentStatus, proofUrl } = req.body;
+  const { lrNumber, trackingUrl, expectedDeliveryDate, paymentStatus, proofUrl, billTotalAmount } = req.body;
   const order = await PurchaseOrder.findByIdAndUpdate(
     req.params.id,
     {
@@ -473,6 +639,9 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
       ...(!req.file && proofUrl && { lrFileUrl: proofUrl }),
       ...(expectedDeliveryDate && { expectedDeliveryDate }),
       ...(paymentStatus && { lrPaymentStatus: paymentStatus }),
+      // Bill Total Amount from the LR copy — this, not the vendor's goods `amount`, is
+      // what's payable to the transporter (see PurchaseOrder.billTotalAmount).
+      ...(billTotalAmount !== undefined && billTotalAmount !== '' && { billTotalAmount: Number(billTotalAmount) || 0 }),
       dispatchStatus: 'In Transit',
     },
     { new: true }
@@ -484,8 +653,8 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
   // (financial.controller.js payLrPayment) doesn't inherit a stale balance. A
   // resubmit that leaves the field on 'Partial Paid' (Finance already part-paid it
   // via that same screen) intentionally skips this and leaves lrPaidAmount as-is.
-  if (paymentStatus === 'Paid' && order.lrPaidAmount !== order.amount) {
-    order.lrPaidAmount = order.amount || 0;
+  if (paymentStatus === 'Paid' && order.lrPaidAmount !== order.billTotalAmount) {
+    order.lrPaidAmount = order.billTotalAmount || 0;
     await order.save({ validateBeforeSave: false });
   } else if (paymentStatus === 'Not Paid' && order.lrPaidAmount) {
     order.lrPaidAmount = 0;
@@ -494,14 +663,16 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
 
   // Raise/refresh the matching Dispatch "Pick Up Order" entry — this is what makes the
   // shipment show up in Dispatch's Pick Up Order / Today's Pickup Orders / All Orders
-  // tabs, keyed off this LR's expected delivery date.
+  // tabs, keyed off this LR's expected delivery date. `amount` here is the LR copy's Bill
+  // Total Amount, not the vendor's goods amount — that's what the pickup person/Finance
+  // actually pays out at pickup time.
   const commonFields = {
     purchaseOrderId: order._id,
     orderCode: order.poCode,
     clientName: order.vendorId?.name || '-',
     destination: order.vendorId?.name ? `${order.vendorId.name} (Vendor)` : '-',
     scheduledDate: order.expectedDeliveryDate || undefined,
-    amount: order.amount,
+    amount: order.billTotalAmount || 0,
   };
   const existingPickup = await PickupOrder.findOne({ purchaseOrderId: order._id });
   if (existingPickup) {
@@ -557,13 +728,24 @@ async function addLocalPurchaseStock(lp, userId) {
         item = await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), itemType, deletedAt: null });
       }
       const purchaseDate = lp.invoiceDate || lp.createdAt || Date.now();
-      const supplyPrice = (Number(it.amount) || 0) / qty;
-      const batch = { vendorId: lp.vendorId || undefined, vendorName: lp.vendorName, purchaseDate, qty, remainingQty: qty };
+      const lineRate = (Number(it.amount) || 0) / qty;
+      const gstPercent = Number(it.gstPercent) || 0;
+      const priceType = it.priceType === 'inclusive' ? 'inclusive' : 'exclusive';
+      // Taxable (GST-exclusive) unit cost credited to the batch — back it out of the line
+      // total when the amount was entered/scanned as GST-inclusive.
+      const supplyPrice = priceType === 'inclusive' && gstPercent > 0 ? lineRate / (1 + gstPercent / 100) : lineRate;
+      const batch = {
+        vendorId: lp.vendorId || undefined, vendorName: lp.vendorName, purchaseDate, qty, remainingQty: qty,
+        purchasePrice: supplyPrice, gstPercent, priceType,
+      };
       const qtyBefore = item ? item.currentStock : 0;
 
       if (item) {
         item.purchaseBatches.push(batch);
         item.currentStock = qtyBefore + qty;
+        // Mirror the latest batch's cost/GST onto the item for list/detail display.
+        if (supplyPrice) item.purchasePrice = supplyPrice;
+        if (gstPercent) item.gstPercent = gstPercent;
         await item.save({ validateBeforeSave: false });
       } else {
         const itemCode = await generateCode('ITEM');
@@ -571,8 +753,9 @@ async function addLocalPurchaseStock(lp, userId) {
           itemCode,
           itemName: name,
           itemType,
-          unit: it.unit || (itemType === 'bulk' ? 'Litres' : 'Pcs'),
+          unit: aiService.normalizeUnit(it.unit) || (itemType === 'bulk' ? 'Litres' : 'Pcs'),
           purchasePrice: supplyPrice,
+          gstPercent,
           currentStock: qty,
           vendorId: lp.vendorId || undefined,
           purchaseBatches: [batch],

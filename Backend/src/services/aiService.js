@@ -28,6 +28,37 @@ function encryptApiKey(rawKey) {
   return encrypt(rawKey);
 }
 
+// Invoices spell the same unit a dozen different ways ("Ltr", "LTRS", "liter", "L") —
+// canonicalize the common ones to what Inventory's own unit fields/dropdowns expect
+// (see InventoryItem.js unit, and the Litres/Kg options on bulk items) so a scanned
+// line matches an existing item's unit instead of silently drifting into a near-duplicate.
+const UNIT_ALIASES = {
+  ltr: 'Litres', ltrs: 'Litres', liter: 'Litres', liters: 'Litres', litre: 'Litres', litres: 'Litres', l: 'Litres',
+  ml: 'ml', milliliter: 'ml', millilitre: 'ml', mls: 'ml',
+  kg: 'Kg', kgs: 'Kg', kilogram: 'Kg', kilograms: 'Kg',
+  gm: 'Gram', gms: 'Gram', gram: 'Gram', grams: 'Gram', g: 'Gram',
+  pc: 'Pcs', pcs: 'Pcs', piece: 'Pcs', pieces: 'Pcs', no: 'Pcs', nos: 'Pcs', unit: 'Pcs', units: 'Pcs',
+  box: 'Box', boxes: 'Box',
+  btl: 'Bottle', bottle: 'Bottle', bottles: 'Bottle',
+  pkt: 'Packet', packet: 'Packet', packets: 'Packet',
+  dz: 'Dozen', dzn: 'Dozen', dozen: 'Dozen',
+};
+function normalizeUnit(raw) {
+  const trimmed = String(raw || '').trim();
+  if (!trimmed) return '';
+  const key = trimmed.toLowerCase().replace(/[.\s]/g, '');
+  return UNIT_ALIASES[key] || trimmed;
+}
+
+// Some invoices print two phone numbers (landline + mobile, or owner + shop)
+// separated by "|", "/", "," or "and"/"or". Only one number belongs in a
+// single phone field, so keep just the first one the model returned.
+function pickPrimaryPhone(raw) {
+  if (!raw) return '';
+  const first = String(raw).split(/\s*(?:\||\/|,|&|\band\b|\bor\b)\s*/i)[0];
+  return first.trim();
+}
+
 // ─── OpenAI HTTP calls (native fetch — Node 18+, same approach as callGstApi) ──
 
 async function openAiRequest(path, { apiKey, method = 'GET', body, timeoutMs = 30000 }) {
@@ -197,7 +228,7 @@ async function compareQuotationFiles({ apiKey, model, files }) {
 
 const VENDOR_EXTRACTION_PROMPT = `You are a data-entry assistant extracting vendor/supplier onboarding details from an uploaded document (invoice, letterhead, business card, GST certificate, cancelled cheque, or bank passbook page). Extract:
 - name: the vendor/company name printed on the document
-- phone: contact phone number (include country code if printed)
+- phone: contact phone number (include country code if printed) — if more than one number is printed, return only the primary one (the first, or the one labelled mobile/contact), never both
 - email: contact email address
 - taxId: GST number or PAN, whichever is printed
 - address: postal address (include city/state/pincode if available)
@@ -250,7 +281,7 @@ async function extractVendorFields({ apiKey, model, file }) {
 
   return {
     name: parsed.name || '',
-    phone: parsed.phone || '',
+    phone: pickPrimaryPhone(parsed.phone),
     email: parsed.email || '',
     taxId: parsed.taxId || '',
     address: parsed.address || '',
@@ -270,15 +301,18 @@ const INVOICE_EXTRACTION_PROMPT = `You are a data-entry assistant extracting det
 - invoiceNo: the invoice/bill number printed on the document
 - invoiceDate: the invoice/bill date printed on the document, formatted YYYY-MM-DD if a date is present, else ""
 - vendorName: the seller/vendor/shop name printed on the document
-- vendorPhone: the vendor's contact phone number, if printed
+- vendorPhone: the vendor's contact phone number, if printed — if more than one number is printed, return only the primary one (the first, or the one labelled mobile/contact), never both
 - vendorAddress: the vendor's postal address, if printed
 - vendorGST: the vendor's GST number or PAN, if printed
-- items: an array of every line item on the invoice, each as { name, qty, unit, amount, hsn, gst } — name is the item/product description, qty is the quantity as a plain number, unit is the unit of measure (e.g. "Pcs", "Kg", "Box"), defaulting to "Pcs" if not stated, amount is the line total for that item as a plain number (no currency symbols/commas), hsn is the HSN/SAC code printed for that line item if present else "", gst is the GST rate/tax percentage printed for that line item if present (e.g. "18%") else ""
-- gstAmount: the total GST/tax amount printed on the invoice as a plain number (no currency symbols/commas) — sum of CGST+SGST or IGST if shown separately, or the single GST/tax total line if only one is printed
+- items: an array of every line item on the invoice, each as { name, qty, unit, rate, amount, hsn, gst } — name is the item/product description, qty is the quantity as a plain number, unit is the unit of measure exactly as printed for that line — read it from a dedicated Unit/UOM column if present, or from an abbreviation next to the quantity/description (e.g. "10 Ltr", "5 Kg", "500 ml", "20 Nos", "3 Box", "2 Dozen"); common units include Pcs, Nos, Kg, Gram, Litres, ml, Box, Bottle, Packet, Dozen, Set, Bag, Roll, Meter — only use "Pcs" as a last resort when the invoice truly gives no unit information anywhere on that line, never as a default guess for liquids/oils/weighed goods, rate is the per-unit price/rate printed for that line item as a plain number (no currency symbols/commas) — if no rate column is printed but amount and qty are, leave rate as 0 (it will be derived from amount/qty), amount is the line total for that item as a plain number (no currency symbols/commas), hsn is the HSN/SAC code printed for that line item if present else "", gst is the GST rate/tax percentage printed for that line item if present (e.g. "18%") else ""
+- cgstAmount: the CGST amount printed on the invoice as a plain number (no currency symbols/commas), 0 if not printed
+- sgstAmount: the SGST amount printed on the invoice as a plain number (no currency symbols/commas), 0 if not printed
+- igstAmount: the IGST amount printed on the invoice as a plain number (no currency symbols/commas), 0 if not printed — invoices print either CGST+SGST (same state) or IGST (inter-state), never both
+- gstAmount: the total GST/tax amount printed on the invoice as a plain number (no currency symbols/commas) — this should equal cgstAmount+sgstAmount+igstAmount; if the invoice only prints a single combined GST/tax total line (no CGST/SGST/IGST breakdown), put that value here and leave cgstAmount/sgstAmount/igstAmount as 0
 - totalAmount: the grand total amount of the invoice as a plain number (no currency symbols/commas)
 
 Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
-{ "invoiceNo": "", "invoiceDate": "", "vendorName": "", "vendorPhone": "", "vendorAddress": "", "vendorGST": "", "items": [ { "name": "", "qty": 0, "unit": "Pcs", "amount": 0, "hsn": "", "gst": "" } ], "gstAmount": 0, "totalAmount": 0 }
+{ "invoiceNo": "", "invoiceDate": "", "vendorName": "", "vendorPhone": "", "vendorAddress": "", "vendorGST": "", "items": [ { "name": "", "qty": 0, "unit": "Pcs", "rate": 0, "amount": 0, "hsn": "", "gst": "" } ], "cgstAmount": 0, "sgstAmount": 0, "igstAmount": 0, "gstAmount": 0, "totalAmount": 0 }
 If a field cannot be determined from the document, use an empty string ("" ), 0 for numeric fields, or [] for items — do not guess or invent data.`;
 
 // file: { url, originalName, mimetype } — Cloudinary-hosted, already uploaded by multer.
@@ -323,26 +357,44 @@ async function extractInvoiceFields({ apiKey, model, file }) {
 
   const items = Array.isArray(parsed.items)
     ? parsed.items
-        .map((it) => ({
-          name: it.name || it.itemName || '',
-          qty: Number(it.qty) || 0,
-          unit: it.unit || 'Pcs',
-          amount: Number(it.amount) || 0,
-          hsn: it.hsn || it.hsnCode || '',
-          gst: it.gst || it.gstRate || '',
-        }))
+        .map((it) => {
+          const qty = Number(it.qty) || 0;
+          const amount = Number(it.amount) || 0;
+          // Fall back to amount/qty when the invoice has no explicit per-unit rate column.
+          const rate = Number(it.rate) || (qty ? amount / qty : 0);
+          return {
+            name: it.name || it.itemName || '',
+            qty,
+            unit: normalizeUnit(it.unit) || 'Pcs',
+            rate,
+            amount,
+            hsn: it.hsn || it.hsnCode || '',
+            gst: it.gst || it.gstRate || '',
+          };
+        })
         .filter((it) => it.name)
     : [];
+
+  const cgstAmount = Number(parsed.cgstAmount) || 0;
+  const sgstAmount = Number(parsed.sgstAmount) || 0;
+  const igstAmount = Number(parsed.igstAmount) || 0;
+  const breakdownTotal = cgstAmount + sgstAmount + igstAmount;
+  // Prefer the CGST+SGST/IGST breakdown when the invoice printed one — more reliable than
+  // trusting the AI's own addition on the single combined "gstAmount" line.
+  const gstAmount = breakdownTotal > 0 ? breakdownTotal : (Number(parsed.gstAmount) || 0);
 
   return {
     invoiceNo: parsed.invoiceNo || '',
     invoiceDate: parsed.invoiceDate || '',
     vendorName: parsed.vendorName || '',
-    vendorPhone: parsed.vendorPhone || '',
+    vendorPhone: pickPrimaryPhone(parsed.vendorPhone),
     vendorAddress: parsed.vendorAddress || '',
     vendorGST: parsed.vendorGST || '',
     items,
-    gstAmount: Number(parsed.gstAmount) || 0,
+    cgstAmount,
+    sgstAmount,
+    igstAmount,
+    gstAmount,
     totalAmount: Number(parsed.totalAmount) || items.reduce((s, it) => s + it.amount, 0),
   };
 }
@@ -514,5 +566,6 @@ module.exports = {
   extractInvoiceFields,
   extractLorryReceiptFields,
   generateTaskInsight,
+  normalizeUnit,
   DEFAULT_MODEL,
 };

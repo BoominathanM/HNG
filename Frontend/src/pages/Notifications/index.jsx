@@ -12,6 +12,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { enqueueSnackbar } from 'notistack';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import { formatQty } from '../../utils/numberFormat';
 import {
   useGetNotificationsQuery,
   useGetStockAlertsQuery,
@@ -133,7 +134,7 @@ export default function Notifications() {
       _id: item._id,
       type: 'low_stock',
       title: item.currentStock === 0 ? 'Out of Stock' : 'Low Stock Alert',
-      message: `${item.itemName} — ${item.currentStock}/${item.minStock} ${item.unit || 'units'}`,
+      message: `${item.itemName} — ${formatQty(item.currentStock)}/${formatQty(item.minStock)} ${item.unit || 'units'}`,
       isRead: false,
       isAlert: true,
     }));

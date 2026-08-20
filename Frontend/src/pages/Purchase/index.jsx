@@ -5,7 +5,7 @@ import usePageAccess from '../../hooks/usePageAccess';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space,
   DatePicker, Upload, InputNumber, Divider, List, Descriptions, Tabs, Avatar, Switch,
-  Tooltip, Badge, Popover, Dropdown, Checkbox, 
+  Tooltip, Badge, Popover, Dropdown, Checkbox, Radio, AutoComplete,
   Alert,
 } from 'antd';
 import {
@@ -34,6 +34,7 @@ import {
   useScanReceivedInvoiceMutation,
   useResolveMissingOrderMutation,
   useUploadPurchaseLRMutation,
+  useScanPurchaseLRMutation,
   useScanLocalPurchaseInvoiceMutation,
   useCreateLocalPurchaseMutation,
   useGetPurchasePersonsQuery,
@@ -53,10 +54,19 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import PhoneInput from '../../components/common/PhoneInput';
 import VendorBankFields from '../../components/common/VendorBankFields';
 import { emailRules, phoneValidator } from '../../utils/validation';
+import { formatQty } from '../../utils/numberFormat';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
+
+// Local Purchase item rows offer these as pick-first suggestions for the Unit field —
+// covers liquids/weighed goods (Litres/Kg) as well as piece-counted goods (Pcs), so
+// oil/paste-type purchases aren't stuck defaulting to Pcs. Still free-text editable
+// (AutoComplete, not a closed Select) for anything not in this list.
+const COMMON_UNIT_OPTIONS = [
+  'Litres', 'Kg', 'ml', 'Gram', 'Pcs', 'Box', 'Bottle', 'Packet', 'Dozen', 'Set', 'Bag',
+].map((u) => ({ value: u }));
 
 // All data loaded from backend API via useEffect
 
@@ -150,6 +160,7 @@ export default function Purchase() {
   const [scanReceivedInvoiceMutation] = useScanReceivedInvoiceMutation();
   const [resolveMissingOrderMutation] = useResolveMissingOrderMutation();
   const [uploadPurchaseLR] = useUploadPurchaseLRMutation();
+  const [scanPurchaseLR] = useScanPurchaseLRMutation();
   const [createLocalPurchaseMutation] = useCreateLocalPurchaseMutation();
   const [scanLocalPurchaseInvoice] = useScanLocalPurchaseInvoiceMutation();
   const [createVendorMutation] = useCreateVendorMutation();
@@ -217,6 +228,7 @@ export default function Purchase() {
       lrNumber: o.lrNumber || null, lrFileUrl: o.lrFileUrl || null,
       expectedDeliveryDate: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
       lrPaymentStatus: o.lrPaymentStatus || null,
+      billTotalAmount: o.billTotalAmount || 0,
     }));
     if (mapped.length > 0) dispatch(setPurchaseOrders(mapped));
   }, [purchaseOrdersData]);
@@ -448,6 +460,7 @@ export default function Purchase() {
   // no way to re-attach it afterwards except re-opening Edit and re-uploading.
   const lrFileWatch = Form.useWatch('lr_file', lrUploadForm);
   const lrFileUploading = !!lrFileWatch?.fileList?.some((f) => f.status === 'uploading');
+  const [lrScanLoading, setLrScanLoading] = useState(false);
 
   /* ── "Verified by" for received orders ── */
   const [verifiedByName, setVerifiedByName] = useState('');
@@ -539,11 +552,25 @@ export default function Purchase() {
   const [invoiceScanLoading, setInvoiceScanLoading] = useState(false);
   const [invoiceScanned, setInvoiceScanned] = useState(false);
   const [invoiceProducts, setInvoiceProducts] = useState([]);
+  // Invoice lines the AI found that weren't part of this PO at all — surfaced separately so
+  // Purchase can still bring them into stock (via Item Code merge, or as a new item) instead of
+  // the vendor's extra goods silently never reaching Inventory.
+  const [extraInvoiceProducts, setExtraInvoiceProducts] = useState([]);
+  const [extraProductCodes, setExtraProductCodes] = useState({});
+  const [extraProductIncluded, setExtraProductIncluded] = useState({});
   const [productQtys, setProductQtys] = useState({});
   const [receivedInvoiceFile, setReceivedInvoiceFile] = useState(null);
   const [receivedConfirmLoading, setReceivedConfirmLoading] = useState(false);
   const [scannedInvoiceDetails, setScannedInvoiceDetails] = useState(null);
   const [productNotes, setProductNotes] = useState({});
+  // Purchase Price per invoice line, fetched from the AI scan and editable before confirming —
+  // credited onto this vendor's own purchaseBatches entry so multi-vendor/multi-price stock is
+  // costed batch-wise instead of overwriting one flat price on the item.
+  const [productPrices, setProductPrices] = useState({});
+  // Whether the fetched/entered Purchase Price already includes GST — 'exclusive' (default,
+  // matches how most invoices print a Rate column) or 'inclusive'. Applies to the whole
+  // invoice being received; the taxable base is backed out per-line using that line's GST%.
+  const [receivePriceType, setReceivePriceType] = useState('exclusive');
   const [partialReceived, setPartialReceived] = useState(false);
   const [missedBy, setMissedBy] = useState(null);
   const [vendorMissedAction, setVendorMissedAction] = useState(null);
@@ -586,8 +613,13 @@ export default function Purchase() {
     setReceivedTarget(record);
     setInvoiceScanned(false);
     setInvoiceProducts([]);
+    setExtraInvoiceProducts([]);
+    setExtraProductCodes({});
+    setExtraProductIncluded({});
     setProductQtys({});
     setProductNotes({});
+    setProductPrices({});
+    setReceivePriceType('exclusive');
     setPartialReceived(false);
     setMissedBy(null);
     setVendorMissedAction(null);
@@ -613,6 +645,7 @@ export default function Purchase() {
         itemId: it.itemId,
         name: it.itemName,
         hsn: it.hsn || '-', gst: it.gst || '-',
+        gstPercent: Number(it.gstPercent) || 0,
         originalQty: it.orderedQty,
         invoiceQty: it.invoiceQty ?? it.receivedQty,
         matched: !!it.matched,
@@ -620,8 +653,27 @@ export default function Purchase() {
       }));
       setInvoiceProducts(products);
       const qtys = {};
-      scannedItems.forEach((it, idx) => { qtys[products[idx].key] = it.receivedQty; });
+      const prices = {};
+      scannedItems.forEach((it, idx) => {
+        qtys[products[idx].key] = it.receivedQty;
+        prices[products[idx].key] = Number(it.price) || 0;
+      });
       setProductQtys(qtys);
+      setProductPrices(prices);
+      // Extra items on the invoice with no corresponding PO line — default to included (the
+      // vendor actually delivered them), pre-filled with the matched Inventory item's code
+      // when the AI's exact-name lookup found one so it merges automatically without the
+      // user having to hunt it down.
+      const extras = res?.data?.extraItems || [];
+      setExtraInvoiceProducts(extras);
+      const extraCodes = {};
+      const extraIncluded = {};
+      extras.forEach((e) => {
+        extraCodes[e.key] = e.matchedItemCode || '';
+        extraIncluded[e.key] = true;
+      });
+      setExtraProductCodes(extraCodes);
+      setExtraProductIncluded(extraIncluded);
       setInvoiceScanned(true);
       // Header fields (invoice no / vendor name / GST no / address / total amount) the AI
       // actually read off the uploaded document — surfaced separately from the item table so
@@ -634,6 +686,11 @@ export default function Purchase() {
         vendorPhone: res?.data?.vendorPhone || '',
         vendorAddress: res?.data?.vendorAddress || '',
         vendorGST: res?.data?.vendorGST || '',
+        amount: res?.data?.amount,
+        cgstAmount: res?.data?.cgstAmount,
+        sgstAmount: res?.data?.sgstAmount,
+        igstAmount: res?.data?.igstAmount,
+        gstAmount: res?.data?.gstAmount,
         totalAmount: res?.data?.totalAmount,
         vendorMismatch: !!res?.data?.vendorMismatch,
         poVendorName: res?.data?.poVendorName,
@@ -673,7 +730,24 @@ export default function Purchase() {
         reason: productNotes[p.key] || '',
         hsn: p.hsn && p.hsn !== '-' ? p.hsn : '',
         gst: p.gst && p.gst !== '-' ? p.gst : '',
+        purchasePrice: productPrices[p.key] || 0,
+        gstPercent: p.gstPercent || 0,
+        priceType: receivePriceType,
       }))));
+      const includedExtras = extraInvoiceProducts.filter((e) => extraProductIncluded[e.key]);
+      if (includedExtras.length) {
+        fd.append('extraItems', JSON.stringify(includedExtras.map((e) => ({
+          itemName: e.itemName,
+          receivedQty: e.qty,
+          unit: e.unit,
+          hsn: e.hsn && e.hsn !== '-' ? e.hsn : '',
+          gst: e.gst && e.gst !== '-' ? e.gst : '',
+          gstPercent: e.gstPercent || 0,
+          purchasePrice: e.price || 0,
+          priceType: receivePriceType,
+          itemCode: (extraProductCodes[e.key] || '').trim(),
+        }))));
+      }
       if (missedBy) fd.append('missedBy', missedBy);
       if (vendorMissedAction) fd.append('vendorMissedAction', vendorMissedAction);
       if (receivedInvoiceFile) fd.append('invoice', receivedInvoiceFile);
@@ -682,6 +756,12 @@ export default function Purchase() {
       if (scannedInvoiceDetails?.totalAmount) fd.append('totalAmount', scannedInvoiceDetails.totalAmount);
       if (scannedInvoiceDetails?.vendorGST) fd.append('vendorGST', scannedInvoiceDetails.vendorGST);
       if (scannedInvoiceDetails?.vendorAddress) fd.append('vendorAddress', scannedInvoiceDetails.vendorAddress);
+      // CGST/SGST/IGST breakdown as printed on the invoice — shown to the user above but
+      // previously never sent, so the GST Report had no real Input GST to read for this order.
+      if (scannedInvoiceDetails?.cgstAmount) fd.append('cgstAmount', scannedInvoiceDetails.cgstAmount);
+      if (scannedInvoiceDetails?.sgstAmount) fd.append('sgstAmount', scannedInvoiceDetails.sgstAmount);
+      if (scannedInvoiceDetails?.igstAmount) fd.append('igstAmount', scannedInvoiceDetails.igstAmount);
+      if (scannedInvoiceDetails?.gstAmount) fd.append('gstAmount', scannedInvoiceDetails.gstAmount);
       await receiveOrderMutation({ id: receivedTarget.key, formData: fd }).unwrap();
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record receipt', { variant: 'error' });
@@ -723,6 +803,9 @@ export default function Purchase() {
   const [localPurchaseInvoiceFile, setLocalPurchaseInvoiceFile] = useState(null);
   const [localPurchaseScannedDetails, setLocalPurchaseScannedDetails] = useState(null);
   const [localPurchaseNewVendorDetected, setLocalPurchaseNewVendorDetected] = useState(false);
+  // Whether each line's Amount was entered/scanned as GST-inclusive or -exclusive — applies to
+  // the whole invoice, matches the same toggle on the Purchase Order Received Order modal.
+  const [localPurchasePriceType, setLocalPurchasePriceType] = useState('exclusive');
   const localPurchaseNotifyRef = useRef({});
   const [localPurchaseDetailView, setLocalPurchaseDetailView] = useState(null);
 
@@ -1205,7 +1288,10 @@ export default function Purchase() {
         (extracted.vendorPhone && v.phone === extracted.vendorPhone)
       );
 
-      const items = (extracted.items || []).map(it => ({ name: it.name, qty: it.qty, unit: it.unit, amount: it.amount }));
+      const items = (extracted.items || []).map(it => ({
+        name: it.name, qty: it.qty, unit: it.unit, amount: it.amount,
+        gstPercent: it.gst ? Number(String(it.gst).replace(/[^0-9.]/g, '')) || 0 : 0,
+      }));
       const scanned = {
         invoiceNo: extracted.invoiceNo || 'INV-' + Date.now(),
         invoiceDate: extracted.invoiceDate || '',
@@ -1227,7 +1313,7 @@ export default function Purchase() {
       if (scanned.vendorPhone) fieldValues.vendorPhone = scanned.vendorPhone;
       if (scanned.totalAmount) fieldValues.totalAmount = scanned.totalAmount;
       if (scanned.gstAmount) fieldValues.gstAmount = scanned.gstAmount;
-      if (items.length) fieldValues.items = items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount, itemType: 'standard' }));
+      if (items.length) fieldValues.items = items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount, gstPercent: it.gstPercent, itemType: 'standard' }));
       localPurchaseForm.setFieldsValue(fieldValues);
 
       enqueueSnackbar(
@@ -1253,7 +1339,7 @@ export default function Purchase() {
       invoiceFile: localPurchaseInvoiceFile?.name || null,
       vendorName: values.vendorName || localPurchaseScannedDetails?.vendorName || '',
       vendorPhone: values.vendorPhone || localPurchaseScannedDetails?.vendorPhone || '',
-      items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0, itemCode: String(it.itemCode || '').trim().toUpperCase() || undefined, itemType: it.itemType === 'bulk' ? 'bulk' : 'standard' })),
+      items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0, gstPercent: Number(it.gstPercent) || 0, itemCode: String(it.itemCode || '').trim().toUpperCase() || undefined, itemType: it.itemType === 'bulk' ? 'bulk' : 'standard' })),
       totalAmount: values.totalAmount || localPurchaseScannedDetails?.totalAmount || 0,
       gstAmount: Number(values.gstAmount ?? localPurchaseScannedDetails?.gstAmount) || 0,
       paymentType: values.paymentType || 'credit',
@@ -1323,6 +1409,8 @@ export default function Purchase() {
           qty: Number(it.qty) || 0,
           unit: it.unit || 'Pcs',
           amount: Number(it.amount) || 0,
+          gstPercent: Number(it.gstPercent) || 0,
+          priceType: localPurchasePriceType,
           itemType: it.itemType === 'bulk' ? 'bulk' : 'standard',
         })),
         totalAmount: Number(newLP.totalAmount) || 0,
@@ -1349,6 +1437,7 @@ export default function Purchase() {
     setLocalPurchaseNewVendorDetected(false);
     setLocalPurchasePaymentType('credit');
     setLocalPurchasePaidBy('');
+    setLocalPurchasePriceType('exclusive');
     enqueueSnackbar('Local purchase recorded successfully!', { variant: 'success' });
     };
 
@@ -1971,7 +2060,7 @@ export default function Purchase() {
                         columns={[
                           { title: 'Item Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
                           { title: 'Category', dataIndex: 'category', key: 'category' },
-                          { title: 'Stock Count', dataIndex: 'current', key: 'current', render: (v, r) => <Text style={{ color: v <= r.min ? '#ff4d4f' : 'inherit' }}>{v}{r.unitValue ? <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>({r.unitValue} {r.unit}/pc)</Text> : null}</Text> },
+                          { title: 'Stock Count', dataIndex: 'current', key: 'current', render: (v, r) => <Text style={{ color: v <= r.min ? '#ff4d4f' : 'inherit' }}>{formatQty(v)}{r.unitValue ? <Text type="secondary" style={{ fontSize: 10, marginLeft: 4 }}>({formatQty(r.unitValue)} {r.unit}/pc)</Text> : null}</Text> },
                           { title: 'Min. Required', dataIndex: 'min', key: 'min', render: (v) => `${v}` },
                           {
                             title: 'Supplier', key: 'supplier',
@@ -2050,6 +2139,7 @@ export default function Purchase() {
                                 lrNumber: linkedOrder.lrNumber,
                                 deliveryDate: linkedOrder.expectedDeliveryDate,
                                 paidStatus: linkedOrder.lrPaymentStatus || 'Not Paid',
+                                billTotalAmount: linkedOrder.billTotalAmount || 0,
                               } : null);
                               if (lr) {
                                 return (
@@ -2060,7 +2150,7 @@ export default function Purchase() {
                                     <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
                                     <Text type="secondary" style={{ fontSize: 10 }}>Delivery: {lr.deliveryDate}</Text>
                                     <Button size="small" icon={<EditOutlined />}
-                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus }); setShowLRUploadModal(true); }}
+                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus, bill_total_amount: lr.billTotalAmount || linkedOrder.billTotalAmount || 0 }); setShowLRUploadModal(true); }}
                                       style={{ fontSize: 11, height: 22, padding: '0 8px' }}>Edit</Button>
                                   </Space>
                                 );
@@ -2468,6 +2558,7 @@ export default function Purchase() {
                                 lrNumber: linkedOrder.lrNumber,
                                 deliveryDate: linkedOrder.expectedDeliveryDate,
                                 paidStatus: linkedOrder.lrPaymentStatus || 'Not Paid',
+                                billTotalAmount: linkedOrder.billTotalAmount || 0,
                               } : null);
                               if (lr) {
                                 return (
@@ -2478,7 +2569,7 @@ export default function Purchase() {
                                     <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
                                     <Text type="secondary" style={{ fontSize: 10 }}>Delivery: {lr.deliveryDate}</Text>
                                     <Button size="small" icon={<EditOutlined />}
-                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus }); setShowLRUploadModal(true); }}
+                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus, bill_total_amount: lr.billTotalAmount || linkedOrder.billTotalAmount || 0 }); setShowLRUploadModal(true); }}
                                       style={{ fontSize: 11, height: 22, padding: '0 8px' }}>Edit</Button>
                                   </Space>
                                 );
@@ -3268,6 +3359,7 @@ export default function Purchase() {
                                 setLocalPurchaseScannedDetails(null);
                                 setLocalPurchaseNewVendorDetected(false);
                                 setLocalPurchasePaymentType('credit');
+                                setLocalPurchasePriceType('exclusive');
                                 setShowAddLocalPurchaseModal(true);
                               }}
                             >
@@ -3911,7 +4003,7 @@ export default function Purchase() {
           </div>
         }
         open={showAddLocalPurchaseModal}
-        onCancel={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); }}
+        onCancel={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); setLocalPurchasePriceType('exclusive'); }}
         footer={null}
         width={580}
         centered
@@ -4005,19 +4097,23 @@ export default function Purchase() {
 
           {/* Items Purchased — editable list, auto-filled from AI scan */}
           <Text strong style={{ display: 'block', marginBottom: 8, fontSize: 13 }}>Items / Products Purchased</Text>
-          <Form.List name="items" initialValue={[{ itemName: '', qty: 1, unit: 'Pcs', amount: 0, itemCode: '', itemType: 'standard' }]}>
+          <Form.List name="items" initialValue={[{ itemName: '', qty: 1, unit: undefined, amount: 0, gstPercent: 0, itemCode: undefined, itemType: 'standard' }]}>
             {(fields, { add, remove }) => (
               <div style={{ marginBottom: 16 }}>
                 {fields.map(({ key, name, ...restField }) => {
                   const typedName = String(watchedLPItems?.[name]?.itemName || '').trim().toLowerCase();
                   const typedCode = String(watchedLPItems?.[name]?.itemCode || '').trim();
                   const rowItemType = watchedLPItems?.[name]?.itemType === 'bulk' ? 'bulk' : 'standard';
-                  const rowMatches = !typedCode && typedName.length >= 3
-                    ? inventoryItems.filter((i) => {
-                        const iName = (i.name || '').toLowerCase();
-                        return iName && (iName.includes(typedName) || typedName.includes(iName));
-                      }).slice(0, 2)
-                    : [];
+                  // Exact (case-insensitive) name match within the same stock type — when this
+                  // exists, the line will auto-merge into it by name even without an Item Code.
+                  const exactMatch = typedName.length > 0
+                    ? inventoryItems.find((i) => i.itemType === rowItemType && (i.name || '').toLowerCase() === typedName)
+                    : null;
+                  // Item Code dropdown, restricted to the same stock type (Direct/Bulk) since
+                  // the backend rejects a cross-type merge — same rule as the collision hint.
+                  const codeOptions = inventoryItems
+                    .filter((i) => i.itemType === rowItemType)
+                    .map((i) => ({ value: i.code, label: `${i.code} — ${i.name} (${formatQty(i.current)} ${i.unit})` }));
                   return (
                     <div key={key} style={{ marginBottom: 8, padding: '8px 8px 2px', borderRadius: 8, border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}` }}>
                       <Row gutter={6} wrap={false} align="middle">
@@ -4037,9 +4133,11 @@ export default function Purchase() {
                                 items[name] = {
                                   ...row,
                                   itemType: v,
-                                  unit: v === 'bulk'
-                                    ? (['Litres', 'Kg'].includes(row.unit) ? row.unit : 'Litres')
-                                    : (row.unit === 'Litres' || row.unit === 'Kg' ? 'Pcs' : row.unit),
+                                  // Bulk is restricted to Litres/Kg (its Select only offers those) — fall back to
+                                  // Litres if the row didn't already hold one. Switching back to Direct Stock
+                                  // keeps whatever unit was set — Litres/Kg are valid Direct units too (e.g. oil
+                                  // sold by the packet still measured in Litres), so it's never force-reset to Pcs.
+                                  unit: v === 'bulk' && !['Litres', 'Kg'].includes(row.unit) ? 'Litres' : row.unit,
                                 };
                                 localPurchaseForm.setFieldsValue({ items });
                               }}
@@ -4058,12 +4156,12 @@ export default function Purchase() {
                             <InputNumber min={0} placeholder="Qty" style={{ width: '100%' }} />
                           </Form.Item>
                         </Col>
-                        <Col flex="0 0 64px">
-                          <Form.Item {...restField} name={[name, 'unit']} style={{ marginBottom: 6 }}>
+                        <Col flex="0 0 84px">
+                          <Form.Item {...restField} name={[name, 'unit']} style={{ marginBottom: 6 }} rules={[{ required: true, message: 'Unit required' }]}>
                             {rowItemType === 'bulk' ? (
                               <Select size="small" options={[{ value: 'Litres', label: 'Litres' }, { value: 'Kg', label: 'Kg' }]} placeholder="Unit" />
                             ) : (
-                              <Input placeholder="Unit" />
+                              <AutoComplete size="small" options={COMMON_UNIT_OPTIONS} filterOption={(input, opt) => opt.value.toLowerCase().startsWith(input.toLowerCase())} placeholder="Litres / Kg / Pcs…" />
                             )}
                           </Form.Item>
                         </Col>
@@ -4072,32 +4170,56 @@ export default function Purchase() {
                             <InputNumber min={0} prefix="₹" placeholder="Amt" style={{ width: '100%' }} />
                           </Form.Item>
                         </Col>
+                        <Col flex="0 0 64px">
+                          <Form.Item {...restField} name={[name, 'gstPercent']} style={{ marginBottom: 6 }} tooltip="GST% for this line — used to work out the taxable (GST-exclusive) purchase price credited to the batch.">
+                            <InputNumber min={0} max={100} suffix="%" placeholder="GST" style={{ width: '100%' }} />
+                          </Form.Item>
+                        </Col>
                         <Col flex="auto" style={{ minWidth: 0 }}>
-                          <Form.Item {...restField} name={[name, 'itemCode']} style={{ marginBottom: 6 }} tooltip="Enter an existing item's code to merge this stock into it instead of creating a duplicate item. The existing item's stock type (Direct/Bulk) must match what's selected above. Leave blank to add as new.">
-                            <Input placeholder="Item Code (optional — merges into existing item)" />
+                          <Form.Item {...restField} name={[name, 'itemCode']} style={{ marginBottom: 6 }} tooltip="Pick an existing item to merge this stock into it instead of creating a duplicate. Only items of the same stock type (Direct/Bulk) selected above are listed. Leave blank to add as new.">
+                            <Select
+                              showSearch
+                              allowClear
+                              placeholder="Item Code (optional — merges into existing item)"
+                              options={codeOptions}
+                              filterOption={(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())}
+                            />
                           </Form.Item>
                         </Col>
                       </Row>
-                      {rowMatches.length > 0 && (
-                        <Text style={{ fontSize: 11, color: '#B11E6A', display: 'block', marginTop: -4, marginBottom: 6 }}>
-                          Similar: {rowMatches.map((m, i) => (
-                            <span key={m.key}>
-                              {i > 0 && ', '}
-                              {m.name} ({m.code}, {m.current} {m.unit}, {m.itemType === 'bulk' ? 'Bulk' : 'Direct'}){' '}
-                              <a onClick={() => { const items = localPurchaseForm.getFieldValue('items'); items[name] = { ...items[name], itemCode: m.code, itemType: m.itemType }; localPurchaseForm.setFieldsValue({ items }); }}>use code</a>
-                            </span>
-                          ))}
-                        </Text>
+                      {typedName.length >= 2 && !typedCode && (
+                        exactMatch ? (
+                          <Text style={{ fontSize: 11, color: '#52c41a', display: 'block', marginTop: -4, marginBottom: 6 }}>
+                            <CheckCircleOutlined style={{ marginRight: 4 }} />Matches existing item "{exactMatch.name}" ({exactMatch.code}) by name — stock will merge into it automatically.
+                          </Text>
+                        ) : (
+                          <Text style={{ fontSize: 11, color: '#fa8c16', display: 'block', marginTop: -4, marginBottom: 6 }}>
+                            <WarningOutlined style={{ marginRight: 4 }} />No exact match in Inventory for this name — pick the correct item above via Item Code, or leave blank to add it as a new item.
+                          </Text>
+                        )
                       )}
                     </div>
                   );
                 })}
-                <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ itemName: '', qty: 1, unit: 'Pcs', amount: 0, itemCode: '', itemType: 'standard' })} style={{ width: '100%', color: '#B11E6A', borderColor: '#B11E6A66' }}>
+                <Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ itemName: '', qty: 1, unit: undefined, amount: 0, gstPercent: 0, itemCode: undefined, itemType: 'standard' })} style={{ width: '100%', color: '#B11E6A', borderColor: '#B11E6A66' }}>
                   Add Item
                 </Button>
               </div>
             )}
           </Form.List>
+          <div style={{ marginBottom: 12 }}>
+            <Text style={{ fontSize: 12, marginRight: 10 }}>Amount above is:</Text>
+            <Radio.Group
+              size="small"
+              value={localPurchasePriceType}
+              onChange={(e) => setLocalPurchasePriceType(e.target.value)}
+              optionType="button"
+              buttonStyle="solid"
+            >
+              <Radio.Button value="exclusive">GST Exclusive</Radio.Button>
+              <Radio.Button value="inclusive">GST Inclusive</Radio.Button>
+            </Radio.Group>
+          </div>
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item label="Invoice Number" name="invoiceNo" rules={[{ required: true, message: 'Required' }]}>
@@ -4289,7 +4411,7 @@ export default function Purchase() {
           )}
 
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-            <Button style={{ flex: 1 }} onClick={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); setLocalPurchasePriceType('exclusive'); }}>
               Cancel
             </Button>
             <Button
@@ -4530,10 +4652,10 @@ export default function Purchase() {
               </div>
               <div style={{ display: 'flex', padding: '12px 14px', gap: 0 }}>
                 {[
-                  { label: 'Stock Count', value: `${selectedProduct.current}`, color: selectedProduct.current <= selectedProduct.min ? '#ff4d4f' : '#52c41a' },
-                  { label: 'Product Qty', value: selectedProduct.unitValue ? `${selectedProduct.unitValue} ${selectedProduct.unit}` : (selectedProduct.unit || '-'), color: '#1890ff' },
-                  { label: 'Min. Required', value: `${selectedProduct.min}`, color: '#fa8c16' },
-                  { label: 'Shortfall', value: selectedProduct.current < selectedProduct.min ? `${selectedProduct.min - selectedProduct.current}` : 'None', color: selectedProduct.current < selectedProduct.min ? '#ff4d4f' : '#52c41a' },
+                  { label: 'Stock Count', value: formatQty(selectedProduct.current), color: selectedProduct.current <= selectedProduct.min ? '#ff4d4f' : '#52c41a' },
+                  { label: 'Product Qty', value: selectedProduct.unitValue ? `${formatQty(selectedProduct.unitValue)} ${selectedProduct.unit}` : (selectedProduct.unit || '-'), color: '#1890ff' },
+                  { label: 'Min. Required', value: formatQty(selectedProduct.min), color: '#fa8c16' },
+                  { label: 'Shortfall', value: selectedProduct.current < selectedProduct.min ? formatQty(selectedProduct.min - selectedProduct.current) : 'None', color: selectedProduct.current < selectedProduct.min ? '#ff4d4f' : '#52c41a' },
                 ].map((stat, i) => (
                   <div key={i} style={{ flex: 1, textAlign: 'center', borderRight: i < 3 ? `1px solid ${isDark ? '#2a2d40' : '#f0f0f0'}` : 'none', padding: '0 8px' }}>
                     <div style={{ fontSize: 11, color: '#888', marginBottom: 3 }}>{stat.label}</div>
@@ -5518,7 +5640,7 @@ export default function Purchase() {
                         <Tag color={item.status === 'Out' ? 'error' : 'warning'} style={{ fontSize: 10, borderRadius: 8, margin: 0 }}>{item.status}</Tag>
                         {item.fromSupplier && <Tag color="purple" style={{ fontSize: 10, borderRadius: 8, margin: 0 }}>This Supplier</Tag>}
                       </div>
-                      <Text type="secondary" style={{ fontSize: 11 }}>Stock: {item.currentStock} / Min: {item.minStock} {item.unit}</Text>
+                      <Text type="secondary" style={{ fontSize: 11 }}>Stock: {formatQty(item.currentStock)} / Min: {formatQty(item.minStock)} {item.unit}</Text>
                     </div>
                     <div onClick={e => e.stopPropagation()}>
                       <InputNumber
@@ -5702,13 +5824,14 @@ export default function Purchase() {
                   lrNumber: vals.lr_number,
                   expectedDeliveryDate: deliveryDate,
                   paymentStatus: vals.paid_status,
+                  billTotalAmount: vals.bill_total_amount ?? 0,
                   ...(fileUrl ? { proofUrl: fileUrl } : {}),
                 }).unwrap();
               } catch (err) {
                 enqueueSnackbar(err?.data?.message || 'Failed to save LR copy', { variant: 'error' });
                 return;
               }
-              const entry = { lrNumber: vals.lr_number, deliveryDate, fileName, paidStatus: vals.paid_status };
+              const entry = { lrNumber: vals.lr_number, deliveryDate, fileName, paidStatus: vals.paid_status, billTotalAmount: vals.bill_total_amount ?? 0 };
               setLrData(prev => ({ ...prev, [lrUploadTarget.order.key]: entry }));
               if (vals.paid_status === 'Not Paid') {
                 enqueueSnackbar(
@@ -5752,6 +5875,49 @@ export default function Purchase() {
                 <p className="ant-upload-text">Click or drag LR document to upload</p>
                 <p className="ant-upload-hint">PDF or Image of Lorry Receipt / Bilty</p>
               </Upload.Dragger>
+            </Form.Item>
+            <Button
+              icon={<ThunderboltOutlined />}
+              loading={lrScanLoading}
+              disabled={lrFileUploading || !lrFileWatch?.fileList?.[0]?.url}
+              onClick={async () => {
+                const scannedFile = lrFileWatch?.fileList?.[0];
+                if (!scannedFile?.url) {
+                  enqueueSnackbar('Upload the LR document first.', { variant: 'warning' });
+                  return;
+                }
+                setLrScanLoading(true);
+                try {
+                  const res = await scanPurchaseLR({
+                    id: lrUploadTarget.order.key,
+                    fileUrl: scannedFile.url,
+                    mimetype: scannedFile.type || scannedFile.originFileObj?.type,
+                    originalName: scannedFile.name,
+                  }).unwrap();
+                  const parsed = res?.data || {};
+                  lrUploadForm.setFieldsValue({
+                    lr_number: parsed.lrNumber || lrUploadForm.getFieldValue('lr_number'),
+                    bill_total_amount: parsed.billTotalAmount || lrUploadForm.getFieldValue('bill_total_amount'),
+                    ...(parsed.estimatedDelivery ? { delivery_date: dayjs(parsed.estimatedDelivery) } : {}),
+                  });
+                  enqueueSnackbar('AI extracted the LR details — review the Bill Total Amount before saving.', { variant: 'success' });
+                } catch (err) {
+                  enqueueSnackbar(err?.data?.message || 'AI extraction failed. Enter the details manually.', { variant: 'error' });
+                } finally {
+                  setLrScanLoading(false);
+                }
+              }}
+              style={{ width: '100%', marginBottom: 14, borderRadius: 8, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', color: '#fff', fontWeight: 700 }}
+            >
+              {lrScanLoading ? 'Scanning…' : 'Scan with AI — Auto-fill Bill Total Amount'}
+            </Button>
+            <Form.Item
+              label="Bill Total Amount (₹)"
+              name="bill_total_amount"
+              tooltip="The LR/transport bill's total amount as printed on the LR copy — this is what's payable to the transporter, not the order's goods value."
+              rules={[{ required: true, message: 'Enter the Bill Total Amount from the LR copy' }]}
+            >
+              <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} placeholder="Scan the LR copy above or enter manually" />
             </Form.Item>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <Button style={{ flex: 1, height: 40, borderRadius: 8 }} onClick={() => { setShowLRUploadModal(false); lrUploadForm.resetFields(); }}>Cancel</Button>
@@ -6085,6 +6251,24 @@ export default function Purchase() {
                 </Button>
                 {receivedInvoiceFile && <Text type="secondary" style={{ fontSize: 12 }}>{receivedInvoiceFile.name}</Text>}
               </Space>
+              {invoiceScanned && invoiceProducts.length > 0 && (
+                <div style={{ marginTop: 10 }}>
+                  <Text style={{ fontSize: 12, marginRight: 10 }}>Purchase Price is:</Text>
+                  <Radio.Group
+                    size="small"
+                    value={receivePriceType}
+                    onChange={(e) => setReceivePriceType(e.target.value)}
+                    optionType="button"
+                    buttonStyle="solid"
+                  >
+                    <Radio.Button value="exclusive">GST Exclusive</Radio.Button>
+                    <Radio.Button value="inclusive">GST Inclusive</Radio.Button>
+                  </Radio.Group>
+                  <Text type="secondary" style={{ fontSize: 11, marginLeft: 10 }}>
+                    {receivePriceType === 'inclusive' ? 'Tax is backed out before the batch cost is saved.' : 'Price is saved as-is (before GST).'}
+                  </Text>
+                </div>
+              )}
             </div>
 
             {/* Scanned invoice details — the header fields AI actually read off the uploaded
@@ -6103,7 +6287,21 @@ export default function Purchase() {
                     { label: 'GST Number', val: scannedInvoiceDetails.vendorGST || '-' },
                     { label: 'Vendor Phone', val: scannedInvoiceDetails.vendorPhone || '-' },
                     { label: 'Vendor Address', val: scannedInvoiceDetails.vendorAddress || '-', xs: 24 },
-                    { label: 'Total Amount', val: scannedInvoiceDetails.totalAmount ? `₹${Number(scannedInvoiceDetails.totalAmount).toLocaleString()}` : '-' },
+                    { label: 'Amount (Taxable)', val: scannedInvoiceDetails.amount != null ? `₹${Number(scannedInvoiceDetails.amount).toLocaleString()}` : '-' },
+                    // CGST/SGST only shown when the invoice actually printed that breakdown
+                    // (same-state); IGST only when printed (inter-state) — otherwise skipped so a
+                    // single-line "GST Amount" invoice doesn't show two misleading zero rows.
+                    ...(scannedInvoiceDetails.cgstAmount > 0 || scannedInvoiceDetails.sgstAmount > 0
+                      ? [
+                          { label: 'CGST', val: `₹${Number(scannedInvoiceDetails.cgstAmount || 0).toLocaleString()}` },
+                          { label: 'SGST', val: `₹${Number(scannedInvoiceDetails.sgstAmount || 0).toLocaleString()}` },
+                        ]
+                      : []),
+                    ...(scannedInvoiceDetails.igstAmount > 0
+                      ? [{ label: 'IGST', val: `₹${Number(scannedInvoiceDetails.igstAmount).toLocaleString()}` }]
+                      : []),
+                    { label: 'GST Amount (Total)', val: scannedInvoiceDetails.gstAmount != null ? `₹${Number(scannedInvoiceDetails.gstAmount).toLocaleString()}` : '-' },
+                    { label: 'Total Amount', val: scannedInvoiceDetails.totalAmount != null ? `₹${Number(scannedInvoiceDetails.totalAmount).toLocaleString()}` : '-' },
                   ].map((d, i) => (
                     <Col xs={d.xs || 12} sm={d.xs || 8} key={i}>
                       <Text style={{ fontSize: 10, color: '#888', display: 'block' }}>{d.label}</Text>
@@ -6161,6 +6359,30 @@ export default function Purchase() {
                     { title: 'Product', dataIndex: 'name', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
                     { title: 'HSN', dataIndex: 'hsn', width: 70, render: v => <Text type="secondary" style={{ fontSize: 11 }}>{v}</Text> },
                     { title: 'GST', dataIndex: 'gst', width: 60, render: v => <Tag color="blue" style={{ fontSize: 10, padding: '0 4px' }}>{v}</Tag> },
+                    {
+                      title: 'Purchase Price', key: 'purchase_price', width: 130,
+                      render: (_, r) => {
+                        const price = productPrices[r.key] || 0;
+                        const basePrice = receivePriceType === 'inclusive' && r.gstPercent > 0
+                          ? price / (1 + r.gstPercent / 100)
+                          : price;
+                        return (
+                          <div>
+                            <InputNumber
+                              size="small"
+                              min={0}
+                              prefix="₹"
+                              value={price}
+                              onChange={v => setProductPrices(prev => ({ ...prev, [r.key]: v || 0 }))}
+                              style={{ width: 100 }}
+                            />
+                            {receivePriceType === 'inclusive' && r.gstPercent > 0 && price > 0 && (
+                              <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>≈ ₹{basePrice.toFixed(2)} excl. GST</Text>
+                            )}
+                          </div>
+                        );
+                      }
+                    },
                     { title: 'Ordered', dataIndex: 'originalQty', width: 80, render: (v, r) => <Text>{v} {r.unit}</Text> },
                     {
                       title: 'Invoice Qty', key: 'invoice_qty', width: 110,
@@ -6242,6 +6464,70 @@ export default function Purchase() {
                   <Text style={{ fontSize: 12 }}>Total Received: <Text strong style={{ color: '#52c41a' }}>{invoiceProducts.reduce((s, p) => s + (productQtys[p.key] ?? p.originalQty), 0)}</Text></Text>
                   {getMissingItems().length > 0 && <Text style={{ fontSize: 12 }}>Missing: <Text strong style={{ color: '#fa8c16' }}>{getMissingItems().reduce((s, m) => s + m.missingQty, 0)}</Text></Text>}
                 </div>
+              </div>
+            )}
+
+            {/* Extra items — on the invoice but not part of this PO. Each row optionally
+                merges into an existing Inventory item via Item Code (auto-filled when the
+                item's name matched exactly); left blank, confirming creates a new item so the
+                delivered goods still reach Stock Inventory instead of being silently dropped. */}
+            {invoiceScanned && extraInvoiceProducts.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                <Alert
+                  type="warning"
+                  showIcon
+                  style={{ marginBottom: 8, borderRadius: 8 }}
+                  message={`${extraInvoiceProducts.length} item(s) found on the invoice that weren't part of this order`}
+                  description="Uncheck any that shouldn't be added to stock. For the rest, pick an Item Code to merge into an existing product — leave blank to add it as a brand-new Inventory item."
+                />
+                <Table
+                  size="small"
+                  dataSource={extraInvoiceProducts}
+                  rowKey="key"
+                  pagination={false}
+                  columns={[
+                    {
+                      title: 'Add to Stock', key: 'included', width: 90,
+                      render: (_, r) => (
+                        <Switch size="small" checked={!!extraProductIncluded[r.key]} onChange={(v) => setExtraProductIncluded(prev => ({ ...prev, [r.key]: v }))} />
+                      )
+                    },
+                    { title: 'Product (from invoice)', dataIndex: 'itemName', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'Qty', dataIndex: 'qty', width: 70, render: (v, r) => <Text>{v} {r.unit}</Text> },
+                    { title: 'Price', dataIndex: 'price', width: 80, render: v => <Text>₹{v || 0}</Text> },
+                    {
+                      title: 'Item Code (optional — merges into existing item)', key: 'itemCode', width: 260,
+                      render: (_, r) => {
+                        const disabled = !extraProductIncluded[r.key];
+                        return (
+                          <div>
+                            <Select
+                              size="small"
+                              allowClear
+                              showSearch
+                              disabled={disabled}
+                              value={extraProductCodes[r.key] || undefined}
+                              placeholder="Leave blank to add as new item"
+                              style={{ width: '100%' }}
+                              options={inventoryItems.map((i) => ({ value: i.code, label: `${i.code} — ${i.name} (${formatQty(i.current)} ${i.unit})` }))}
+                              filterOption={(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())}
+                              onChange={(v) => setExtraProductCodes(prev => ({ ...prev, [r.key]: v || '' }))}
+                            />
+                            {r.matchedItemCode ? (
+                              <Text style={{ fontSize: 10, color: '#52c41a', display: 'block', marginTop: 2 }}>
+                                Matches existing item "{r.matchedItemName}" by name.
+                              </Text>
+                            ) : (
+                              <Text style={{ fontSize: 10, color: '#fa8c16', display: 'block', marginTop: 2 }}>
+                                No exact name match in Inventory — pick the correct item above, or leave blank to add new.
+                              </Text>
+                            )}
+                          </div>
+                        );
+                      }
+                    },
+                  ]}
+                />
               </div>
             )}
 

@@ -246,6 +246,9 @@ export const apiSlice = createApi({
       query: ({ id, ...data }) => ({ url: `/purchase/orders/${id}/lr`, method: 'patch', data }),
       invalidatesTags: ['PurchaseOrders', 'Reports'],
     }),
+    scanPurchaseLR: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/purchase/orders/${id}/scan-lr`, method: 'post', data }),
+    }),
     getLocalPurchases: builder.query({
       query: () => ({ url: '/purchase/local' }),
       providesTags: ['LocalPurchases'],
@@ -1469,6 +1472,7 @@ export const {
   useScanReceivedInvoiceMutation,
   useResolveMissingOrderMutation,
   useUploadPurchaseLRMutation,
+  useScanPurchaseLRMutation,
   useGetLocalPurchasesQuery,
   useScanLocalPurchaseInvoiceMutation,
   useCreateLocalPurchaseMutation,
