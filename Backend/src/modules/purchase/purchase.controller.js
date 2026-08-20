@@ -120,12 +120,45 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
     const amt = Number(req.body.amount);
     if (!Number.isNaN(amt) && amt >= 0) request.amount = amt;
   }
+  // AI-verified GST amount for this quotation — set on both the initial raise and any
+  // later re-submit, same optional/best-effort pattern as `amount` above.
+  if (req.body.gstAmount !== undefined && req.body.gstAmount !== '') {
+    const gst = Number(req.body.gstAmount);
+    if (!Number.isNaN(gst) && gst >= 0) request.gstAmount = gst;
+  }
+  if (req.body.qty !== undefined && req.body.qty !== '') {
+    const qty = Number(req.body.qty);
+    if (!Number.isNaN(qty) && qty > 0) request.qty = qty;
+  }
   // Re-uploading after a Finance modification request, or re-requesting after a
   // rejection, sends it back to Pending for review
   if (request.status === 'Modification' || request.status === 'Rejected') request.status = 'Pending';
   await request.save({ validateBeforeSave: false });
   notifyRoles({ modules: ['Financial'], userIds: [request.createdBy], type: 'purchase', title: 'Quotation File Uploaded', message: `Quotation uploaded for PR ${request.requestCode} (${request.itemName}) — ready for Finance review`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: request });
+});
+
+// POST /api/purchase/scan-quotation — AI-scan a supplier quotation/invoice file and
+// return its extracted line items, GST amount, and total amount. Standalone (no
+// PurchaseRequest id) because it's used both before a request exists yet (Raise
+// Request modal) and when re-submitting a revised quotation for an existing one —
+// the caller matches the returned items against the item it cares about.
+exports.scanQuotationFile = asyncHandler(async (req, res, next) => {
+  if (!req.file) return next(new AppError('Please upload the quotation file', 400));
+
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) {
+    return next(new AppError('AI is not configured yet. Add your OpenAI API key under Integration → AI Integration.', 503));
+  }
+
+  const file = { url: req.file.path, originalName: req.file.originalname, mimetype: req.file.mimetype };
+  try {
+    const extracted = await aiService.extractInvoiceFields({ apiKey, model: config.model, file });
+    res.status(200).json({ success: true, data: extracted });
+  } catch (err) {
+    return next(new AppError(`AI extraction failed: ${err.message}`, err.statusCode || 502));
+  }
 });
 
 // Purchase edits an already-Approved request's order details (qty/unit/paymentTerms/

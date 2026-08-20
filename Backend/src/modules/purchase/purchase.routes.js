@@ -10,6 +10,7 @@ router.get('/requests', ctrl.getRequests);
 router.post('/requests/bulk', ctrl.createBulkRequest);
 router.post('/requests', ctrl.raiseRequest);
 router.post('/requests/:id/upload-quotation', upload.single('quotation'), ctrl.uploadQuotationFile);
+router.post('/scan-quotation', upload.single('quotation'), ctrl.scanQuotationFile);
 router.patch('/requests/:id/update-details', ctrl.updateRequestDetails);
 router.patch('/requests/:id/notes', ctrl.addNote);
 

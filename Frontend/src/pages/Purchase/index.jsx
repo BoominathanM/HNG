@@ -28,6 +28,7 @@ import {
   useRaiseRequestMutation,
   useCreateBulkRequestMutation,
   useUploadQuotationFileMutation,
+  useScanQuotationFileMutation,
   useUpdatePurchaseRequestDetailsMutation,
   useReceiveOrderMutation,
   useScanReceivedInvoiceMutation,
@@ -139,6 +140,7 @@ export default function Purchase() {
   const [raiseRequestMutation] = useRaiseRequestMutation();
   const [createBulkRequestMutation] = useCreateBulkRequestMutation();
   const [uploadQuotationFile] = useUploadQuotationFileMutation();
+  const [scanQuotationFile] = useScanQuotationFileMutation();
   const [updatePurchaseRequestDetails] = useUpdatePurchaseRequestDetailsMutation();
   const [addPurchaseNoteMutation] = useAddPurchaseNoteMutation();
   const { data: whatsAppMappingsData } = useGetWhatsAppEventMappingsQuery();
@@ -196,7 +198,7 @@ export default function Purchase() {
       status: r.status, notes: r.notes || [], financeNote: r.financeNote || '',
       requestType: r.requestType || 'individual', category: r.category || r.itemId?.category || 'Other',
       batchId: r.batchId || null, quotationFiles: r.quotationFiles || [],
-      amount: r.amount ?? null,
+      amount: r.amount ?? null, gstAmount: r.gstAmount ?? null,
     }));
     if (mapped.length > 0) dispatch(setRaisedRequests(mapped));
   }, [requestsData]);
@@ -273,6 +275,7 @@ export default function Purchase() {
   const [raiseRequestScanLoading, setRaiseRequestScanLoading] = useState(false);
   const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
   const [raiseRequestAmount, setRaiseRequestAmount] = useState(null);
+  const [raiseRequestGstAmount, setRaiseRequestGstAmount] = useState(null);
   const [raiseRequestForm] = Form.useForm();
   const raiseReqQtyWatch = Form.useWatch('qty', raiseRequestForm);
   const raiseReqUnitWatch = Form.useWatch('unit', raiseRequestForm);
@@ -282,6 +285,8 @@ export default function Purchase() {
   const [rerequestTarget, setRerequestTarget] = useState(null);
   const [rerequestFile, setRerequestFile] = useState(null);
   const [rerequestAmount, setRerequestAmount] = useState(null);
+  const [rerequestGstAmount, setRerequestGstAmount] = useState(null);
+  const [rerequestScanLoading, setRerequestScanLoading] = useState(false);
   const [rerequestSubmitting, setRerequestSubmitting] = useState(false);
 
   /* ── Update Order Details modal (Approved requests — edit & resend to Finance for re-approval) ── */
@@ -1064,18 +1069,44 @@ export default function Purchase() {
     setShowRaiseRequestModal(true);
   };
 
-  const handleRaiseRequestAIScan = () => {
+  // Matches the AI's scanned line items against the product this request is for —
+  // same normalize+substring approach as scanReceivedInvoice's `norm()` on the backend.
+  const matchScannedItem = (items, productName) => {
+    const norm = (s) => (s || '').toLowerCase().trim();
+    const target = norm(productName);
+    return (items || []).find((it) => {
+      const name = norm(it.name);
+      return name && target && (name.includes(target) || target.includes(name));
+    });
+  };
+
+  const handleRaiseRequestAIScan = async () => {
     if (!raiseRequestFile) { enqueueSnackbar('Please upload the quotation file first', { variant: 'warning' }); return; }
     setRaiseRequestScanLoading(true);
-    setTimeout(() => {
-      const suggestQty = raiseRequestProduct
-        ? (raiseRequestProduct.min > raiseRequestProduct.current ? (raiseRequestProduct.min - raiseRequestProduct.current) * 2 : raiseRequestProduct.min)
-        : 0;
-      raiseRequestForm.setFieldsValue({ payment_terms: '100% Payment', qty: suggestQty });
-      setRaiseRequestPaymentTerms('100% Payment');
+    try {
+      const fd = new FormData();
+      fd.append('quotation', raiseRequestFile);
+      const extracted = await scanQuotationFile(fd).unwrap();
+      const scanned = extracted?.data || {};
+      const match = matchScannedItem(scanned.items, raiseRequestProduct?.name);
+      const matchedQty = match ? Number(match.qty) || 0 : 0;
+      const totalAmount = Number(scanned.totalAmount) || 0;
+      const gstAmount = Number(scanned.gstAmount) || 0;
+
+      if (matchedQty > 0) raiseRequestForm.setFieldsValue({ qty: matchedQty });
+      setRaiseRequestAmount(totalAmount || null);
+      setRaiseRequestGstAmount(gstAmount || null);
+
+      if (!match && (scanned.items || []).length) {
+        enqueueSnackbar(`Couldn't confidently match "${raiseRequestProduct?.name}" to a line item on the quotation — please verify the quantity manually. Amount ₹${totalAmount.toLocaleString()} and GST ₹${gstAmount.toLocaleString()} were read from the document total.`, { variant: 'warning' });
+      } else {
+        enqueueSnackbar(`AI extracted — Qty: ${matchedQty || raiseReqQtyWatch || 0}, Amount: ₹${totalAmount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+      }
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'AI extraction failed — please enter the details manually', { variant: 'error' });
+    } finally {
       setRaiseRequestScanLoading(false);
-      enqueueSnackbar('AI extracted details from the quotation file!', { variant: 'success' });
-    }, 2000);
+    }
   };
 
   const handleRaiseRequestSubmit = () => {
@@ -1125,6 +1156,7 @@ export default function Purchase() {
         // and shouldn't hold the modal open while they run.
         const fileToUpload = raiseRequestFile;
         const amountToUpload = raiseRequestAmount;
+        const gstAmountToUpload = raiseRequestGstAmount;
         setShowRaiseRequestModal(false);
         raiseRequestForm.resetFields();
         setRaiseRequestProduct(null);
@@ -1132,6 +1164,7 @@ export default function Purchase() {
         setRaiseRequestFile(null);
         setRaiseRequestPaymentTerms('');
         setRaiseRequestAmount(null);
+        setRaiseRequestGstAmount(null);
 
         for (const reqDoc of created) {
           const id = reqDoc?._id;
@@ -1140,6 +1173,7 @@ export default function Purchase() {
               const fd = new FormData();
               fd.append('quotation', fileToUpload);
               fd.append('amount', amountToUpload);
+              if (gstAmountToUpload != null) fd.append('gstAmount', gstAmountToUpload);
               await uploadQuotationFile({ id, formData: fd }).unwrap();
             } catch { /* file upload is best-effort */ }
           }
@@ -1546,13 +1580,15 @@ export default function Purchase() {
   };
 
   // Re-submit revised quotation file after Finance sends back for modification (or
-  // rejects it) — amount is optional since Modification re-submits don't collect one.
-  const handleResubmitQuotation = async (requestId, file, amount) => {
+  // rejects it) — amount/gstAmount/qty are optional since not every resubmit path collects them.
+  const handleResubmitQuotation = async (requestId, file, amount, gstAmount, qty) => {
     setResubmitLoading(prev => ({ ...prev, [requestId]: true }));
     try {
       const fd = new FormData();
       fd.append('quotation', file);
       if (amount !== undefined && amount !== null && amount !== '') fd.append('amount', amount);
+      if (gstAmount !== undefined && gstAmount !== null && gstAmount !== '') fd.append('gstAmount', gstAmount);
+      if (qty !== undefined && qty !== null && qty !== '') fd.append('qty', qty);
       await uploadQuotationFile({ id: requestId, formData: fd }).unwrap();
       enqueueSnackbar('Quotation re-submitted — Finance will review it again.', { variant: 'success' });
     } catch (err) {
@@ -1562,17 +1598,64 @@ export default function Purchase() {
     }
   };
 
+  // AI-scans a re-uploaded quotation before re-submitting it (used by the quick
+  // "Re-Submit Quotation" upload button on Modification requests), so the revised
+  // document gets the same qty/amount/GST verification as the original Raise Request
+  // scan instead of being uploaded blind — and reports back what it read.
+  const handleQuickResubmitScan = async (req, file) => {
+    setResubmitLoading(prev => ({ ...prev, [req.key]: true }));
+    let amount;
+    let gstAmount;
+    let qty;
+    try {
+      const fd = new FormData();
+      fd.append('quotation', file);
+      const extracted = await scanQuotationFile(fd).unwrap();
+      const scanned = extracted?.data || {};
+      const match = matchScannedItem(scanned.items, req?.item);
+      amount = Number(scanned.totalAmount) || undefined;
+      gstAmount = scanned.gstAmount !== undefined ? Number(scanned.gstAmount) || 0 : undefined;
+      qty = match?.qty ? Number(match.qty) || undefined : undefined;
+      enqueueSnackbar(`AI-verified quotation — Qty: ${qty ?? req?.qty ?? '—'}, Amount: ₹${(amount || 0).toLocaleString()}, GST: ₹${(gstAmount || 0).toLocaleString()}`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'AI could not read the quotation — re-submitting without auto-filled amounts', { variant: 'warning' });
+    }
+    await handleResubmitQuotation(req.key, file, amount, gstAmount, qty);
+  };
+
   // Re-Request Quotation modal (for Rejected requests) — collects both the revised
   // quotation file AND the quoted amount before sending it back to Finance as Pending.
+  const handleRerequestAIScan = async () => {
+    if (!rerequestFile) { enqueueSnackbar('Please upload the revised quotation file first', { variant: 'warning' }); return; }
+    setRerequestScanLoading(true);
+    try {
+      const fd = new FormData();
+      fd.append('quotation', rerequestFile);
+      const extracted = await scanQuotationFile(fd).unwrap();
+      const scanned = extracted?.data || {};
+      const match = matchScannedItem(scanned.items, rerequestTarget?.item);
+      const totalAmount = Number(scanned.totalAmount) || 0;
+      const gstAmount = Number(scanned.gstAmount) || 0;
+      setRerequestAmount(totalAmount || null);
+      setRerequestGstAmount(gstAmount || null);
+      enqueueSnackbar(`AI extracted — Qty read: ${match?.qty ?? '—'}, Amount: ₹${totalAmount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'AI extraction failed — please enter the amount manually', { variant: 'error' });
+    } finally {
+      setRerequestScanLoading(false);
+    }
+  };
+
   const handleRerequestSubmit = async () => {
     if (!rerequestFile) { enqueueSnackbar('Please upload the revised quotation file', { variant: 'warning' }); return; }
     if (rerequestAmount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
     setRerequestSubmitting(true);
     try {
-      await handleResubmitQuotation(rerequestTarget.key, rerequestFile, rerequestAmount);
+      await handleResubmitQuotation(rerequestTarget.key, rerequestFile, rerequestAmount, rerequestGstAmount);
       setShowRerequestModal(false);
       setRerequestTarget(null);
       setRerequestFile(null);
+      setRerequestGstAmount(null);
       setRerequestAmount(null);
     } finally {
       setRerequestSubmitting(false);
@@ -2094,7 +2177,7 @@ export default function Purchase() {
                                     </Button>
                                     <Upload
                                       maxCount={1}
-                                      beforeUpload={file => { handleResubmitQuotation(req.key, file); return false; }}
+                                      beforeUpload={file => { handleQuickResubmitScan(req, file); return false; }}
                                       accept=".pdf,.jpg,.jpeg,.png"
                                       showUploadList={false}
                                       disabled={!!resubmitLoading[req.key]}
@@ -2124,7 +2207,7 @@ export default function Purchase() {
                                     <Button
                                       size="small"
                                       icon={<UploadOutlined />}
-                                      onClick={() => { setRerequestTarget(req); setRerequestFile(null); setRerequestAmount(null); setShowRerequestModal(true); }}
+                                      onClick={() => { setRerequestTarget(req); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); setShowRerequestModal(true); }}
                                       style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
                                     >
                                       Re-Request Quotation
@@ -2266,6 +2349,12 @@ export default function Purchase() {
                             title: 'Amount', key: 'amount', width: 110, align: 'right',
                             render: (_, r) => r.amount != null
                               ? <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>&#8377;{r.amount.toLocaleString()}</Text>
+                              : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
+                          },
+                          {
+                            title: 'GST Amount', key: 'gstAmount', width: 110, align: 'right',
+                            render: (_, r) => r.gstAmount != null
+                              ? <Text style={{ color: '#888', fontSize: 12 }}>&#8377;{r.gstAmount.toLocaleString()}</Text>
                               : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
                           },
                           {
@@ -2585,7 +2674,7 @@ export default function Purchase() {
                                     </Button>
                                     <Upload
                                       maxCount={1}
-                                      beforeUpload={file => { handleResubmitQuotation(r.key, file); return false; }}
+                                      beforeUpload={file => { handleQuickResubmitScan(r, file); return false; }}
                                       accept=".pdf,.jpg,.jpeg,.png"
                                       showUploadList={false}
                                       disabled={!!resubmitLoading[r.key]}
@@ -2618,7 +2707,7 @@ export default function Purchase() {
                                       <Button
                                         size="small"
                                         icon={<UploadOutlined />}
-                                        onClick={() => { setRerequestTarget(r); setRerequestFile(null); setRerequestAmount(null); setShowRerequestModal(true); }}
+                                        onClick={() => { setRerequestTarget(r); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); setShowRerequestModal(true); }}
                                         style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
                                       >
                                         Re-Request
@@ -4501,7 +4590,7 @@ export default function Purchase() {
           </div>
         }
         open={showRaiseRequestModal}
-        onCancel={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestAmount(null); setRaiseRequestPaymentTerms(''); }}
+        onCancel={() => { setShowRaiseRequestModal(false); raiseRequestForm.resetFields(); setRaiseRequestProduct(null); setRaiseRequestSupplier(null); setRaiseRequestFile(null); setRaiseRequestAmount(null); setRaiseRequestGstAmount(null); setRaiseRequestPaymentTerms(''); }}
         footer={null}
         width={560}
         centered
@@ -4547,7 +4636,7 @@ export default function Purchase() {
               </div>
               <div>
                 <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Upload Received Quotation</Text>
-                <Text style={{ fontSize: 11, color: '#aaa' }}>Upload quotation file — AI will auto-fill payment terms & quantity</Text>
+                <Text style={{ fontSize: 11, color: '#aaa' }}>Upload quotation file — AI will auto-fill quantity, amount & GST</Text>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
@@ -4576,17 +4665,31 @@ export default function Purchase() {
                 <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{raiseRequestFile.name}</Text>
               </div>
             )}
-            <div style={{ marginTop: 10 }}>
-              <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
-                Quoted Amount (₹) <Text type="danger">*</Text>
-              </Text>
-              <InputNumber
-                style={{ width: '100%', borderRadius: 8 }}
-                min={0}
-                placeholder="Total amount quoted by supplier"
-                value={raiseRequestAmount}
-                onChange={setRaiseRequestAmount}
-              />
+            <div style={{ marginTop: 10, display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
+                  Quoted Amount (₹) <Text type="danger">*</Text>
+                </Text>
+                <InputNumber
+                  style={{ width: '100%', borderRadius: 8 }}
+                  min={0}
+                  placeholder="Total amount quoted by supplier"
+                  value={raiseRequestAmount}
+                  onChange={setRaiseRequestAmount}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
+                  GST Amount (₹)
+                </Text>
+                <InputNumber
+                  style={{ width: '100%', borderRadius: 8 }}
+                  min={0}
+                  placeholder="GST/tax amount on the quotation"
+                  value={raiseRequestGstAmount}
+                  onChange={setRaiseRequestGstAmount}
+                />
+              </div>
             </div>
           </div>
 
@@ -4688,7 +4791,7 @@ export default function Purchase() {
           </div>
         }
         open={showRerequestModal}
-        onCancel={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); }}
+        onCancel={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); }}
         footer={null}
         width={460}
         centered
@@ -4718,34 +4821,59 @@ export default function Purchase() {
               <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
                 Revised Quotation File <Text type="danger">*</Text>
               </Text>
-              <Upload
-                maxCount={1}
-                beforeUpload={(file) => { setRerequestFile(file); return false; }}
-                onRemove={() => setRerequestFile(null)}
-                accept=".pdf,.jpg,.jpeg,.png"
-              >
-                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
-                  {rerequestFile ? rerequestFile.name : 'Upload Quotation File'}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <Upload
+                  maxCount={1}
+                  beforeUpload={(file) => { setRerequestFile(file); return false; }}
+                  onRemove={() => setRerequestFile(null)}
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  style={{ flex: 1 }}
+                >
+                  <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                    {rerequestFile ? rerequestFile.name : 'Upload Quotation File'}
+                  </Button>
+                </Upload>
+                <Button
+                  icon={<ThunderboltOutlined />}
+                  loading={rerequestScanLoading}
+                  onClick={handleRerequestAIScan}
+                  style={{ borderRadius: 8, background: rerequestFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: rerequestFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
+                >
+                  {rerequestScanLoading ? 'Scanning...' : 'Scan with AI'}
                 </Button>
-              </Upload>
+              </div>
             </div>
 
-            <div style={{ marginBottom: 20 }}>
-              <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
-                Quoted Amount (₹) <Text type="danger">*</Text>
-              </Text>
-              <InputNumber
-                style={{ width: '100%', borderRadius: 8 }}
-                min={0}
-                placeholder="Total amount quoted by supplier"
-                value={rerequestAmount}
-                onChange={setRerequestAmount}
-              />
+            <div style={{ marginBottom: 20, display: 'flex', gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
+                  Quoted Amount (₹) <Text type="danger">*</Text>
+                </Text>
+                <InputNumber
+                  style={{ width: '100%', borderRadius: 8 }}
+                  min={0}
+                  placeholder="Total amount quoted by supplier"
+                  value={rerequestAmount}
+                  onChange={setRerequestAmount}
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <Text style={{ fontSize: 12, fontWeight: 600, color: textColor, display: 'block', marginBottom: 6 }}>
+                  GST Amount (₹)
+                </Text>
+                <InputNumber
+                  style={{ width: '100%', borderRadius: 8 }}
+                  min={0}
+                  placeholder="GST/tax amount"
+                  value={rerequestGstAmount}
+                  onChange={setRerequestGstAmount}
+                />
+              </div>
             </div>
 
             <div style={{ display: 'flex', gap: 8 }}>
               <Button
-                onClick={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); }}
+                onClick={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); }}
                 style={{ flex: 1, height: 44, borderRadius: 10 }}
               >
                 Cancel
