@@ -33,7 +33,7 @@ import {
   useGetTodaysPickupOrdersQuery,
   useUpdatePickupOrderMutation,
   useUpdateTransportStatusMutation,
-  useGetStaffQuery,
+  useGetUsersQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -528,11 +528,11 @@ export default function Dispatch() {
   const reimbExpenses = useMemo(() => allPickupOrders.filter((r) => r.paymentBy === 'Pickup Team'), [allPickupOrders]);
 
   // Staff list for the "Pickup Employee Name" selector on the payment modal —
-  // Dispatch department staff only.
-  const { data: pickupStaffRaw } = useGetStaffQuery({ department: 'Dispatch', limit: 500 });
-  const pickupStaffOptions = useMemo(() => (pickupStaffRaw?.data || [])
-    .filter((s) => s.department === 'Dispatch')
-    .map((s) => ({ value: s._id, label: s.fullName })), [pickupStaffRaw]);
+  // Dispatch department users only (real logins, not the separate Staff HR roster).
+  const { data: pickupUsersRaw } = useGetUsersQuery({ limit: 500 });
+  const pickupStaffOptions = useMemo(() => (pickupUsersRaw?.data || [])
+    .filter((u) => u.department === 'Dispatch')
+    .map((u) => ({ value: u._id, label: u.fullName })), [pickupUsersRaw]);
 
   // ── Taken Status / Payment By modal state ────────────────────────────────
   const [showPickupPayModal, setShowPickupPayModal] = useState(false);

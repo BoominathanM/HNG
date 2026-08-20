@@ -271,7 +271,7 @@ exports.getDispatch = asyncHandler(async (req, res, next) => {
         { path: 'assignedTo', select: 'fullName' },
       ],
     })
-    .populate('pickupEmpId', 'fullName phone');
+    .populate('pickupEmpId', 'fullName mobile');
   if (!dispatch) return next(new AppError('Dispatch record not found', 404));
   const plain = dispatch.toObject();
   const ordObjectId = plain.orderId?._id;
@@ -877,7 +877,7 @@ exports.getPickupOrders = asyncHandler(async (req, res) => {
   const filter = {};
   const visibleIds = await visibleOrderIds(req.user);
   if (visibleIds) filter.orderId = { $in: visibleIds };
-  const list = await PickupOrder.find(filter).populate('pickupEmpId', 'fullName phone').sort('-createdAt').lean();
+  const list = await PickupOrder.find(filter).populate('pickupEmpId', 'fullName mobile').sort('-createdAt').lean();
   res.status(200).json({ success: true, total: list.length, data: list });
 });
 
@@ -889,7 +889,7 @@ exports.getTodaysPickupOrders = asyncHandler(async (req, res) => {
   const visibleIds = await visibleOrderIds(req.user);
   if (visibleIds) filter.orderId = { $in: visibleIds };
   const list = await PickupOrder.find(filter)
-    .populate('pickupEmpId', 'fullName phone')
+    .populate('pickupEmpId', 'fullName mobile')
     .sort('-createdAt')
     .lean();
   res.status(200).json({ success: true, total: list.length, data: list });

@@ -12,7 +12,7 @@ const pickupOrderSchema = new mongoose.Schema({
   orderCode: String,
   clientName: String,
   destination: String,
-  pickupEmpId: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff' },
+  pickupEmpId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   pickupPersonName: String,
   taken: { type: Boolean, default: false },
   takenStatus: { type: String, enum: ['Pending', 'Taken', 'Pickup Dropped'], default: 'Pending' },
