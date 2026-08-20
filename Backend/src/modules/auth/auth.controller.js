@@ -20,10 +20,22 @@ const signToken = (id, rememberMe) =>
 const signRefreshToken = (id, rememberMe) =>
   jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, { expiresIn: sessionTTL(rememberMe) });
 
+const REFRESH_GRACE_MS = 15 * 1000;
+
 const sendTokens = async (user, statusCode, res, rememberMe = user.rememberMe || false) => {
   const token = signToken(user._id, rememberMe);
   const refreshToken = signRefreshToken(user._id, rememberMe);
 
+  // Keep the just-superseded refresh token valid for a short grace window. Each
+  // browser tab dedupes its own concurrent 401s (see Frontend/src/api/axios.js)
+  // but has no visibility into other tabs, so two tabs 401-ing around the same
+  // moment can both call /auth/refresh with the same (still-current) token —
+  // the loser would otherwise be hard-rejected and force-logged-out for simply
+  // losing a race, not because its session was actually invalid.
+  if (user.refreshToken) {
+    user.previousRefreshToken = user.refreshToken;
+    user.previousRefreshTokenExpires = new Date(Date.now() + REFRESH_GRACE_MS);
+  }
   user.refreshToken = refreshToken;
   user.rememberMe = rememberMe;
   await user.save({ validateBeforeSave: false });
@@ -66,8 +78,16 @@ exports.refresh = asyncHandler(async (req, res, next) => {
     return next(new AppError('Invalid or expired refresh token', 401));
   }
 
-  const user = await User.findById(decoded.id).select('+refreshToken +rememberMe');
-  if (!user || user.refreshToken !== refreshToken) {
+  const user = await User.findById(decoded.id)
+    .select('+refreshToken +rememberMe +previousRefreshToken +previousRefreshTokenExpires');
+
+  const isCurrent = user && user.refreshToken === refreshToken;
+  const isRecentlyRotated =
+    user && !isCurrent &&
+    user.previousRefreshToken === refreshToken &&
+    user.previousRefreshTokenExpires && user.previousRefreshTokenExpires > new Date();
+
+  if (!user || (!isCurrent && !isRecentlyRotated)) {
     return next(new AppError('Invalid refresh token', 401));
   }
 
@@ -89,11 +109,11 @@ exports.getMe = asyncHandler(async (req, res) => {
 
 exports.changePassword = asyncHandler(async (req, res, next) => {
   const { currentPassword, newPassword } = req.body;
-  const user = await User.findById(req.user._id).select('+password');
+  const user = await User.findById(req.user._id).select('+password +rememberMe');
   if (!(await user.correctPassword(currentPassword))) {
     return next(new AppError('Current password is incorrect', 400));
   }
   user.password = newPassword;
   await user.save();
-  await sendTokens(user, 200, res);
+  await sendTokens(user, 200, res, user.rememberMe);
 });

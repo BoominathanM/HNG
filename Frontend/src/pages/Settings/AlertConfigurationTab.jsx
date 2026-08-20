@@ -3,7 +3,7 @@ import { useSelector } from 'react-redux';
 import dayjs from 'dayjs';
 import {
   Row, Col, Card, Typography, Space, Tag, Button, Checkbox, TimePicker,
-  InputNumber, Upload, Switch, Divider, Spin, Empty,
+  InputNumber, Select, Upload, Switch, Divider, Spin, Empty,
 } from 'antd';
 import { UploadOutlined, SoundOutlined, SaveOutlined } from '@ant-design/icons';
 import { enqueueSnackbar } from 'notistack';
@@ -29,7 +29,7 @@ const DESIGN_ROLES = [
   { role: 'Other', label: 'Other' },
 ];
 
-function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel, dynamicRecipient }) {
+function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel, dynamicRecipient, graceLabel }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -47,6 +47,8 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
   const [startTime, setStartTime] = useState(() => (config?.startTime ? dayjs(config.startTime, 'HH:mm') : dayjs('09:00', 'HH:mm')));
   const [endTime, setEndTime] = useState(() => (config?.endTime ? dayjs(config.endTime, 'HH:mm') : dayjs('18:00', 'HH:mm')));
   const [durationMinutes, setDurationMinutes] = useState(() => config?.durationMinutes || 30);
+  const [graceValue, setGraceValue] = useState(() => config?.graceValue || 3);
+  const [graceUnit, setGraceUnit] = useState(() => config?.graceUnit || 'days');
   const [days, setDays] = useState(() => (config?.days?.length ? config.days : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']));
   const [isEnabled, setIsEnabled] = useState(() => !!config?.isEnabled);
   const [audioFile, setAudioFile] = useState(() => (config?.audioUrl ? { url: config.audioUrl, public_id: config.audioPublicId, name: config.audioName } : null)); // { url, public_id, name }
@@ -74,6 +76,10 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
       enqueueSnackbar('Upload an alert audio file before enabling this alert', { variant: 'warning' });
       return;
     }
+    if (isEnabled && graceLabel && (!graceValue || graceValue <= 0)) {
+      enqueueSnackbar(`Set how long to wait before the first alert (${graceLabel.toLowerCase()})`, { variant: 'warning' });
+      return;
+    }
     try {
       await saveAlertConfig({
         group,
@@ -83,6 +89,7 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
         endTime: endTime?.format('HH:mm') || '18:00',
         durationMinutes: durationMinutes || 30,
         days,
+        ...(graceLabel ? { graceValue, graceUnit } : {}),
         audioUrl: audioFile?.url,
         audioPublicId: audioFile?.public_id,
         audioName: audioFile?.name,
@@ -157,6 +164,19 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
           />
         </Col>
       </Row>
+
+      {graceLabel && (
+        <div style={{ marginTop: 12 }}>
+          <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>{graceLabel}</Text>
+          <Space.Compact style={{ width: '100%', marginTop: 6 }}>
+            <InputNumber min={1} max={graceUnit === 'hours' ? 720 : 90} value={graceValue} onChange={setGraceValue} style={{ width: '60%', borderRadius: 8 }} />
+            <Select
+              value={graceUnit} onChange={setGraceUnit} style={{ width: '40%' }}
+              options={[{ value: 'days', label: 'Days' }, { value: 'hours', label: 'Hours' }]}
+            />
+          </Space.Compact>
+        </div>
+      )}
 
       <div style={{ marginTop: 12 }}>
         <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>Repeat Every (minutes)</Text>
@@ -243,6 +263,7 @@ export default function AlertConfigurationTab() {
   const salesUsers = users.filter((u) => u.department === 'Sales' && u.status === 'Active');
   const opsUsers = users.filter((u) => u.department === 'Operations' && u.status === 'Active');
   const financeUsers = users.filter((u) => u.department === 'Financial' && u.status === 'Active');
+  const purchaseUsers = users.filter((u) => u.department === 'Purchase' && u.status === 'Active');
 
   if (configsLoading || usersLoading) {
     return <div style={{ textAlign: 'center', padding: 60 }}><Spin size="large" /></div>;
@@ -389,6 +410,54 @@ export default function AlertConfigurationTab() {
             config={findConfig('lr_payment', null)}
             recipientPool={financeUsers}
             deptLabel="Financial"
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Low Stock Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          Once a product drops below its Min Stock, waits the grace period below, then rings selected Purchase users — repeating on the schedule below, checked separately per product by name — until it's restocked to/above Min Stock.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('low_stock', null)?._id || 'low_stock'}
+            title="Low Stock Alert"
+            description="Notifies selected Purchase users about products still short of stock past the grace period."
+            group="low_stock"
+            role={null}
+            config={findConfig('low_stock', null)}
+            recipientPool={purchaseUsers}
+            deptLabel="Purchase"
+            graceLabel="Alert After (if not purchased)"
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Quotation Request Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          Once a vendor quotation is Asked (or Re-Asked), waits the grace period below, then rings selected Purchase users — repeating on the schedule below — until the request is actually Raised.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('quotation_request', null)?._id || 'quotation_request'}
+            title="Quotation Request Alert"
+            description="Notifies selected Purchase users about quotations asked (or re-asked) but not yet raised."
+            group="quotation_request"
+            role={null}
+            config={findConfig('quotation_request', null)}
+            recipientPool={purchaseUsers}
+            deptLabel="Purchase"
+            graceLabel="Alert After (if not raised)"
           />
         </Col>
       </Row>

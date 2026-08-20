@@ -26,6 +26,7 @@ import {
   useGetPurchaseOrdersQuery,
   useGetLocalPurchasesQuery,
   useRaiseRequestMutation,
+  useRecordQuotationAskMutation,
   useCreateBulkRequestMutation,
   useUploadQuotationFileMutation,
   useScanQuotationFileMutation,
@@ -148,6 +149,7 @@ export default function Purchase() {
   const { data: localPurchasesData } = useGetLocalPurchasesQuery();
 
   const [raiseRequestMutation] = useRaiseRequestMutation();
+  const [recordQuotationAskMutation] = useRecordQuotationAskMutation();
   const [createBulkRequestMutation] = useCreateBulkRequestMutation();
   const [uploadQuotationFile] = useUploadQuotationFileMutation();
   const [scanQuotationFile] = useScanQuotationFileMutation();
@@ -204,6 +206,7 @@ export default function Purchase() {
   useEffect(() => {
     const mapped = (requestsData?.data || []).map((r) => ({
       key: r._id, item: r.itemId?.itemName || r.itemName,
+      itemId: r.itemId?._id || r.itemId || null, vendorId: r.vendorId?._id || r.vendorId || null,
       supplier: r.vendorId?.name || '-', qty: r.qty, unit: r.unit,
       payment_terms: r.paymentTerms, date: r.createdAt?.slice(0, 10),
       status: r.status, notes: r.notes || [], financeNote: r.financeNote || '',
@@ -409,9 +412,6 @@ export default function Purchase() {
   };
 
   /* ── WhatsApp reminder tracking (30-min intervals per inventory item key) ── */
-  const reminderIntervalsRef = useRef({});
-  const [reminderCounts, setReminderCounts] = useState({});   // { itemKey: count }
-  const [activeReminders, setActiveReminders] = useState(new Set()); // item keys with active reminders
 
   /* ── Inventory item notes (stock_status tab) ── */
   const [invItemNotes, setInvItemNotes] = useState({});    // { itemKey: [{text, ts}] }
@@ -995,7 +995,15 @@ export default function Purchase() {
       }
       if (selectedProduct?.key) {
         setWhatsappSentItems(prev => new Set(prev).add(selectedProduct.key));
-        startQuotationReminder(selectedProduct.key, selectedProduct.name, values.supplier);
+        // Backend record of this "ask" — the anchor timestamp the Quotation Request Alert
+        // (Settings → Alert Configuration) measures its configured grace period from.
+        // Best-effort: a failure here must never block the actual quotation-request flow.
+        recordQuotationAskMutation({
+          itemId: selectedProduct.key,
+          itemName: values.product,
+          vendorId: isObjectId(selectedSupplier?.id) ? selectedSupplier.id : undefined,
+          vendorName: selectedSupplier.name,
+        }).unwrap().catch(() => {});
       }
       enqueueSnackbar(
         sent
@@ -1064,6 +1072,13 @@ export default function Purchase() {
           }).unwrap();
           sent = true;
         }
+      }
+      // Backend record of this re-ask — restarts the Quotation Request Alert's grace-period
+      // countdown (Settings → Alert Configuration). Best-effort, never blocks the flow.
+      if (req.itemId) {
+        recordQuotationAskMutation({
+          itemId: req.itemId, itemName: req.item, vendorId: sup.id, vendorName: sup.name,
+        }).unwrap().catch(() => {});
       }
       enqueueSnackbar(
         sent
@@ -1822,43 +1837,6 @@ export default function Purchase() {
     }
   };
 
-  // ── WhatsApp reminder helpers ────────────────────────────────────────
-  const startQuotationReminder = (itemKey, itemName, supplierName) => {
-    // Clear any existing reminder for this item
-    if (reminderIntervalsRef.current[itemKey]) {
-      clearInterval(reminderIntervalsRef.current[itemKey]);
-    }
-    setReminderCounts(prev => ({ ...prev, [itemKey]: 0 }));
-    setActiveReminders(prev => new Set([...prev, itemKey]));
-
-    const intervalId = setInterval(() => {
-      setReminderCounts(prev => {
-        const newCount = (prev[itemKey] || 0) + 1;
-        enqueueSnackbar(
-          `Quotation Reminder — Follow up with supplier for "${itemName}" quotation. This is reminder #${newCount}.`,
-          { variant: 'warning', autoHideDuration: 8000 },
-        );
-        return { ...prev, [itemKey]: newCount };
-      });
-    }, 30 * 60 * 1000); // 30 minutes
-
-    reminderIntervalsRef.current[itemKey] = intervalId;
-  };
-
-  const stopQuotationReminder = (itemKey) => {
-    if (reminderIntervalsRef.current[itemKey]) {
-      clearInterval(reminderIntervalsRef.current[itemKey]);
-      delete reminderIntervalsRef.current[itemKey];
-    }
-    setActiveReminders(prev => { const s = new Set(prev); s.delete(itemKey); return s; });
-    setReminderCounts(prev => { const n = { ...prev }; delete n[itemKey]; return n; });
-  };
-
-  // Cleanup all intervals on unmount
-  useEffect(() => {
-    return () => { Object.values(reminderIntervalsRef.current).forEach(clearInterval); };
-  }, []);
-
   // ── Add inventory-item note helper ───────────────────────────────────
   const handleAddInvNote = (itemKey) => {
     const text = (invNoteInput[itemKey] || '').trim();
@@ -2170,8 +2148,6 @@ export default function Purchase() {
                             render: (_, r) => {
                               const req = raisedRequests.find(req => req.item === r.name);
                               const orderAlreadyRaised = !!findLinkedOrder(req);
-                              const hasReminder = activeReminders.has(r.key);
-                              const reminderCount = reminderCounts[r.key] || 0;
                               const noteCount = req ? (req.notes || []).length : (invItemNotes[r.key] || []).length;
                               const noteBtn = (
                                 <Badge count={noteCount} size="small" offset={[-2, 2]}>
@@ -2310,18 +2286,9 @@ export default function Purchase() {
 
                               if (whatsappSentItems.has(r.key)) return (
                                 <Space direction="vertical" size={4}>
-                                  {hasReminder && (
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 8, background: '#fff7e6', border: '1px solid #ffd591' }}>
-                                      <BellOutlined style={{ color: '#fa8c16', fontSize: 11 }} />
-                                      <Text style={{ fontSize: 10, color: '#d46b08' }}>Reminder{reminderCount > 0 ? ` ×${reminderCount}` : ' active'}</Text>
-                                      <Button type="text" size="small" icon={<CloseOutlined style={{ fontSize: 9 }} />}
-                                        style={{ padding: '0 2px', height: 14, minWidth: 14, color: '#888' }}
-                                        onClick={() => stopQuotationReminder(r.key)} />
-                                    </div>
-                                  )}
                                   <Space>
                                     <Button size="small" type="primary" icon={<PlusOutlined />}
-                                      onClick={() => { handleOpenRaiseRequest(r); stopQuotationReminder(r.key); }}
+                                      onClick={() => handleOpenRaiseRequest(r)}
                                       style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600 }}>
                                       Raise Request
                                     </Button>

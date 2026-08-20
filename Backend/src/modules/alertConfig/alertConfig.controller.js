@@ -10,14 +10,19 @@ exports.getAlertConfigs = asyncHandler(async (req, res) => {
 
 // Upserts by (group, role) — the UI always edits one of the 6 fixed rows,
 // never creates/deletes configs directly.
-exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
-  const { group, role, recipientUserIds, startTime, endTime, days, durationMinutes, audioUrl, audioPublicId, audioName, isEnabled } = req.body;
+const GRACE_GROUPS = ['low_stock', 'quotation_request'];
 
-  if (!['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'lr_payment'].includes(group)) {
+exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
+  const { group, role, recipientUserIds, startTime, endTime, days, durationMinutes, graceValue, graceUnit, audioUrl, audioPublicId, audioName, isEnabled } = req.body;
+
+  if (!['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'lr_payment', 'low_stock', 'quotation_request'].includes(group)) {
     return next(new AppError('Invalid alert group', 400));
   }
   if (group === 'design' && !['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(role)) {
     return next(new AppError('Invalid design role', 400));
+  }
+  if (GRACE_GROUPS.includes(group) && isEnabled && (!Number(graceValue) || Number(graceValue) <= 0)) {
+    return next(new AppError('Set a grace period (days/hours) before enabling this alert', 400));
   }
   const normalizedRole = group === 'design' ? role : null;
 
@@ -32,6 +37,7 @@ exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
         endTime: endTime || '18:00',
         days: Array.isArray(days) ? days : [],
         durationMinutes: durationMinutes || 30,
+        ...(GRACE_GROUPS.includes(group) ? { graceValue: Number(graceValue) || null, graceUnit: graceUnit === 'hours' ? 'hours' : 'days' } : {}),
         ...(audioUrl !== undefined ? { audioUrl, audioPublicId, audioName } : {}),
         isEnabled: !!isEnabled,
         updatedBy: req.user._id,

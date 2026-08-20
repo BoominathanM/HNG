@@ -7,6 +7,7 @@ const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const PickupOrder = require('../../models/PickupOrder');
 const QuotationComparison = require('../../models/QuotationComparison');
+const QuotationRequest = require('../../models/QuotationRequest');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -37,6 +38,18 @@ exports.getRequests = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, total, page, data: requests });
 });
 
+// Marks any outstanding ('asked') QuotationRequest for these items as resolved once a real
+// PurchaseRequest exists — this is what stops the Quotation Request Alert from continuing
+// to ring for them. Matched by itemId (+ vendorId when the raised request specifies one);
+// best-effort within the caller's own flow, not wrapped separately since a failure here
+// should surface the same way the rest of the raise/create call would.
+async function resolveQuotationRequests(itemIds, vendorId, purchaseRequestId) {
+  if (!itemIds.length) return;
+  const filter = { itemId: { $in: itemIds }, status: 'asked' };
+  if (vendorId) filter.vendorId = vendorId;
+  await QuotationRequest.updateMany(filter, { status: 'raised', purchaseRequestId, raisedAt: new Date() });
+}
+
 exports.createBulkRequest = asyncHandler(async (req, res) => {
   const { vendorId, items, paymentTerms, firstReminderDate } = req.body;
   const batchId = 'BATCH-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6).toUpperCase();
@@ -61,6 +74,7 @@ exports.createBulkRequest = asyncHandler(async (req, res) => {
     });
     created.push(req_);
   }
+  resolveQuotationRequests(items.map((it) => it.itemId).filter(Boolean), vendorId, null).catch(() => {});
   notifyRoles({ modules: ['Purchase', 'Financial'], type: 'purchase', title: 'Bulk Purchase Request', message: `${created.length} item(s) requested in batch — pending Finance approval`, link: '/purchase' }).catch(() => {});
   res.status(201).json({ success: true, data: created });
 });
@@ -94,6 +108,7 @@ exports.raiseRequest = asyncHandler(async (req, res) => {
       });
       created.push(doc);
     }
+    resolveQuotationRequests(items.map((it) => it.itemId).filter(Boolean), vendorId, created[0]?._id || null).catch(() => {});
     notifyRoles({ modules: ['Purchase', 'Financial'], type: 'purchase', title: 'Purchase Request Raised', message: `${created.length} item(s) requested — pending Finance approval`, link: '/purchase' }).catch(() => {});
     return res.status(201).json({ success: true, data: created });
   }
@@ -105,8 +120,35 @@ exports.raiseRequest = asyncHandler(async (req, res) => {
     requestCode: code,
     createdBy: req.user._id,
   });
+  if (request.itemId) resolveQuotationRequests([request.itemId], request.vendorId, request._id).catch(() => {});
   notifyRoles({ modules: ['Purchase', 'Financial'], type: 'purchase', title: 'Purchase Request Raised', message: `PR ${request.requestCode} — ${request.itemName} (${request.qty} ${request.unit || 'units'}) needs Finance approval`, link: '/purchase' }).catch(() => {});
   res.status(201).json({ success: true, data: request });
+});
+
+// POST /api/purchase/quotation-requests — records that "Ask Quotation"/"Re-Ask Quotation"
+// was sent to a vendor for an item, so the Quotation Request Alert (Settings → Alert
+// Configuration) has a real anchor timestamp to measure its configured grace period from.
+// Upserts onto any already-outstanding ('asked') record for the same item+vendor — a
+// re-ask bumps reAskedAt (restarting the alert's countdown) and askCount instead of
+// creating a second parallel record.
+exports.recordQuotationAsk = asyncHandler(async (req, res, next) => {
+  const { itemId, itemName, vendorId, vendorName } = req.body;
+  if (!itemId || !itemName) return next(new AppError('itemId and itemName are required', 400));
+
+  const existing = await QuotationRequest.findOne({ itemId, vendorId: vendorId || null, status: 'asked' });
+  if (existing) {
+    existing.reAskedAt = new Date();
+    existing.askCount = (existing.askCount || 1) + 1;
+    if (vendorName) existing.vendorName = vendorName;
+    await existing.save();
+    return res.status(200).json({ success: true, data: existing });
+  }
+
+  const created = await QuotationRequest.create({
+    itemId, itemName, vendorId: vendorId || undefined, vendorName,
+    askedAt: new Date(), createdBy: req.user._id,
+  });
+  res.status(201).json({ success: true, data: created });
 });
 
 exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
@@ -134,6 +176,9 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
   // rejection, sends it back to Pending for review
   if (request.status === 'Modification' || request.status === 'Rejected') request.status = 'Pending';
   await request.save({ validateBeforeSave: false });
+  // Resolves whatever QuotationRequest the "Re-Ask Quotation" action started for this
+  // item+vendor while it sat in Modification — this upload is what fulfills it.
+  if (request.itemId) resolveQuotationRequests([request.itemId], request.vendorId, request._id).catch(() => {});
   notifyRoles({ modules: ['Financial'], userIds: [request.createdBy], type: 'purchase', title: 'Quotation File Uploaded', message: `Quotation uploaded for PR ${request.requestCode} (${request.itemName}) — ready for Finance review`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: request });
 });

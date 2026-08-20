@@ -10,6 +10,13 @@ const inventoryItemSchema = new mongoose.Schema({
   openingStock: { type: Number, default: 0 },
   currentStock: { type: Number, default: 0 },
   minStock: { type: Number, default: 0 },
+  // Set the moment currentStock first drops below minStock, cleared once it's back to/above
+  // minStock — the anchor timestamp the Low Stock Alert (AlertConfig group:'low_stock')
+  // measures its configured grace period from. Kept in sync lazily by
+  // utils/alertConfigQueries.js on each alert-scheduler tick rather than at every
+  // stock-mutating call site, so a partial restock that's still below minStock does NOT
+  // reset it — only crossing back above minStock does.
+  lowStockSince: { type: Date, default: null },
   purchasePrice: { type: Number, default: 0 },
   marginAmount: { type: Number, default: 0 },
   sellingPrice: { type: Number, default: 0 },

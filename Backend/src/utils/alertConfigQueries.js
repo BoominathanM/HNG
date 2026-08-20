@@ -5,6 +5,17 @@ const StickerRequest = require('../models/StickerRequest');
 const Order = require('../models/Order');
 const Task = require('../models/Task');
 const PurchaseOrder = require('../models/PurchaseOrder');
+const InventoryItem = require('../models/InventoryItem');
+const QuotationRequest = require('../models/QuotationRequest');
+
+// Grace period ('low_stock'/'quotation_request' only) — how long a record must stay
+// pending before the FIRST alert fires, in milliseconds. Every other group has no grace
+// period (graceValue stays null) and fires immediately on first-seen-pending.
+function graceMs(config) {
+  const val = Number(config.graceValue) || 0;
+  if (val <= 0) return 0;
+  return config.graceUnit === 'hours' ? val * 60 * 60 * 1000 : val * 24 * 60 * 60 * 1000;
+}
 
 // AlertConfig.role matches User.role ('Ziplock'), but StickerRequest.stickerType
 // uses the longer label ('Frosted Ziplock') — translate before querying the queue.
@@ -131,6 +142,56 @@ async function getPendingRecordsForConfig(config) {
       title: `LR payment due — ${r.itemName || r.poCode}${r.lrNumber ? ` (LR ${r.lrNumber})` : ''}${r.lrPaymentStatus === 'Partial Paid' ? ' (Partially Paid)' : ''}`,
       link: '/financial',
     }));
+  }
+
+  if (config.group === 'low_stock') {
+    // Sync each item's lowStockSince flag before evaluating the grace period — set the
+    // moment it's first seen below minStock, cleared once it's back to/above minStock
+    // (per product decision: a partial restock that's still below minStock does NOT
+    // reset the timer, only crossing back above minStock does). Lazily kept in sync here
+    // (this branch runs every scheduler tick) rather than at every stock-mutating call
+    // site scattered across inventory/purchase/sales controllers.
+    const now = new Date();
+    const items = await InventoryItem.find({ deletedAt: null, minStock: { $gt: 0 } });
+    for (const item of items) {
+      const isLow = item.currentStock < item.minStock;
+      if (isLow && !item.lowStockSince) {
+        item.lowStockSince = now;
+        await item.save({ validateBeforeSave: false });
+      } else if (!isLow && item.lowStockSince) {
+        item.lowStockSince = null;
+        await item.save({ validateBeforeSave: false });
+      }
+    }
+
+    const grace = graceMs(config);
+    return items
+      .filter((item) => item.lowStockSince && now.getTime() - new Date(item.lowStockSince).getTime() >= grace)
+      .map((item) => ({
+        recordType: 'InventoryItem',
+        recordId: item._id,
+        record: item,
+        title: `Low Stock — ${item.itemName} (${item.currentStock}/${item.minStock} ${item.unit || 'units'} remaining, not purchased yet)`,
+        link: '/purchase',
+      }));
+  }
+
+  if (config.group === 'quotation_request') {
+    const now = new Date();
+    const grace = graceMs(config);
+    const items = await QuotationRequest.find({ status: 'asked' }).lean();
+    return items
+      .filter((r) => {
+        const anchor = r.reAskedAt || r.askedAt;
+        return anchor && now.getTime() - new Date(anchor).getTime() >= grace;
+      })
+      .map((r) => ({
+        recordType: 'QuotationRequest',
+        recordId: r._id,
+        record: r,
+        title: `Quotation not raised — ${r.itemName}${r.vendorName ? ` (${r.vendorName})` : ''}${r.askCount > 1 ? `, asked ${r.askCount}x` : ''}`,
+        link: '/purchase',
+      }));
   }
 
   if (config.group === 'sales_approval' || config.group === 'operations_approval') {

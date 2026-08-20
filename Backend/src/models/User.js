@@ -39,6 +39,12 @@ const userSchema = new mongoose.Schema({
   rewardThreeQtr: { type: String, default: '', trim: true },
   rewardFull: { type: String, default: '', trim: true },
   refreshToken: { type: String, select: false },
+  // Short-lived holdover for the refresh token that was just rotated out, so a
+  // concurrent /auth/refresh call from another browser tab (racing right behind
+  // the one that won the rotation) isn't hard-rejected into a forced logout.
+  // See sendTokens/refresh in auth.controller.js.
+  previousRefreshToken: { type: String, select: false },
+  previousRefreshTokenExpires: { type: Date, select: false },
   rememberMe: { type: Boolean, default: false, select: false },
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

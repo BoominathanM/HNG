@@ -82,6 +82,7 @@ const DEPT_ROLES = {
   Dispatch: ['Dispatch Executive', 'Dispatch Manager', 'Dispatch Head'],
   Finance: ['Finance Executive', 'Finance Manager', 'Finance Head'],
   Vendors: ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'],
+  Purchase: ['Purchase Executive', 'Purchase Manager', 'Purchase Head'],
 };
 
 const ALL_PERMS = { read: true, add: true, edit: true, delete: true };
@@ -162,7 +163,7 @@ export default function Settings() {
   const [customDeptRoles, setCustomDeptRoles] = useState({});
 
   // Departments (fixed list — no user-facing add option)
-  const departments = ['Sales', 'Operations', 'Task Management', 'Dispatch', 'Finance', 'Vendors', 'Admin', 'Management'];
+  const departments = ['Sales', 'Operations', 'Task Management', 'Dispatch', 'Finance', 'Vendors', 'Purchase', 'Admin', 'Management'];
 
   // Users — RTK Query
   const { data: usersData, isLoading: usersLoading } = useGetUsersQuery({ limit: 500 });
