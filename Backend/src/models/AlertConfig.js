@@ -18,7 +18,7 @@ const alertConfigSchema = new mongoose.Schema({
   days: { type: [{ type: String, enum: DAYS }], default: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] },
   durationMinutes: { type: Number, default: 30 }, // repeat cadence while still pending
   audioUrl: String,
-  audioPublicId: String,
+  audioPublicId: String,    
   audioName: String,
   isEnabled: { type: Boolean, default: false }, // off until an admin sets recipients + audio
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

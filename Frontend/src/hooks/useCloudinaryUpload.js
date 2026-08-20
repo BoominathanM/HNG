@@ -14,7 +14,7 @@ export function useCloudinaryUpload() {
 
   return (folder = 'general') =>
     async ({ file, onSuccess, onError }) => {
-      const formData = new FormData();
+      const formData = new FormData();    
       formData.append('files', file);
       try {
         const res = await uploadFilesMutation({ formData, folder }).unwrap();
