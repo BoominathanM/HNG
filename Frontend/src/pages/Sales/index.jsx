@@ -11,7 +11,7 @@ import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, SearchOutlined, EyeOutlined, EditOutlined,
   FileTextOutlined, PhoneOutlined, MailOutlined, UserOutlined,
-  WhatsAppOutlined, MinusCircleOutlined, CheckOutlined, CheckCircleOutlined,
+  WhatsAppOutlined, MinusCircleOutlined, CheckOutlined, CheckCircleOutlined, CloseCircleOutlined,
   DownloadOutlined, UploadOutlined, ArrowRightOutlined, PrinterOutlined,
   BankOutlined, EnvironmentOutlined, TeamOutlined, CalendarOutlined,
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
@@ -71,6 +71,7 @@ import {
   useUploadFilesMutation,
   useGetStickerRequestsQuery,
   useApproveStickerRequestMutation,
+  useRejectStickerRequestMutation,
   useGetCompanySettingsQuery,
   useGetPackingConfigQuery,
   useApproveEmergencySalesHeadMutation,
@@ -2192,6 +2193,7 @@ const KNOWN_PRODUCT_NAMES = new Set([
 export default function Sales() {
   const isDark = useSelector((s) => s.theme.isDark);
   const currentUser = useSelector((s) => s.auth?.user);
+  const isSalesExec = currentUser?.role === 'Sales Executive';
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
@@ -2244,6 +2246,10 @@ export default function Sales() {
   const [leadForm] = Form.useForm();
   const [editingSection, setEditingSection] = useState(null);
   const [followupNote, setFollowupNote] = useState('');
+  // True once handleOldHotelLookup has auto-filled the form from an existing "Old Hotel"
+  // match — used to lock those auto-filled fields for Sales Executives so they can't
+  // silently overwrite another salesperson's hotel data while raising a new lead/order.
+  const [oldHotelAutoFilled, setOldHotelAutoFilled] = useState(false);
 
   // Quotation state
   const [quotationFromLead, setQuotationFromLead] = useState(null);
@@ -2434,24 +2440,30 @@ export default function Sales() {
         placeOfSupply: rec.state || '',
       },
     };
-    const clientPartyId = rec?.clientPartyId?._id || rec?.clientPartyId;
-    // rec is a Quotation/Negotiation record, not an Invoice, so there's no invoice of its own
-    // to exclude — matches everywhere else the hotel has an unpaid invoice on file.
-    const pendingDue = await fetchHotelPendingDue({ clientPartyId, clientName: data.customer.name });
-    const html = generatePrintHTML('quotation', pendingDue ? { ...data, pendingDue } : data, invoiceSettings);
-    const blob = new Blob([html], { type: 'text/html' });
-    const blobUrl = URL.createObjectURL(blob);
-    const win = window.open(blobUrl, '_blank');
-    if (!win) {
-      enqueueSnackbar('Popup blocked — downloading as file instead.', { variant: 'info' });
+    const rowKey = rec?.key || rec?._id || docCode;
+    setDownloadingOrderKey(rowKey);
+    try {
+      const clientPartyId = rec?.clientPartyId?._id || rec?.clientPartyId;
+      // rec is a Quotation/Negotiation record, not an Invoice, so there's no invoice of its own
+      // to exclude — matches everywhere else the hotel has an unpaid invoice on file.
+      const pendingDue = await fetchHotelPendingDue({ clientPartyId, clientName: data.customer.name });
+      // Same real-PDF pipeline as Orders' "Download Invoice" — rasterized via html2pdf so the
+      // logo (a relative /hnglogonew.png URL) resolves against the page origin and the file
+      // downloads directly instead of opening as a bare blob: HTML tab.
+      const pdfBlob = await generateOrderDocPdfBlob(pendingDue ? { ...data, pendingDue } : data);
+      const blobUrl = URL.createObjectURL(pdfBlob);
       const a = document.createElement('a');
       a.href = blobUrl;
-      a.download = filename || `quotation-${docCode || 'doc'}.html`;
+      a.download = (filename || `quotation-${docCode || 'doc'}`).replace(/\.html$/i, '') + '.pdf';
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
+    } catch (err) {
+      enqueueSnackbar(err?.message || 'Failed to generate PDF', { variant: 'error' });
+    } finally {
+      setDownloadingOrderKey(null);
     }
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 30000);
   };
 
   // Resolve an order's kit / composition fields, falling back to the linked
@@ -3598,6 +3610,24 @@ export default function Sales() {
   const [uploadFilesMutation] = useUploadFilesMutation();
   const { data: stickerData } = useGetStickerRequestsQuery();
   const [approveStickerRequest] = useApproveStickerRequestMutation();
+  const [rejectStickerRequest] = useRejectStickerRequestMutation();
+  const [designRejectModal, setDesignRejectModal] = useState(null); // { id, label } | null
+  const [designRejectReason, setDesignRejectReason] = useState('');
+  const [designRejectSubmitting, setDesignRejectSubmitting] = useState(false);
+  const submitDesignReject = async () => {
+    if (!designRejectModal || !designRejectReason.trim()) return;
+    setDesignRejectSubmitting(true);
+    try {
+      await rejectStickerRequest({ id: designRejectModal.id, role: 'sales', reason: designRejectReason.trim() }).unwrap();
+      enqueueSnackbar('Design rejected — sent back to the design team for rework', { variant: 'success' });
+      setDesignRejectModal(null);
+      setDesignRejectReason('');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to reject design', { variant: 'error' });
+    } finally {
+      setDesignRejectSubmitting(false);
+    }
+  };
   const [approveEmergencySalesHead] = useApproveEmergencySalesHeadMutation();
   const [emergencySalesApprovalOrder, setEmergencySalesApprovalOrder] = useState(null);
   const [approvingEmergencyTaskId, setApprovingEmergencyTaskId] = useState(null);
@@ -4334,6 +4364,7 @@ export default function Sales() {
     setEditingSection(null);
     setGstAddApiData(null);
     setGstAddApiError(null);
+    setOldHotelAutoFilled(false);
     leadForm.resetFields();
     if (lead) {
       leadForm.setFieldsValue(prepareFormValues({ ...lead }));
@@ -4484,6 +4515,12 @@ export default function Sales() {
     if (values.rowsInHotel !== undefined) {
       values.numRooms = Number(values.rowsInHotel) || undefined;
     }
+    // The Lead schema's alt-contact fields are altRole/altName/altNumber, not the form's
+    // alternativeRole/Name/Phone — map them so the saved record (and its edit history diff)
+    // land on the canonical field instead of an unrelated shadow field.
+    if (values.alternativeRole !== undefined) values.altRole = values.alternativeRole;
+    if (values.alternativeName !== undefined) values.altName = values.alternativeName;
+    if (values.alternativePhone !== undefined) values.altNumber = values.alternativePhone;
     ['followUpDate', 'quotationDate', 'softwareExpiryDate', 'orderDeliveryDate', 'paymentReminderDate', 'creditDueDate'].forEach(f => {
       if (values[f]) values[f] = toStr(values[f]);
     });
@@ -4799,7 +4836,12 @@ export default function Sales() {
           ...(p || {}),
         }));
         const qKitOrders = pickArrQ(values.kitOrders, qStore.kitOrders, editingQuotation.kitOrders);
-        const qKitAware = r2(computeRecordGrandTotal({ ...editingQuotation, ...values, products: qProducts, kitOrders: qKitOrders }));
+        // Collapse-safe packaging includes: the "Included in Kit Packaging" block only mounts
+        // while Personalized is selected, so validateFields() can omit it — fall back through
+        // the full form store, then the record being edited (mirrors qProducts/qKitOrders above).
+        const qPackagingIncludes = pickArrQ(values.packagingIncludes, qStore.packagingIncludes, editingQuotation.packagingIncludes);
+        const qPackagingIncludesQty = values.packagingIncludesQty ?? qStore.packagingIncludesQty ?? editingQuotation.packagingIncludesQty;
+        const qKitAware = r2(computeRecordGrandTotal({ ...editingQuotation, ...values, products: qProducts, kitOrders: qKitOrders, packagingIncludes: qPackagingIncludes, packagingIncludesQty: qPackagingIncludesQty }));
         const qTotal = qKitAware > 0 ? qKitAware : (Number(editingQuotation.total || editingQuotation.totalAmount) || total);
         const newRevision = { version: `v${(editingQuotation.revisionHistory?.length || 0) + 1}`, date: now, by: 'Sales Team', note: 'Products / terms updated' };
         const updated = {
@@ -4807,6 +4849,8 @@ export default function Sales() {
           ...values,
           products: qProducts,
           kitOrders: qKitOrders,
+          packagingIncludes: qPackagingIncludes,
+          packagingIncludesQty: qPackagingIncludesQty,
           totalAmount: qTotal,
           total: qTotal,
           revisionHistory: [...(editingQuotation.revisionHistory || []), newRevision],
@@ -4817,6 +4861,8 @@ export default function Sales() {
             ...values,
             products: qProducts,
             kitOrders: qKitOrders,
+            packagingIncludes: qPackagingIncludes,
+            packagingIncludesQty: qPackagingIncludesQty,
             totalAmount: qTotal,
             total: qTotal,
             // Spread the full product FIRST (see create-path comment above) so an edit to an
@@ -5090,6 +5136,7 @@ export default function Sales() {
       billType: 'GST',
       gstPhone: undefined,
     });
+    setOldHotelAutoFilled(false);
   };
 
   const handleOldHotelLookup = async () => {
@@ -5140,8 +5187,10 @@ export default function Sales() {
             hotelLogo: [{ uid: '-1', name: 'hotel-logo', status: 'done', url: d.hotelLogoUrl }],
           } : {}),
         });
+        setOldHotelAutoFilled(true);
         enqueueSnackbar(`Auto-filled details for ${name}`, { variant: 'success' });
       } else {
+        setOldHotelAutoFilled(false);
         enqueueSnackbar(`No existing record found for ${name}`, { variant: 'info' });
       }
     } catch { /* lookup is best-effort */ }
@@ -5707,13 +5756,18 @@ export default function Sales() {
       const pickArrN = (...vals) => { for (const v of vals) if (Array.isArray(v)) return v; return []; };
       const nProducts = pickArrN(values.products, nStore.products, editingNegotiation.products);
       const nKitOrders = pickArrN(values.kitOrders, nStore.kitOrders, editingNegotiation.kitOrders);
+      // Collapse-safe packaging includes: the "Included in Kit Packaging" block only mounts
+      // while Personalized is selected, so validateFields() can omit it — fall back through
+      // the full form store, then the record being edited (mirrors nProducts/nKitOrders above).
+      const nPackagingIncludes = pickArrN(values.packagingIncludes, nStore.packagingIncludes, editingNegotiation.packagingIncludes);
+      const nPackagingIncludesQty = values.packagingIncludesQty ?? nStore.packagingIncludesQty ?? editingNegotiation.packagingIncludesQty;
       const subtotal = calcTotal(nProducts);
       const gstAmt = calcGstAmount(nProducts);
       const exactTotal = subtotal + gstAmt;
       const roundedTotal = Math.round(exactTotal / 100) * 100;
       const nonKitTotal = values.useRoundedTotal ? roundedTotal : exactTotal;
       // Kit-aware grand total (kit bucket + separate + forwarding) so it matches the table/detail.
-      const nKitAware = r2(computeRecordGrandTotal({ ...editingNegotiation, ...values, products: nProducts, kitOrders: nKitOrders }));
+      const nKitAware = r2(computeRecordGrandTotal({ ...editingNegotiation, ...values, products: nProducts, kitOrders: nKitOrders, packagingIncludes: nPackagingIncludes, packagingIncludesQty: nPackagingIncludesQty }));
       const total = nKitAware > 0 ? nKitAware : nonKitTotal;
       const nextStep = Math.min((editingNegotiation.flowStep || 0) + 1, 3);
       const nextStatus = ['Initial', 'Counter Offer', 'Final Terms', 'Approved'][nextStep] || 'Final Terms';
@@ -5735,6 +5789,8 @@ export default function Sales() {
         ...patchValues,
         products: nProducts,
         kitOrders: nKitOrders,
+        packagingIncludes: nPackagingIncludes,
+        packagingIncludesQty: nPackagingIncludesQty,
         total,
         amount: subtotal,
         gstAmount: gstAmt,
@@ -6013,7 +6069,7 @@ export default function Sales() {
         <Space size={4}>
           <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={() => { setSelectedRecord(r); setViewMode('negotiation-detail'); }} /></Tooltip>
           <Tooltip title="Download Quotation">
-            <Button size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); handleDownloadDirect(r, `negotiation-${r.nid || 'doc'}.html`); }} />
+            <Button size="small" icon={<DownloadOutlined />} loading={downloadingOrderKey === (r.key || r._id)} onClick={(e) => { e.stopPropagation(); handleDownloadDirect(r, `negotiation-${r.nid || 'doc'}.html`); }} />
           </Tooltip>
           <Tooltip title="Convert to Order">
             <Button size="small" style={{ background: '#52c41a', color: '#fff', border: 'none', fontSize: 11 }} onClick={() => convertNegotiationToOrder(r)}>
@@ -6099,7 +6155,7 @@ export default function Sales() {
             <Button size="small" icon={<EyeOutlined />} onClick={() => openQuotationDetail(r)} />
           </Tooltip>
           <Tooltip title="Download Quotation">
-            <Button size="small" icon={<DownloadOutlined />} onClick={(e) => { e.stopPropagation(); handleDownloadDirect(r, `quotation-${r.qid || 'doc'}.html`); }} />
+            <Button size="small" icon={<DownloadOutlined />} loading={downloadingOrderKey === (r.key || r._id)} onClick={(e) => { e.stopPropagation(); handleDownloadDirect(r, `quotation-${r.qid || 'doc'}.html`); }} />
           </Tooltip>
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
@@ -6825,7 +6881,7 @@ export default function Sales() {
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('quotations'); }} style={{ borderRadius: 8 }}>Back to Quotations</Button>
             <Space wrap>
               <Button icon={<EditOutlined />} onClick={() => editExistingQuotation(q)} style={{ borderRadius: 8 }}>Edit Products</Button>
-              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} onClick={() => handleDownloadDirect(q, `quotation-${q.qid || 'doc'}.html`)}>Download Quotation</Button>
+              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} loading={downloadingOrderKey === (q.key || q._id)} onClick={() => handleDownloadDirect(q, `quotation-${q.qid || 'doc'}.html`)}>Download Quotation</Button>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(q)}>WhatsApp</Button>
               <Button style={{ background: '#722ed1', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => convertToNegotiation(q)}>Convert to Negotiation</Button>
               <Button style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => startOrderFromQuotation(q)}>Convert to Order</Button>
@@ -6947,6 +7003,31 @@ export default function Sales() {
                 const qKitLamination = q.kitLamination || (Array.isArray(q.kitOrders) && q.kitOrders[0]?.lamination) || qLeadPA?.kitLamination;
                 if (!qProdType && qSelKitsPA.length === 0 && !qKitDUPA && !qKitPrice) return null;
                 const normYN = v => (v === 'YES' || v === true ? 'Yes' : v === 'NO' || v === false ? 'No' : v || '—');
+                // Kit contents + personalized-kit packaging — mirrors Order/Lead detail view.
+                const qKitOrdersPA = (Array.isArray(q.kitOrders) && q.kitOrders.length > 0 ? q.kitOrders : null)
+                  || (Array.isArray(qLeadPA?.kitOrders) && qLeadPA.kitOrders.length > 0 ? qLeadPA.kitOrders : null) || [];
+                const qProductsPA = (q.products && q.products.length ? q.products : (qLeadPA?.products || [])) || [];
+                const qKitPsPA = qProductsPA.filter(p => p && (p.isKit || p.kitType));
+                const isKitTypeQ = ptHasKitUI(qProdType);
+                const qPackagingIncludes = (Array.isArray(q.packagingIncludes) && q.packagingIncludes.length > 0 ? q.packagingIncludes : null)
+                  || (Array.isArray(qLeadPA?.packagingIncludes) && qLeadPA.packagingIncludes.length > 0 ? qLeadPA.packagingIncludes : null) || [];
+                const qKitProductsToShow = qKitPsPA.length > 0
+                  ? qKitPsPA.map(p => ({
+                      productName: p.name || p.kitType || p.itemName || '',
+                      displayType: p.displayType || '',
+                      qty: p.qty,
+                      rate: p.rate || 0,
+                      gstPercent: p.gst || p.gstPercent || 0,
+                    }))
+                  : (qSelKitsPA.length > 0
+                      ? (kits.find(k => k._id === qSelKitsPA[0])?.products || []).map(p => ({
+                          productName: p.productName || '',
+                          displayType: '',
+                          qty: p.qty,
+                          rate: p.rate || 0,
+                          gstPercent: 0,
+                        }))
+                      : []);
                 return (
                   <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
@@ -6971,6 +7052,73 @@ export default function Sales() {
                       {Number(qKitQty) > 0 && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{qKitQty} kit{Number(qKitQty) > 1 ? 's' : ''}</Text></Col>}
                       {(qKitPrice != null && qKitPrice !== '' && Number(qKitQty) > 0) && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{(Number(qKitPrice) * Number(qKitQty)).toLocaleString()}</Text></Col>}
                     </Row>
+                    {/* Per-kit sub-rows — each kit's category + display unit */}
+                    {qSelKitsPA.length > 0 && qKitOrdersPA.length > 0 && (
+                      <div style={{ marginTop: 10 }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                          EACH KIT — CATEGORY &amp; DISPLAY UNIT
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          {qSelKitsPA.map((kitId, ki) => {
+                            const ko = qKitOrdersPA.find(k => k.kitId === kitId) || qKitOrdersPA[ki] || {};
+                            const kitDef = kits.find(k => k._id === kitId);
+                            const kName = kitDef?.kitName || ko.kitName || ko.kitType || `Kit ${ki + 1}`;
+                            const kDU = ko.displayUnit;
+                            const kCat = ko.category;
+                            return (
+                              <div key={kitId} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '6px 10px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                                <GiftOutlined style={{ color: '#722ed1' }} />
+                                <Text strong style={{ fontSize: 12, color: '#722ed1' }}>{kName}</Text>
+                                {kCat && <Tag color={kCat === ORDER_CATEGORIES.PERSONALIZED ? 'purple' : 'orange'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{kCat === ORDER_CATEGORIES.PERSONALIZED ? 'Personalized' : 'Separate Kit'}</Tag>}
+                                {kDU && <Tag color="blue" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{(kDU || '').replace(/_/g, ' ')}</Tag>}
+                                {ko.size && <Tag style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{ko.size}</Tag>}
+                                {ko.sticker && <Tag color={ko.sticker === 'YES' ? 'cyan' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Sticker: {normYN(ko.sticker)}</Tag>}
+                                {ko.logo && <Tag color={ko.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Logo: {normYN(ko.logo)}</Tag>}
+                                {ko.printing && <Tag color={ko.printing === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Printing: {normYN(ko.printing)}</Tag>}
+                                {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>₹{Number(ko.kitPrice).toLocaleString()}{Number(ko.overallQty) > 0 ? ` × ${ko.overallQty}` : ''}</Tag>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {/* Kit contents — the actual product rows inside the (Separate/Personalized) kit */}
+                    {isKitTypeQ && qKitProductsToShow.length > 0 && (
+                      <div style={{ marginTop: 10 }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
+                          KIT CONTENTS ({qKitProductsToShow.length} items)
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {qKitProductsToShow.map((kp, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                              <div>
+                                <Text strong style={{ fontSize: 13 }}>{kp.productName || '—'}</Text>
+                                {kp.displayType && <Tag color="purple" style={{ marginLeft: 8, borderRadius: 12, fontSize: 10 }}>{kp.displayType}</Tag>}
+                              </div>
+                              <div style={{ textAlign: 'right' }}>
+                                <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{r2((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Packaging includes */}
+                    {ptHasPersonalized(qProdType) && qPackagingIncludes.length > 0 && (
+                      <div style={{ marginTop: 10, padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6, letterSpacing: 0.6 }}>INCLUDED IN KIT PACKAGING</Text>
+                        <Space wrap size={4}>
+                          {qPackagingIncludes.map((v, i) => {
+                            const id = typeof v === 'object' ? v.id : v;
+                            const qty = typeof v === 'object' ? v.qty : null;
+                            const kMatch = kits.find(k => k._id === id);
+                            const label = kMatch ? kMatch.kitName : id;
+                            return <Tag key={i} color={kMatch ? 'purple' : 'orange'} style={{ borderRadius: 12, fontSize: 11 }}>{label}{qty && qty > 1 ? ` ×${qty}` : ''}</Tag>;
+                          })}
+                        </Space>
+                      </div>
+                    )}
                   </Card>
                 );
               })()}
@@ -7279,7 +7427,7 @@ export default function Sales() {
             <Button icon={<ArrowRightOutlined rotate={180} />} onClick={() => { setViewMode('table'); setActiveTab('quotations'); }} style={{ borderRadius: 8 }}>Back to Quotations & Negotiations</Button>
             <Space wrap>
               <Button icon={<EditOutlined />} onClick={() => editNegotiation(n)} style={{ borderRadius: 8, background: '#fa8c16', color: '#fff', border: 'none' }}>Submit Counter Offer</Button>
-              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} onClick={() => handleDownloadDirect(n, `negotiation-${n.nid || 'doc'}.html`)}>Download Quotation</Button>
+              <Button icon={<DownloadOutlined />} style={{ borderRadius: 8 }} loading={downloadingOrderKey === (n.key || n._id)} onClick={() => handleDownloadDirect(n, `negotiation-${n.nid || 'doc'}.html`)}>Download Quotation</Button>
               <Button icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => sendViaWhatsApp(n)}>WhatsApp</Button>
               {(n.flowStep || 0) >= 2 && (
                 <Button style={{ background: '#52c41a', color: '#fff', border: 'none', borderRadius: 8 }} onClick={() => convertNegotiationToOrder(n)}>Convert to Order</Button>
@@ -7471,6 +7619,31 @@ export default function Sales() {
                 const nKitLamination = n.kitLamination || (Array.isArray(n.kitOrders) && n.kitOrders[0]?.lamination) || nLeadPA?.kitLamination;
                 if (!nProdType && nSelKitsPA.length === 0 && !nKitDUPA && !nKitPrice) return null;
                 const normYN = v => (v === 'YES' || v === true ? 'Yes' : v === 'NO' || v === false ? 'No' : v || '—');
+                // Kit contents + personalized-kit packaging — mirrors Order/Lead detail view.
+                const nKitOrdersPA = (Array.isArray(n.kitOrders) && n.kitOrders.length > 0 ? n.kitOrders : null)
+                  || (Array.isArray(nLeadPA?.kitOrders) && nLeadPA.kitOrders.length > 0 ? nLeadPA.kitOrders : null) || [];
+                const nProductsPA = (n.products && n.products.length ? n.products : (nLeadPA?.products || [])) || [];
+                const nKitPsPA = nProductsPA.filter(p => p && (p.isKit || p.kitType));
+                const isKitTypeN = ptHasKitUI(nProdType);
+                const nPackagingIncludes = (Array.isArray(n.packagingIncludes) && n.packagingIncludes.length > 0 ? n.packagingIncludes : null)
+                  || (Array.isArray(nLeadPA?.packagingIncludes) && nLeadPA.packagingIncludes.length > 0 ? nLeadPA.packagingIncludes : null) || [];
+                const nKitProductsToShow = nKitPsPA.length > 0
+                  ? nKitPsPA.map(p => ({
+                      productName: p.name || p.kitType || p.itemName || '',
+                      displayType: p.displayType || '',
+                      qty: p.qty,
+                      rate: p.rate || 0,
+                      gstPercent: p.gst || p.gstPercent || 0,
+                    }))
+                  : (nSelKitsPA.length > 0
+                      ? (kits.find(k => k._id === nSelKitsPA[0])?.products || []).map(p => ({
+                          productName: p.productName || '',
+                          displayType: '',
+                          qty: p.qty,
+                          rate: p.rate || 0,
+                          gstPercent: 0,
+                        }))
+                      : []);
                 return (
                   <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><GiftOutlined style={{ color: '#722ed1' }} /><span>Products adding</span></Space>}>
@@ -7495,6 +7668,73 @@ export default function Sales() {
                       {Number(nKitQty) > 0 && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Overall Qty</Text><Text strong style={{ fontSize: 13, display: 'block' }}>{nKitQty} kit{Number(nKitQty) > 1 ? 's' : ''}</Text></Col>}
                       {(nKitPrice != null && nKitPrice !== '' && Number(nKitQty) > 0) && <Col xs={12} sm={6}><Text type="secondary" style={{ fontSize: 11 }}>Kit Amount</Text><Text strong style={{ fontSize: 13, display: 'block', color: '#B11E6A' }}>₹{(Number(nKitPrice) * Number(nKitQty)).toLocaleString()}</Text></Col>}
                     </Row>
+                    {/* Per-kit sub-rows — each kit's category + display unit */}
+                    {nSelKitsPA.length > 0 && nKitOrdersPA.length > 0 && (
+                      <div style={{ marginTop: 10 }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', letterSpacing: 0.5, display: 'block', marginBottom: 6 }}>
+                          EACH KIT — CATEGORY &amp; DISPLAY UNIT
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                          {nSelKitsPA.map((kitId, ki) => {
+                            const ko = nKitOrdersPA.find(k => k.kitId === kitId) || nKitOrdersPA[ki] || {};
+                            const kitDef = kits.find(k => k._id === kitId);
+                            const kName = kitDef?.kitName || ko.kitName || ko.kitType || `Kit ${ki + 1}`;
+                            const kDU = ko.displayUnit;
+                            const kCat = ko.category;
+                            return (
+                              <div key={kitId} style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, padding: '6px 10px', background: isDark ? 'rgba(114,46,209,0.06)' : 'rgba(114,46,209,0.03)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                                <GiftOutlined style={{ color: '#722ed1' }} />
+                                <Text strong style={{ fontSize: 12, color: '#722ed1' }}>{kName}</Text>
+                                {kCat && <Tag color={kCat === ORDER_CATEGORIES.PERSONALIZED ? 'purple' : 'orange'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{kCat === ORDER_CATEGORIES.PERSONALIZED ? 'Personalized' : 'Separate Kit'}</Tag>}
+                                {kDU && <Tag color="blue" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{(kDU || '').replace(/_/g, ' ')}</Tag>}
+                                {ko.size && <Tag style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>{ko.size}</Tag>}
+                                {ko.sticker && <Tag color={ko.sticker === 'YES' ? 'cyan' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Sticker: {normYN(ko.sticker)}</Tag>}
+                                {ko.logo && <Tag color={ko.logo === 'YES' ? 'green' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Logo: {normYN(ko.logo)}</Tag>}
+                                {ko.printing && <Tag color={ko.printing === 'YES' ? 'purple' : 'default'} style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>Printing: {normYN(ko.printing)}</Tag>}
+                                {Number(ko.kitPrice) > 0 && <Tag color="orange" style={{ borderRadius: 10, fontSize: 11, margin: 0 }}>₹{Number(ko.kitPrice).toLocaleString()}{Number(ko.overallQty) > 0 ? ` × ${ko.overallQty}` : ''}</Tag>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {/* Kit contents — the actual product rows inside the (Separate/Personalized) kit */}
+                    {isKitTypeN && nKitProductsToShow.length > 0 && (
+                      <div style={{ marginTop: 10 }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.8, color: '#722ed1', display: 'block', marginBottom: 8 }}>
+                          KIT CONTENTS ({nKitProductsToShow.length} items)
+                        </Text>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                          {nKitProductsToShow.map((kp, i) => (
+                            <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 14px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.12)' }}>
+                              <div>
+                                <Text strong style={{ fontSize: 13 }}>{kp.productName || '—'}</Text>
+                                {kp.displayType && <Tag color="purple" style={{ marginLeft: 8, borderRadius: 12, fontSize: 10 }}>{kp.displayType}</Tag>}
+                              </div>
+                              <div style={{ textAlign: 'right' }}>
+                                <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{r2((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Packaging includes */}
+                    {ptHasPersonalized(nProdType) && nPackagingIncludes.length > 0 && (
+                      <div style={{ marginTop: 10, padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.2)' }}>
+                        <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6, letterSpacing: 0.6 }}>INCLUDED IN KIT PACKAGING</Text>
+                        <Space wrap size={4}>
+                          {nPackagingIncludes.map((v, i) => {
+                            const id = typeof v === 'object' ? v.id : v;
+                            const qty = typeof v === 'object' ? v.qty : null;
+                            const kMatch = kits.find(k => k._id === id);
+                            const label = kMatch ? kMatch.kitName : id;
+                            return <Tag key={i} color={kMatch ? 'purple' : 'orange'} style={{ borderRadius: 12, fontSize: 11 }}>{label}{qty && qty > 1 ? ` ×${qty}` : ''}</Tag>;
+                          })}
+                        </Space>
+                      </div>
+                    )}
                   </Card>
                 );
               })()}
@@ -8156,6 +8396,7 @@ export default function Sales() {
                               <Tag color={
                                 sr.status === 'Approved' ? 'success' :
                                 sr.status === 'Waiting for Approval' ? 'warning' :
+                                sr.status === 'Design Change' ? 'error' :
                                 sr.status === 'In Process' || sr.status === 'Printing' ? 'processing' : 'default'
                               } style={{ borderRadius: 10, fontSize: 11 }}>
                                 {sr.status}
@@ -8187,43 +8428,68 @@ export default function Sales() {
                               <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>
                             )}
 
-                            {/* Sales approval button or approved tag */}
+                            {/* Sales approval status — Approved / Rejected / action buttons, all in one status area */}
                             {sr.salesApproved ? (
                               <Tooltip title={`Approved by ${sr.salesApprovedBy?.fullName || 'Sales'} on ${sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
                                 <Tag color="success" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
                                   Sales OK · {sr.salesApprovedAt ? new Date(sr.salesApprovedAt).toLocaleDateString('en-IN') : ''}
                                 </Tag>
                               </Tooltip>
+                            ) : sr.salesRejected ? (
+                              <Tooltip title={`Rejected by ${sr.salesRejectedBy?.fullName || 'Sales'} on ${sr.salesRejectedAt ? new Date(sr.salesRejectedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'} — Reason: ${sr.salesRejectReason || '—'}`}>
+                                <Tag color="error" icon={<CloseCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default', maxWidth: 260, whiteSpace: 'normal' }}>
+                                  Sales Rejected: {sr.salesRejectReason || 'No reason given'}
+                                </Tag>
+                              </Tooltip>
                             ) : (
-                              <Button
-                                size="small"
-                                icon={<CheckCircleOutlined />}
-                                style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff', borderRadius: 6 }}
-                                disabled={!sr.designFileUrl && sr.stickerType !== 'Display Unit'}
-                                title={(!sr.designFileUrl && sr.stickerType !== 'Display Unit') ? 'Waiting for design upload from Operations team' : 'Approve — Sales sign-off'}
-                                onClick={async () => {
-                                  try {
-                                    const res = await approveStickerRequest({ id: sr._id, role: 'sales' }).unwrap();
-                                    enqueueSnackbar(
-                                      res?.data?.status === 'Approved'
-                                        ? 'Design fully approved — printing can start!'
-                                        : 'Sales approval recorded — awaiting Ops Head approval',
-                                      { variant: 'success' },
-                                    );
-                                  } catch (err) {
-                                    enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve design', { variant: 'error' });
-                                  }
-                                }}
-                              >
-                                Sales OK
-                              </Button>
+                              <Space size={4} wrap>
+                                <Button
+                                  size="small"
+                                  icon={<CheckCircleOutlined />}
+                                  style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff', borderRadius: 6 }}
+                                  disabled={!sr.designFileUrl && sr.stickerType !== 'Display Unit'}
+                                  title={(!sr.designFileUrl && sr.stickerType !== 'Display Unit') ? 'Waiting for design upload from Operations team' : 'Approve — Sales sign-off'}
+                                  onClick={async () => {
+                                    try {
+                                      const res = await approveStickerRequest({ id: sr._id, role: 'sales' }).unwrap();
+                                      enqueueSnackbar(
+                                        res?.data?.status === 'Approved'
+                                          ? 'Design fully approved — printing can start!'
+                                          : 'Sales approval recorded — awaiting Ops Head approval',
+                                        { variant: 'success' },
+                                      );
+                                    } catch (err) {
+                                      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve design', { variant: 'error' });
+                                    }
+                                  }}
+                                >
+                                  Sales OK
+                                </Button>
+                                <Button
+                                  size="small"
+                                  danger
+                                  icon={<CloseCircleOutlined />}
+                                  style={{ borderRadius: 6 }}
+                                  disabled={!sr.designFileUrl && sr.stickerType !== 'Display Unit'}
+                                  title={(!sr.designFileUrl && sr.stickerType !== 'Display Unit') ? 'Waiting for design upload from Operations team' : 'Reject — send back to design team with a reason'}
+                                  onClick={() => { setDesignRejectModal({ id: sr._id, label: sr.kitType || sr.product || sr.stickerType }); setDesignRejectReason(''); }}
+                                >
+                                  Reject
+                                </Button>
+                              </Space>
                             )}
 
-                            {/* Ops approval — read-only in Sales view */}
+                            {/* Ops approval status — read-only in Sales view (Ops OK / Rejected / Awaiting) */}
                             {sr.opsHeadApproved ? (
                               <Tooltip title={`Ops approved by ${sr.opsHeadApprovedBy?.fullName || 'Ops'} on ${sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}`}>
                                 <Tag color="blue" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default' }}>
                                   Ops OK · {sr.opsHeadApprovedAt ? new Date(sr.opsHeadApprovedAt).toLocaleDateString('en-IN') : ''}
+                                </Tag>
+                              </Tooltip>
+                            ) : sr.opsHeadRejected ? (
+                              <Tooltip title={`Rejected by ${sr.opsHeadRejectedBy?.fullName || 'Ops'} on ${sr.opsHeadRejectedAt ? new Date(sr.opsHeadRejectedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'} — Reason: ${sr.opsHeadRejectReason || '—'}`}>
+                                <Tag color="error" icon={<CloseCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default', maxWidth: 260, whiteSpace: 'normal' }}>
+                                  Ops Rejected: {sr.opsHeadRejectReason || 'No reason given'}
                                 </Tag>
                               </Tooltip>
                             ) : (
@@ -8238,6 +8504,29 @@ export default function Sales() {
               </Card>
             );
           })()}
+
+          <Modal
+            title="Reject Design"
+            open={!!designRejectModal}
+            onCancel={() => { if (!designRejectSubmitting) { setDesignRejectModal(null); setDesignRejectReason(''); } }}
+            onOk={submitDesignReject}
+            okText="Reject Design"
+            okButtonProps={{ danger: true, disabled: !designRejectReason.trim(), loading: designRejectSubmitting }}
+            destroyOnClose
+          >
+            <Text type="secondary" style={{ fontSize: 13 }}>
+              {designRejectModal?.label ? `Rejecting design for "${designRejectModal.label}". ` : ''}
+              This sends the request back to the design team for rework — they'll need to re-upload and both Sales & Operations will approve again.
+            </Text>
+            <Input.TextArea
+              rows={3}
+              style={{ marginTop: 10 }}
+              placeholder="Reason for rejection (required)..."
+              value={designRejectReason}
+              onChange={(e) => setDesignRejectReason(e.target.value)}
+              autoFocus
+            />
+          </Modal>
 
           {/* Hotel / Company Information — mirrors Lead detail layout */}
           {!isOrderEditing && (
@@ -8911,36 +9200,36 @@ export default function Sales() {
 
               {/* ── Customer Details ── */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><UserOutlined style={{ color: '#B11E6A' }} /><span>Customer Details</span></Space>}>
+                title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><UserOutlined style={{ color: '#B11E6A' }} /><span>Customer Details</span>{isSalesExec && <Tag style={{ borderRadius: 10, fontSize: 11 }}>View only</Tag>}</Space>}>
                 <Row gutter={[12, 0]}>
-                  <Col xs={24} sm={12}><Form.Item label="Hotel / Client Name" name="hotelName"><Input placeholder="e.g. Grand Hotel" /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Name on invoice" /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="Contact Person" name="contactPerson"><Input placeholder="Contact name" /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="Phone" name="phone"><Input placeholder="Phone number" /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="Email" name="email"><Input placeholder="Email address" /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" /></Form.Item></Col>
-                  <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Street / detailed address" /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Alt. Contact Name" name="alternativeName"><Input placeholder="Alternative contact name" /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Alt. Contact Role" name="alternativeRole"><Input placeholder="Role / designation" /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Alt. Phone" name="alternativePhone"><Input placeholder="Alternative phone" /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="Hotel / Client Name" name="hotelName"><Input placeholder="e.g. Grand Hotel" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="Billing Name" name="billingName"><Input placeholder="Name on invoice" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="Contact Person" name="contactPerson"><Input placeholder="Contact name" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="Phone" name="phone"><Input placeholder="Phone number" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="Email" name="email"><Input placeholder="Email address" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Street / detailed address" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Alt. Contact Name" name="alternativeName"><Input placeholder="Alternative contact name" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Alt. Contact Role" name="alternativeRole"><Input placeholder="Role / designation" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Alt. Phone" name="alternativePhone"><Input placeholder="Alternative phone" disabled={isSalesExec} /></Form.Item></Col>
                   <Col xs={24} sm={8}>
                     <Form.Item label="Hotel Type" name="hotelType">
-                      <Select placeholder="Hotel Type" allowClear>
+                      <Select placeholder="Hotel Type" allowClear disabled={isSalesExec}>
                         <Option value="OLD">Old Hotel</Option>
                         <Option value="NEW">New Hotel</Option>
                       </Select>
                     </Form.Item>
                   </Col>
-                  <Col xs={24} sm={8}><Form.Item label="No. of Rooms" name="rooms"><InputNumber placeholder="50" style={{ width: '100%' }} min={0} /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Occupancy (%)" name="occupancy"><InputNumber placeholder="75" style={{ width: '100%' }} min={0} max={100} /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Location / City" name="location"><Input placeholder="e.g. Coimbatore" /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Destination" name="destination"><Input placeholder="e.g. Chennai" /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Assigned To (Sales)" name="salesPerson"><Input placeholder="Sales person name" /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="Branch" name="branch"><Input placeholder="e.g. Main Branch" /></Form.Item></Col>
-                  <Col xs={24} sm={8}><Form.Item label="POC Designation" name="pocDesignation"><Input placeholder="GM, Manager" /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="No. of Rooms" name="rooms"><InputNumber placeholder="50" style={{ width: '100%' }} min={0} disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Occupancy (%)" name="occupancy"><InputNumber placeholder="75" style={{ width: '100%' }} min={0} max={100} disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Location / City" name="location"><Input placeholder="e.g. Coimbatore" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Destination" name="destination"><Input placeholder="e.g. Chennai" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Assigned To (Sales)" name="salesPerson"><Input placeholder="Sales person name" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="Branch" name="branch"><Input placeholder="e.g. Main Branch" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}><Form.Item label="POC Designation" name="pocDesignation"><Input placeholder="GM, Manager" disabled={isSalesExec} /></Form.Item></Col>
                 </Row>
               </Card>
 
@@ -10497,6 +10786,83 @@ export default function Sales() {
                               );
                             }}
                           </Form.Item>
+
+                          {/* ── Included in Kit Packaging (top-level packagingIncludes) ── */}
+                          <Form.Item noStyle shouldUpdate>
+                            {({ getFieldValue }) => {
+                              const selKitsPI = getFieldValue('selectedKits') || [];
+                              const prodsPI = getFieldValue('products') || [];
+                              const kiOptsQ = selKitsPI.map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; }).filter(Boolean);
+                              const prOptsQ = prodsPI.filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName)).map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' })).filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i);
+                              const grpOptsQ = [...(kiOptsQ.length > 0 ? [{ label: 'Kits', options: kiOptsQ }] : []), ...(prOptsQ.length > 0 ? [{ label: 'Separate Products', options: prOptsQ }] : [])];
+                              return (
+                                <div style={{ marginTop: 12 }}>
+                                  <Divider style={{ margin: '8px 0 10px', fontSize: 12, color: '#722ed1', borderColor: 'rgba(114,46,209,0.2)' }}>
+                                    <Space><AppstoreOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1', fontWeight: 600 }}>Included in Kit Packaging</span></Space>
+                                  </Divider>
+                                  <Form.Item name="packagingIncludes" style={{ marginBottom: 6 }} tooltip="Select kits and products packed inside the personalized kit. Remaining quantities go as separate orders.">
+                                    <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder="Select kits / products packed inside the personalized kit" options={grpOptsQ} />
+                                  </Form.Item>
+                                  <Form.Item noStyle shouldUpdate>
+                                    {({ getFieldValue: gfvPI }) => {
+                                      const sel = gfvPI('packagingIncludes') || [];
+                                      if (!sel.length) return null;
+                                      const overallQty = Number(gfvPI('kitOverallQty')) || 1;
+                                      return (
+                                        <div style={{ padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.15)' }}>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6 }}>
+                                            QTY INSIDE PERSONALIZED KITS — enter "Per kit" (× {overallQty} kit{overallQty > 1 ? 's' : ''}) or override "Total"
+                                          </Text>
+                                          {sel.map(id => {
+                                            const kMatch = kits.find(k => k._id === id);
+                                            const sProd = (gfvPI('products') || []).find(p => p && (p.name || p.itemName) === id);
+                                            const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
+                                            const isKit = Boolean(kMatch);
+                                            const totalInside = Number(gfvPI(['packagingIncludesQty', id])) || 1;
+                                            const perKitDisplay = (totalInside <= 1 && overallQty > 1) ? undefined : (overallQty > 0 ? r2(totalInside / overallQty) : totalInside);
+                                            const standaloneQty = isKit
+                                              ? (Number((gfvPI('kitOrders') || []).find(ko => ko?.kitId === id)?.overallQty) || 0)
+                                              : (Number((gfvPI('products') || []).find(p => p && (p.name || p.itemName) === id)?.qty) || 0);
+                                            const netQty = Math.max(0, standaloneQty - totalInside);
+                                            const isOver = standaloneQty > 0 && totalInside > standaloneQty;
+                                            return (
+                                              <Row key={id} align="middle" gutter={8} style={{ marginBottom: 6 }}>
+                                                <Col flex="1">
+                                                  <Text style={{ fontSize: 12 }}>{label}</Text>
+                                                  {standaloneQty > 0 && (
+                                                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                                                      Total ordered: {standaloneQty} → In personalized: {totalInside} → Separate: <Text strong style={{ color: isOver ? '#ff4d4f' : '#52c41a' }}>{netQty}</Text>
+                                                    </Text>
+                                                  )}
+                                                  {isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over by {totalInside - standaloneQty}</Text>}
+                                                </Col>
+                                                <Col>
+                                                  <div style={{ textAlign: 'center' }}>
+                                                    <Text type="secondary" style={{ fontSize: 9, display: 'block', lineHeight: 1.1 }}>Per kit</Text>
+                                                    <InputNumber min={0} size="small" style={{ width: 64 }} placeholder="qty" value={perKitDisplay}
+                                                      onChange={(v) => { const pk = Number(v) || 0; quotationForm.setFieldValue(['packagingIncludesQty', id], pk > 0 ? pk * (overallQty || 1) : 1); }}
+                                                    />
+                                                  </div>
+                                                </Col>
+                                                <Col>
+                                                  <div style={{ textAlign: 'center' }}>
+                                                    <Text type="secondary" style={{ fontSize: 9, display: 'block', lineHeight: 1.1 }}>Total</Text>
+                                                    <Form.Item name={['packagingIncludesQty', id]} initialValue={1} noStyle>
+                                                      <InputNumber min={1} size="small" style={{ width: 70 }} />
+                                                    </Form.Item>
+                                                  </div>
+                                                </Col>
+                                              </Row>
+                                            );
+                                          })}
+                                        </div>
+                                      );
+                                    }}
+                                  </Form.Item>
+                                </div>
+                              );
+                            }}
+                          </Form.Item>
                         </>
                       );
                     }}
@@ -10743,6 +11109,83 @@ export default function Sales() {
                                       </div>
                                     );
                                   })}
+                                </div>
+                              );
+                            }}
+                          </Form.Item>
+
+                          {/* ── Included in Kit Packaging (top-level packagingIncludes) ── */}
+                          <Form.Item noStyle shouldUpdate>
+                            {({ getFieldValue }) => {
+                              const selKitsPI = getFieldValue('selectedKits') || [];
+                              const prodsPI = getFieldValue('products') || [];
+                              const kiOptsN = selKitsPI.map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; }).filter(Boolean);
+                              const prOptsN = prodsPI.filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName)).map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' })).filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i);
+                              const grpOptsN = [...(kiOptsN.length > 0 ? [{ label: 'Kits', options: kiOptsN }] : []), ...(prOptsN.length > 0 ? [{ label: 'Separate Products', options: prOptsN }] : [])];
+                              return (
+                                <div style={{ marginTop: 12 }}>
+                                  <Divider style={{ margin: '8px 0 10px', fontSize: 12, color: '#722ed1', borderColor: 'rgba(114,46,209,0.2)' }}>
+                                    <Space><AppstoreOutlined style={{ color: '#722ed1' }} /><span style={{ color: '#722ed1', fontWeight: 600 }}>Included in Kit Packaging</span></Space>
+                                  </Divider>
+                                  <Form.Item name="packagingIncludes" style={{ marginBottom: 6 }} tooltip="Select kits and products packed inside the personalized kit. Remaining quantities go as separate orders.">
+                                    <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder="Select kits / products packed inside the personalized kit" options={grpOptsN} />
+                                  </Form.Item>
+                                  <Form.Item noStyle shouldUpdate>
+                                    {({ getFieldValue: gfvPI }) => {
+                                      const sel = gfvPI('packagingIncludes') || [];
+                                      if (!sel.length) return null;
+                                      const overallQty = Number(gfvPI('kitOverallQty')) || 1;
+                                      return (
+                                        <div style={{ padding: '8px 12px', background: isDark ? 'rgba(114,46,209,0.08)' : 'rgba(114,46,209,0.04)', borderRadius: 8, border: '1px solid rgba(114,46,209,0.15)' }}>
+                                          <Text style={{ fontSize: 11, fontWeight: 700, color: '#722ed1', display: 'block', marginBottom: 6 }}>
+                                            QTY INSIDE PERSONALIZED KITS — enter "Per kit" (× {overallQty} kit{overallQty > 1 ? 's' : ''}) or override "Total"
+                                          </Text>
+                                          {sel.map(id => {
+                                            const kMatch = kits.find(k => k._id === id);
+                                            const sProd = (gfvPI('products') || []).find(p => p && (p.name || p.itemName) === id);
+                                            const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
+                                            const isKit = Boolean(kMatch);
+                                            const totalInside = Number(gfvPI(['packagingIncludesQty', id])) || 1;
+                                            const perKitDisplay = (totalInside <= 1 && overallQty > 1) ? undefined : (overallQty > 0 ? r2(totalInside / overallQty) : totalInside);
+                                            const standaloneQty = isKit
+                                              ? (Number((gfvPI('kitOrders') || []).find(ko => ko?.kitId === id)?.overallQty) || 0)
+                                              : (Number((gfvPI('products') || []).find(p => p && (p.name || p.itemName) === id)?.qty) || 0);
+                                            const netQty = Math.max(0, standaloneQty - totalInside);
+                                            const isOver = standaloneQty > 0 && totalInside > standaloneQty;
+                                            return (
+                                              <Row key={id} align="middle" gutter={8} style={{ marginBottom: 6 }}>
+                                                <Col flex="1">
+                                                  <Text style={{ fontSize: 12 }}>{label}</Text>
+                                                  {standaloneQty > 0 && (
+                                                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>
+                                                      Total ordered: {standaloneQty} → In personalized: {totalInside} → Separate: <Text strong style={{ color: isOver ? '#ff4d4f' : '#52c41a' }}>{netQty}</Text>
+                                                    </Text>
+                                                  )}
+                                                  {isOver && <Text style={{ fontSize: 11, color: '#ff4d4f', display: 'block' }}>⚠ Over by {totalInside - standaloneQty}</Text>}
+                                                </Col>
+                                                <Col>
+                                                  <div style={{ textAlign: 'center' }}>
+                                                    <Text type="secondary" style={{ fontSize: 9, display: 'block', lineHeight: 1.1 }}>Per kit</Text>
+                                                    <InputNumber min={0} size="small" style={{ width: 64 }} placeholder="qty" value={perKitDisplay}
+                                                      onChange={(v) => { const pk = Number(v) || 0; negotiationForm.setFieldValue(['packagingIncludesQty', id], pk > 0 ? pk * (overallQty || 1) : 1); }}
+                                                    />
+                                                  </div>
+                                                </Col>
+                                                <Col>
+                                                  <div style={{ textAlign: 'center' }}>
+                                                    <Text type="secondary" style={{ fontSize: 9, display: 'block', lineHeight: 1.1 }}>Total</Text>
+                                                    <Form.Item name={['packagingIncludesQty', id]} initialValue={1} noStyle>
+                                                      <InputNumber min={1} size="small" style={{ width: 70 }} />
+                                                    </Form.Item>
+                                                  </div>
+                                                </Col>
+                                              </Row>
+                                            );
+                                          })}
+                                        </div>
+                                      );
+                                    }}
+                                  </Form.Item>
                                 </div>
                               );
                             }}
@@ -11089,6 +11532,10 @@ export default function Sales() {
     const totalValue = calcTotal(record.products);
     // Show per-card edit buttons in both detail view AND when editing an existing record
     const usePerCardEdit = isDetail || !!editingLead;
+    // Once an Old Hotel/Hospital match has been auto-filled, a Sales Executive can no longer
+    // hand-edit those looked-up fields (name/type/branch/logo stay editable so they can still
+    // search a different existing record) — only Admin/other roles may override them.
+    const lockAutoFilledHotelFields = watchedHotelType === 'OLD' && oldHotelAutoFilled && isSalesExec;
 
     // Combined payment history for lead: merges lead + linked order + linked quotation + linked
     // negotiation entries so payments recorded in Billing (on quotation or order) also appear here.
@@ -11315,7 +11762,7 @@ export default function Sales() {
                     <span>Hotel / Company Information</span>
                   </Space>
                 }
-                extra={usePerCardEdit && currentUser?.role !== 'Sales Executive' && (
+                extra={usePerCardEdit && !isSalesExec && (
                   editingSection === 'hotel' ? (
                     <Space size="small">
                       <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('hotel')} style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -11442,63 +11889,64 @@ export default function Sales() {
                           accept="image/*,.pdf,.svg,.ai"
                           maxCount={1}
                           listType="picture"
+                          disabled={lockAutoFilledHotelFields}
                         >
-                          <Button icon={<UploadOutlined />} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Logo</Button>
+                          <Button icon={<UploadOutlined />} disabled={lockAutoFilledHotelFields} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Logo</Button>
                         </Upload>
                       </Form.Item>
                     </Col>
 
                     <Col xs={24} sm={8}>
                       <Form.Item label="No. of Rooms" name="rowsInHotel" rules={[{ required: true, message: 'No. of Rooms is required' }]}>
-                        <InputNumber placeholder="50" style={{ width: '100%' }} />
+                        <InputNumber placeholder="50" style={{ width: '100%' }} disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="General Occupancy (%)" name="generalOccupancy" rules={[{ required: true, message: 'General Occupancy is required' }]}>
-                        <InputNumber placeholder="e.g. 75" style={{ width: '100%' }} min={0} max={100} addonAfter="%" />
+                        <InputNumber placeholder="e.g. 75" style={{ width: '100%' }} min={0} max={100} addonAfter="%" disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="Billing Name" name="billingName" rules={[{ required: true, message: 'Billing Name is required' }]}>
-                        <Input placeholder="e.g. HOTEL BLUESTAR" />
+                        <Input placeholder="e.g. HOTEL BLUESTAR" disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
 
                     <Col xs={24} sm={8}>
                       <Form.Item label="Contact Person" name="contactPerson" rules={[{ required: true, message: 'Contact Person is required' }]}>
-                        <Input placeholder="Reception / Manager" prefix={<UserOutlined style={{ color: '#ccc' }} />} />
+                        <Input placeholder="Reception / Manager" prefix={<UserOutlined style={{ color: '#ccc' }} />} disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="POC Designation" name="pocDesignation" rules={[{ required: true, message: 'POC Designation is required' }]}>
-                        <Input placeholder="GM, Manager" />
+                        <Input placeholder="GM, Manager" disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="Phone" name="phone" rules={[{ required: true, message: 'Phone is required' }, phoneValidator(true)]}>
-                        <PhoneInput placeholder="Phone number" />
+                        <PhoneInput placeholder="Phone number" disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
 
                     <Col xs={24} sm={8}>
                       <Form.Item label="Alternative Role" name="alternativeRole" rules={[{ required: true, message: 'Alternative Role is required' }]}>
-                        <SelectWithAdd field="alternativeRole" defaultOptions={ALTERNATIVE_PERSON_OPTIONS} placeholder="Select / Add Role" />
+                        <SelectWithAdd field="alternativeRole" defaultOptions={ALTERNATIVE_PERSON_OPTIONS} placeholder="Select / Add Role" disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="Alternative Name" name="alternativeName" rules={[{ required: true, message: 'Alternative Name is required' }]}>
-                        <Input placeholder="Full Name" prefix={<UserOutlined style={{ color: '#ccc' }} />} />
+                        <Input placeholder="Full Name" prefix={<UserOutlined style={{ color: '#ccc' }} />} disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="Alternative Number" name="alternativePhone" rules={[{ required: true, message: 'Alternative Number is required' }, phoneValidator(false)]}>
-                        <PhoneInput placeholder="Alternative number" />
+                        <PhoneInput placeholder="Alternative number" disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
 
                     <Col xs={24} sm={8}>
                       <Form.Item label="Email" name="email" rules={[{ required: true, message: 'Email is required' }, ...emailRules(false)]}>
-                        <Input placeholder="Email address" prefix={<MailOutlined style={{ color: '#ccc' }} />} />
+                        <Input placeholder="Email address" prefix={<MailOutlined style={{ color: '#ccc' }} />} disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -11508,12 +11956,12 @@ export default function Sales() {
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="Location / City" name="location" rules={[{ required: true }]}>
-                        <Input placeholder="e.g. Coimbatore" prefix={<EnvironmentOutlined style={{ color: '#ccc' }} />} />
+                        <Input placeholder="e.g. Coimbatore" prefix={<EnvironmentOutlined style={{ color: '#ccc' }} />} disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
                       <Form.Item label="Destination" name="destination" rules={[{ required: true, message: 'Destination is required' }]}>
-                        <Input placeholder="e.g. Chennai, Delhi" prefix={<EnvironmentOutlined style={{ color: '#ccc' }} />} />
+                        <Input placeholder="e.g. Chennai, Delhi" prefix={<EnvironmentOutlined style={{ color: '#ccc' }} />} disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -11536,7 +11984,7 @@ export default function Sales() {
 
                     <Col xs={24} sm={8}>
                       <Form.Item label="Source" name="source" rules={[{ required: true, message: 'Source is required' }]}>
-                        <SelectWithAdd field="source" defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }]} placeholder="Select source" />
+                        <SelectWithAdd field="source" defaultOptions={[{ value: 'Direct', label: 'Direct' }, { value: 'Referral', label: 'Referral' }]} placeholder="Select source" disabled={lockAutoFilledHotelFields} />
                       </Form.Item>
                     </Col>
                     <Col xs={24} sm={8}>
@@ -11594,7 +12042,7 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#52c41a' }} /><span>Billing & Address</span></Space>}
-                    extra={usePerCardEdit && (
+                    extra={usePerCardEdit && !isSalesExec && (
                       editingSection === 'billing' ? (
                         <Space size="small">
                           <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('billing')} style={{ background: '#52c41a', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -11621,16 +12069,16 @@ export default function Sales() {
                       </Row>
                     ) : (
                       <Row gutter={12}>
-                        <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Full address" /></Form.Item></Col>
-                        <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" /></Form.Item></Col>
-                        <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" /></Form.Item></Col>
+                        <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Full address" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
+                        <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
+                        <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
                         <Col xs={24} sm={12}>
                           <Form.Item label="Pincode" name="pincode" rules={[{ pattern: /^[0-9]*$/, message: 'Pincode must contain only numbers' }]}>
-                            <Input placeholder="Pincode" maxLength={6} inputMode="numeric" />
+                            <Input placeholder="Pincode" maxLength={6} inputMode="numeric" disabled={lockAutoFilledHotelFields} />
                           </Form.Item>
                         </Col>
                         {watchedLeadType !== 'SAMPLE' && (
-                          <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType"><Select placeholder="Select Bill Type" allowClear><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
+                          <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType"><Select placeholder="Select Bill Type" allowClear disabled={lockAutoFilledHotelFields}><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
                         )}
                         {watchedLeadType !== 'SAMPLE' && watchedBillType === 'GST' && (
                           <>
@@ -11640,11 +12088,13 @@ export default function Sales() {
                                   placeholder="GSTIN (e.g. 27AAACG2115R1ZN)"
                                   maxLength={15}
                                   style={{ textTransform: 'uppercase' }}
+                                  disabled={lockAutoFilledHotelFields}
                                   suffix={
                                     <Button
                                       size="small"
                                       type="link"
                                       loading={gstAddApiLoading}
+                                      disabled={lockAutoFilledHotelFields}
                                       onClick={() => fetchGstDetailsForLead(leadForm.getFieldValue('gstNumber'))}
                                       style={{ color: '#B11E6A', padding: '0 4px', fontSize: 12 }}
                                     >
@@ -11656,7 +12106,7 @@ export default function Sales() {
                             </Col>
                             <Col xs={24} sm={12}>
                               <Form.Item label="Phone Number" name="gstPhone" rules={[phoneValidator(false)]}>
-                                <PhoneInput placeholder="Phone number" />
+                                <PhoneInput placeholder="Phone number" disabled={lockAutoFilledHotelFields} />
                               </Form.Item>
                             </Col>
                             {/* GST verification result shown below the GST field */}
@@ -11763,7 +12213,7 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#1677ff', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#1677ff' }} /><span>Shipping Address</span></Space>}
-                    extra={usePerCardEdit && (
+                    extra={usePerCardEdit && !isSalesExec && (
                       editingSection === 'shipping' ? (
                         <Space size="small">
                           <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('shipping')} style={{ background: '#1677ff', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -11789,17 +12239,17 @@ export default function Sales() {
                       <Row gutter={12}>
                         <Col xs={24}>
                           <Form.Item name="shippingSameAsBilling" valuePropName="checked" style={{ marginBottom: 8 }}>
-                            <Checkbox>Same as Billing Address</Checkbox>
+                            <Checkbox disabled={lockAutoFilledHotelFields}>Same as Billing Address</Checkbox>
                           </Form.Item>
                         </Col>
                         {watchedShippingSameAsBilling === false && (
                           <>
-                            <Col xs={24}><Form.Item label="Detailed Address" name="shippingAddress"><Input.TextArea rows={2} placeholder="Full shipping address" /></Form.Item></Col>
-                            <Col xs={24} sm={12}><Form.Item label="City" name="shippingCity"><Input placeholder="City" /></Form.Item></Col>
-                            <Col xs={24} sm={12}><Form.Item label="State" name="shippingState"><Input placeholder="State" /></Form.Item></Col>
+                            <Col xs={24}><Form.Item label="Detailed Address" name="shippingAddress"><Input.TextArea rows={2} placeholder="Full shipping address" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
+                            <Col xs={24} sm={12}><Form.Item label="City" name="shippingCity"><Input placeholder="City" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
+                            <Col xs={24} sm={12}><Form.Item label="State" name="shippingState"><Input placeholder="State" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
                             <Col xs={24} sm={12}>
                               <Form.Item label="Pincode" name="shippingPincode" rules={[{ pattern: /^[0-9]*$/, message: 'Pincode must contain only numbers' }]}>
-                                <Input placeholder="Pincode" maxLength={6} inputMode="numeric" />
+                                <Input placeholder="Pincode" maxLength={6} inputMode="numeric" disabled={lockAutoFilledHotelFields} />
                               </Form.Item>
                             </Col>
                           </>
@@ -15120,6 +15570,39 @@ export default function Sales() {
             {viewPartyInfo.creditPeriod > 0 && <Descriptions.Item label="Credit Period">{`${viewPartyInfo.creditPeriod} days`}</Descriptions.Item>}
             {viewPartyInfo.creditLimit > 0 && <Descriptions.Item label="Credit Limit">{`₹${Number(viewPartyInfo.creditLimit).toLocaleString()}`}</Descriptions.Item>}
           </Descriptions>
+        )}
+        {viewPartyInfo && (
+          <div style={{ marginTop: 20 }}>
+            <Divider style={{ margin: '0 0 12px' }}>
+              <Space size={6}>
+                <HistoryOutlined style={{ color: '#722ed1' }} />
+                <Text style={{ fontSize: 12, color: '#722ed1', fontWeight: 700 }}>Change Timeline</Text>
+              </Space>
+            </Divider>
+            {(viewPartyInfo.editHistory || []).length === 0 ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>No changes recorded yet.</Text>
+            ) : (
+              <Timeline
+                mode="left"
+                items={[...(viewPartyInfo.editHistory || [])].reverse().map((h, i) => ({
+                  color: '#722ed1',
+                  dot: i === 0 ? <div style={{ width: 12, height: 12, borderRadius: '50%', background: '#722ed1', border: '2px solid #fff', boxShadow: '0 0 0 3px #722ed155' }} /> : undefined,
+                  label: <Text style={{ fontSize: 12, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? (isDark ? '#fff' : '#222') : (isDark ? '#aaa' : '#666') }}>{fmtDateTimeShort(h.changedAt)}</Text>,
+                  children: (
+                    <div>
+                      <Tag color="purple" style={{ borderRadius: 20, fontSize: 12, marginBottom: 4 }}>{h.field}</Tag>
+                      <div style={{ fontSize: 12 }}>
+                        <Text type="secondary" style={{ textDecoration: 'line-through' }}>{h.oldValue}</Text>
+                        {' → '}
+                        <Text strong style={{ color: '#52c41a' }}>{h.newValue}</Text>
+                      </div>
+                      <Text type="secondary" style={{ fontSize: 11 }}>by {h.changedByName || 'System'}</Text>
+                    </div>
+                  ),
+                }))}
+              />
+            )}
+          </div>
         )}
       </Modal>
 

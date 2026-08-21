@@ -29,6 +29,18 @@ const stickerRequestSchema = new mongoose.Schema({
   opsHeadApproved: { type: Boolean, default: false },
   opsHeadApprovedAt: Date,
   opsHeadApprovedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  // Either side can reject the uploaded design instead of approving it — sends it back to
+  // the design vendor (status → 'Design Change') with a reason. Rejecting resets BOTH
+  // salesApproved/opsHeadApproved so the reworked design needs fresh sign-off from both
+  // sides once the vendor re-sends it for approval (see updateStickerStatus).
+  salesRejected: { type: Boolean, default: false },
+  salesRejectedAt: Date,
+  salesRejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  salesRejectReason: { type: String, default: '' },
+  opsHeadRejected: { type: Boolean, default: false },
+  opsHeadRejectedAt: Date,
+  opsHeadRejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  opsHeadRejectReason: { type: String, default: '' },
   isUrgent: { type: Boolean, default: false },
   dispatchedToOps: { type: Boolean, default: false },
   // Invoice uploaded by the design team after printing (shown in Operations product spec table)

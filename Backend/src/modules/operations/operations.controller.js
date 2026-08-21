@@ -414,6 +414,8 @@ exports.getStickerRequests = asyncHandler(async (req, res) => {
     .populate('orderId', 'orderCode clientName')
     .populate('salesApprovedBy', 'fullName')
     .populate('opsHeadApprovedBy', 'fullName')
+    .populate('salesRejectedBy', 'fullName')
+    .populate('opsHeadRejectedBy', 'fullName')
     .populate('vendorId', 'fullName email')
     .sort('-createdAt');
 
@@ -546,11 +548,16 @@ exports.uploadStickerInvoice = asyncHandler(async (req, res, next) => {
 });
 
 exports.updateStickerStatus = asyncHandler(async (req, res, next) => {
-  const sticker = await StickerRequest.findByIdAndUpdate(
-    req.params.id,
-    { status: req.body.status, dispatchedToOps: req.body.dispatchedToOps },
-    { new: true }
-  );
+  const update = { status: req.body.status, dispatchedToOps: req.body.dispatchedToOps };
+  // Vendor re-sending a reworked design after a rejection — clear the old rejection
+  // reason/flags so the (now stale) reason stops showing once a fresh approval round starts.
+  if (req.body.status === 'Waiting for Approval') {
+    update.salesRejected = false;
+    update.salesRejectReason = '';
+    update.opsHeadRejected = false;
+    update.opsHeadRejectReason = '';
+  }
+  const sticker = await StickerRequest.findByIdAndUpdate(req.params.id, update, { new: true });
   if (!sticker) return next(new AppError('Sticker request not found', 404));
   res.status(200).json({ success: true, data: sticker });
 });
@@ -680,6 +687,53 @@ exports.approveStickerRequest = asyncHandler(async (req, res, next) => {
   await sticker.save({ validateBeforeSave: false });
   await sticker.populate('salesApprovedBy', 'fullName');
   await sticker.populate('opsHeadApprovedBy', 'fullName');
+  res.status(200).json({ success: true, data: sticker });
+});
+
+// Either side (Sales or Ops Head) can reject the uploaded design instead of approving it.
+// Sends it back to the design vendor with a reason — does NOT touch the other side's own
+// approve/reject flow, but DOES reset both salesApproved/opsHeadApproved so the reworked
+// design needs a fresh sign-off from both sides once re-sent for approval.
+exports.rejectStickerRequest = asyncHandler(async (req, res, next) => {
+  const sticker = await StickerRequest.findById(req.params.id);
+  if (!sticker) return next(new AppError('Sticker request not found', 404));
+  const role = req.body.role; // 'sales' | 'opsHead'
+  const reason = (req.body.reason || '').trim();
+  if (!reason) return next(new AppError('Please provide a reason for rejecting the design', 400));
+  if (role !== 'sales' && role !== 'opsHead') return next(new AppError('role must be "sales" or "opsHead"', 400));
+  const now = new Date();
+  const userId = req.user?._id;
+
+  if (role === 'sales') {
+    sticker.salesRejected = true;
+    sticker.salesRejectedAt = now;
+    sticker.salesRejectedBy = userId;
+    sticker.salesRejectReason = reason;
+  } else {
+    sticker.opsHeadRejected = true;
+    sticker.opsHeadRejectedAt = now;
+    sticker.opsHeadRejectedBy = userId;
+    sticker.opsHeadRejectReason = reason;
+  }
+  // A rejected design is no longer approved by either side — the vendor's rework needs
+  // fresh sign-off from both once it's re-sent, even if the other side had already OK'd
+  // the version that just got rejected.
+  sticker.salesApproved = false;
+  sticker.opsHeadApproved = false;
+  sticker.status = 'Design Change';
+  await sticker.save({ validateBeforeSave: false });
+  await sticker.populate('salesRejectedBy', 'fullName');
+  await sticker.populate('opsHeadRejectedBy', 'fullName');
+
+  notifyRoles({
+    modules: ['Operations', 'Sales Team'],
+    userIds: sticker.vendorId ? [sticker.vendorId] : [],
+    type: 'task',
+    title: 'Design Rejected — Rework Needed',
+    message: `${sticker.stickerType || 'Sticker'} for "${sticker.product || 'product'}" rejected by ${role === 'sales' ? 'Sales' : 'Operations'}: ${reason}`,
+    link: '/operations',
+  }).catch(() => {});
+
   res.status(200).json({ success: true, data: sticker });
 });
 

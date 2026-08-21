@@ -995,6 +995,10 @@ export const apiSlice = createApi({
       query: ({ id, role }) => ({ url: `/operations/stickers/${id}/approve`, method: 'patch', data: { role } }),
       invalidatesTags: ['Stickers'],
     }),
+    rejectStickerRequest: builder.mutation({
+      query: ({ id, role, reason }) => ({ url: `/operations/stickers/${id}/reject`, method: 'patch', data: { role, reason } }),
+      invalidatesTags: ['Stickers'],
+    }),
     // Queue row visibility (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other tabs) —
     // hides a single row from its packaging queue tab only, without touching the Order.
     getHiddenQueueRows: builder.query({
@@ -1518,6 +1522,7 @@ export const {
   useGetHotelDesignsQuery,
   useSaveHotelDesignMutation,
   useApproveStickerRequestMutation,
+  useRejectStickerRequestMutation,
   useGetHiddenQueueRowsQuery,
   useHideQueueRowMutation,
   useUploadDispatchLRMutation,

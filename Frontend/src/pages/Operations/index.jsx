@@ -625,6 +625,8 @@ export default function Operations() {
 
   // Map StickerRequest.status → queue step number
   const stickerStatusToStep = (status) => {
+    // Rejected by Sales/Ops — back to step 0 (Designing) for rework and re-send.
+    if (status === 'Design Change') return 0;
     if (status === 'Waiting for Approval' || status === 'Design Confirmation') return 1;
     if (status === 'Approved') return 2;
     if (status === 'In Process' || status === 'Printing') return 3;
@@ -1255,6 +1257,29 @@ export default function Operations() {
             <Space wrap size={4}>
               {step === 0 && (
                 <>
+                  {/* Rejection notice — shown when Sales/Ops sent this design back for rework.
+                      Cleared automatically once "Send for Approval" is clicked again below. */}
+                  {(sr?.salesRejected || sr?.opsHeadRejected) && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ width: '100%', marginBottom: 4, padding: '4px 8px', fontSize: 11 }}
+                      message={
+                        <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                          {sr.salesRejected && (
+                            <Text style={{ fontSize: 11 }}>
+                              <b>Sales rejected</b> ({sr.salesRejectedBy?.fullName || 'Sales'}): {sr.salesRejectReason || 'No reason given'}
+                            </Text>
+                          )}
+                          {sr.opsHeadRejected && (
+                            <Text style={{ fontSize: 11 }}>
+                              <b>Ops rejected</b> ({sr.opsHeadRejectedBy?.fullName || 'Ops'}): {sr.opsHeadRejectReason || 'No reason given'}
+                            </Text>
+                          )}
+                        </Space>
+                      }
+                    />
+                  )}
                   {/* Kit type + products label for kit parent rows */}
                   {record.isKitParent && kitTypeName && (
                     <Space direction="vertical" size={3} style={{ width: '100%', marginBottom: 4 }}>

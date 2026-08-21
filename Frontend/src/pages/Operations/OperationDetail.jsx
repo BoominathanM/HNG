@@ -26,6 +26,7 @@ import {
   AlertFilled,
   ArrowLeftOutlined,
   CheckCircleOutlined,
+  CloseCircleOutlined,
   CreditCardOutlined,
   DeleteOutlined,
   DownloadOutlined,
@@ -59,6 +60,7 @@ import {
   useGetVendorsQuery,
   useSendToStickerTeamMutation,
   useApproveStickerRequestMutation,
+  useRejectStickerRequestMutation,
   useCreateStickerRequestMutation,
   useUploadStickerDesignMutation,
   useUpdateStickerStatusMutation,
@@ -254,6 +256,24 @@ export default function OperationDetail() {
   const [saveHotelDesign] = useSaveHotelDesignMutation();
   const [sendToStickerTeam] = useSendToStickerTeamMutation();
   const [approveStickerRequest] = useApproveStickerRequestMutation();
+  const [rejectStickerRequest] = useRejectStickerRequestMutation();
+  const [designRejectModal, setDesignRejectModal] = useState(null); // { id, label } | null
+  const [designRejectReason, setDesignRejectReason] = useState('');
+  const [designRejectSubmitting, setDesignRejectSubmitting] = useState(false);
+  const submitDesignReject = async () => {
+    if (!designRejectModal || !designRejectReason.trim()) return;
+    setDesignRejectSubmitting(true);
+    try {
+      await rejectStickerRequest({ id: designRejectModal.id, role: 'opsHead', reason: designRejectReason.trim() }).unwrap();
+      enqueueSnackbar('Design rejected — sent back to the design team for rework', { variant: 'success' });
+      setDesignRejectModal(null);
+      setDesignRejectReason('');
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to reject design', { variant: 'error' });
+    } finally {
+      setDesignRejectSubmitting(false);
+    }
+  };
   const [createStickerRequest] = useCreateStickerRequestMutation();
   const [uploadStickerDesign] = useUploadStickerDesignMutation();
   const [updateStickerStatus] = useUpdateStickerStatusMutation();
@@ -1460,37 +1480,62 @@ export default function OperationDetail() {
     return (
       <Space direction="vertical" size={4}>
         {kitInfoBlock}
-        <Tag color="gold" style={{ fontSize: 10 }}>{sr.status || 'Waiting for Approval'}</Tag>
-        {sr.salesApproved && (
+        <Tag color={sr.status === 'Design Change' ? 'red' : 'gold'} style={{ fontSize: 10 }}>{sr.status || 'Waiting for Approval'}</Tag>
+        {sr.salesApproved ? (
           <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default' }}>Sales OK</Tag>
+        ) : sr.salesRejected && (
+          <Tooltip title={`Rejected by ${sr.salesRejectedBy?.fullName || 'Sales'} on ${sr.salesRejectedAt ? new Date(sr.salesRejectedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}`}>
+            <Tag color="red" icon={<CloseCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default', maxWidth: 180, whiteSpace: 'normal' }}>
+              Sales Rejected: {sr.salesRejectReason || 'No reason given'}
+            </Tag>
+          </Tooltip>
         )}
         {!isRepresentativeRow ? (
           <Tooltip title={`Ops OK on the first kit row approves all ${kitProductsList.length} products in this kit`}>
             <Tag color="default" style={{ fontSize: 10 }}>Covered by kit approval</Tag>
           </Tooltip>
-        ) : (
-          <Tooltip title={`Approves entire ${catLabel} — ${kitTypeName} (${kitProductsList.length} product${kitProductsList.length !== 1 ? 's' : ''})`}>
-            <Button
-              size="small"
-              icon={<CheckCircleOutlined />}
-              style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
-              onClick={async () => {
-                try {
-                  const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
-                  enqueueSnackbar(
-                    res?.data?.status === 'Approved'
-                      ? `${kitTypeName} fully approved — printing can start!`
-                      : `Ops OK recorded for ${kitTypeName} — awaiting Sales approval`,
-                    { variant: 'success' },
-                  );
-                } catch (err) {
-                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-                }
-              }}
-            >
-              Ops OK ({catLabel})
-            </Button>
+        ) : sr.opsHeadRejected ? (
+          <Tooltip title={`Rejected by ${sr.opsHeadRejectedBy?.fullName || 'Ops'} on ${sr.opsHeadRejectedAt ? new Date(sr.opsHeadRejectedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}`}>
+            <Tag color="red" icon={<CloseCircleOutlined />} style={{ borderRadius: 10, fontSize: 10, cursor: 'default', maxWidth: 180, whiteSpace: 'normal' }}>
+              Ops Rejected: {sr.opsHeadRejectReason || 'No reason given'}
+            </Tag>
           </Tooltip>
+        ) : (
+          <Space size={4} wrap>
+            <Tooltip title={`Approves entire ${catLabel} — ${kitTypeName} (${kitProductsList.length} product${kitProductsList.length !== 1 ? 's' : ''})`}>
+              <Button
+                size="small"
+                icon={<CheckCircleOutlined />}
+                style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
+                onClick={async () => {
+                  try {
+                    const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
+                    enqueueSnackbar(
+                      res?.data?.status === 'Approved'
+                        ? `${kitTypeName} fully approved — printing can start!`
+                        : `Ops OK recorded for ${kitTypeName} — awaiting Sales approval`,
+                      { variant: 'success' },
+                    );
+                  } catch (err) {
+                    enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                  }
+                }}
+              >
+                Ops OK ({catLabel})
+              </Button>
+            </Tooltip>
+            <Tooltip title={`Reject entire ${catLabel} — ${kitTypeName} — send back to design team with a reason`}>
+              <Button
+                size="small"
+                danger
+                icon={<CloseCircleOutlined />}
+                style={{ borderRadius: 6 }}
+                onClick={() => { setDesignRejectModal({ id: sr._id, label: `${kitTypeName} (${catLabel})` }); setDesignRejectReason(''); }}
+              >
+                Reject
+              </Button>
+            </Tooltip>
+          </Space>
         )}
       </Space>
     );
@@ -2344,7 +2389,7 @@ export default function OperationDetail() {
             return renderKitApprovalBlock(sr, { kitTypeName, catLabel, catColor, kitProductsList, isRepresentativeRow });
           }
 
-          // Non-kit products — original behavior unchanged
+          // Non-kit products — status shows Approved / Rejected / action buttons, in one place
           if (!sr) return <Tag color="default" style={{ fontSize: 11 }}>No design yet</Tag>;
           if (sr.opsHeadApproved) {
             return (
@@ -2355,27 +2400,47 @@ export default function OperationDetail() {
               </Tooltip>
             );
           }
+          if (sr.opsHeadRejected) {
+            return (
+              <Tooltip title={`Rejected by ${sr.opsHeadRejectedBy?.fullName || 'Ops'} on ${sr.opsHeadRejectedAt ? new Date(sr.opsHeadRejectedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '-'}`}>
+                <Tag color="red" icon={<CloseCircleOutlined />} style={{ borderRadius: 10, fontSize: 11, cursor: 'default', maxWidth: 180, whiteSpace: 'normal' }}>
+                  Ops Rejected: {sr.opsHeadRejectReason || 'No reason given'}
+                </Tag>
+              </Tooltip>
+            );
+          }
           return (
-            <Button
-              size="small"
-              icon={<CheckCircleOutlined />}
-              style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
-              onClick={async () => {
-                try {
-                  const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
-                  enqueueSnackbar(
-                    res?.data?.status === 'Approved'
-                      ? 'Design fully approved — printing can start!'
-                      : 'Ops Head approval recorded — awaiting Sales approval',
-                    { variant: 'success' },
-                  );
-                } catch (err) {
-                  enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
-                }
-              }}
-            >
-              Ops OK
-            </Button>
+            <Space size={4} wrap>
+              <Button
+                size="small"
+                icon={<CheckCircleOutlined />}
+                style={{ background: '#1677ff', borderColor: '#1677ff', color: '#fff', borderRadius: 6 }}
+                onClick={async () => {
+                  try {
+                    const res = await approveStickerRequest({ id: sr._id, role: 'opsHead' }).unwrap();
+                    enqueueSnackbar(
+                      res?.data?.status === 'Approved'
+                        ? 'Design fully approved — printing can start!'
+                        : 'Ops Head approval recorded — awaiting Sales approval',
+                      { variant: 'success' },
+                    );
+                  } catch (err) {
+                    enqueueSnackbar(err?.data?.message || err?.data || 'Failed to approve', { variant: 'error' });
+                  }
+                }}
+              >
+                Ops OK
+              </Button>
+              <Button
+                size="small"
+                danger
+                icon={<CloseCircleOutlined />}
+                style={{ borderRadius: 6 }}
+                onClick={() => { setDesignRejectModal({ id: sr._id, label: sr.product || sr.stickerType }); setDesignRejectReason(''); }}
+              >
+                Reject
+              </Button>
+            </Space>
           );
         })();
 
@@ -3648,6 +3713,29 @@ export default function OperationDetail() {
         >
           Create {assignAllRows.length} Task{assignAllRows.length !== 1 ? 's' : ''}
         </Button>
+      </Modal>
+
+      <Modal
+        title="Reject Design"
+        open={!!designRejectModal}
+        onCancel={() => { if (!designRejectSubmitting) { setDesignRejectModal(null); setDesignRejectReason(''); } }}
+        onOk={submitDesignReject}
+        okText="Reject Design"
+        okButtonProps={{ danger: true, disabled: !designRejectReason.trim(), loading: designRejectSubmitting }}
+        destroyOnClose
+      >
+        <Text type="secondary" style={{ fontSize: 13 }}>
+          {designRejectModal?.label ? `Rejecting design for "${designRejectModal.label}". ` : ''}
+          This sends the request back to the design team for rework — they'll need to re-upload and both Sales & Operations will approve again.
+        </Text>
+        <Input.TextArea
+          rows={3}
+          style={{ marginTop: 10 }}
+          placeholder="Reason for rejection (required)..."
+          value={designRejectReason}
+          onChange={(e) => setDesignRejectReason(e.target.value)}
+          autoFocus
+        />
       </Modal>
     </div>
   );

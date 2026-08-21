@@ -132,6 +132,17 @@ const leadSchema = new mongoose.Schema({
   // File uploads (Cloudinary URLs)
   hotelLogoUrl: String,
 
+  // Field-level change log for the Hotel/Company Information and Billing & Address cards —
+  // shown as the "Change Timeline" on the Parties tab's Hotel/Company Information view modal.
+  editHistory: [{
+    field: String,
+    oldValue: String,
+    newValue: String,
+    changedAt: { type: Date, default: Date.now },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    changedByName: String,
+  }],
+
   deletedAt: Date,
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },

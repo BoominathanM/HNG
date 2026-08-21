@@ -25,6 +25,7 @@ router.post('/stickers/:id/upload-design', upload.single('design'), ctrl.uploadS
 router.post('/stickers/:id/upload-invoice', upload.single('invoice'), ctrl.uploadStickerInvoice);
 router.patch('/stickers/:id/status', ctrl.updateStickerStatus);
 router.patch('/stickers/:id/approve', ctrl.approveStickerRequest);
+router.patch('/stickers/:id/reject', ctrl.rejectStickerRequest);
 router.post('/stickers/send-to-team', ctrl.sendToStickerTeam);
 router.post('/stickers/:id/send-design-confirmation', ctrl.sendDesignConfirmationWhatsApp);
 

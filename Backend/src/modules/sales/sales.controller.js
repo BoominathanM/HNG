@@ -4,6 +4,7 @@ const Negotiation = require('../../models/Negotiation');
 const Order = require('../../models/Order');
 const Complaint = require('../../models/Complaint');
 const Party = require('../../models/Party');
+const User = require('../../models/User');
 const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const MaterialStock = require('../../models/MaterialStock');
@@ -16,6 +17,7 @@ const { notifyRoles } = require('../../utils/notify');
 const { resolveMaterialStock } = require('../../utils/materialStockMatch');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
 const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
+const { buildLeadEditHistory } = require('../../utils/leadEditHistory');
 
 // Lead.category defaults to 'Hotel' but leads created before this field existed have no
 // `category` stored in Mongo at all — a raw { category: 'Hotel' } match would wrongly
@@ -24,6 +26,15 @@ function categoryMatch(category) {
   return category === 'Hotel'
     ? { $or: [{ category: 'Hotel' }, { category: { $exists: false } }, { category: null }] }
     : { category };
+}
+
+// The "Assign Lead To" field on the Lead form only stores the sales person's display name
+// (salesPerson); safety net so assignedTo (used by Order/Lead visibility scoping and by
+// convertToOrder's assignedTo fallback) stays populated even if a caller omits it.
+async function resolveAssignedTo(body) {
+  if (body.assignedTo || !body.salesPerson) return body.assignedTo;
+  const match = await User.findOne({ fullName: body.salesPerson }).select('_id');
+  return match?._id;
 }
 
 // ─── LEADS ───────────────────────────────────────────────────────────────────
@@ -86,10 +97,11 @@ exports.getLead = asyncHandler(async (req, res, next) => {
 });
 
 exports.createLead = asyncHandler(async (req, res) => {
-  const leadCode = await generateCode('LEAD');
   const initialStatus = req.body.status || 'Cold';
+  const [leadCode, assignedTo] = await Promise.all([generateCode('LEAD'), resolveAssignedTo(req.body)]);
   const lead = await Lead.create({
     ...req.body,
+    assignedTo,
     leadCode,
     createdBy: req.user._id,
     statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Lead created' }],
@@ -99,9 +111,21 @@ exports.createLead = asyncHandler(async (req, res) => {
 });
 
 exports.updateLead = asyncHandler(async (req, res, next) => {
+  const [existingLead, assignedTo] = await Promise.all([
+    Lead.findOne({ _id: req.params.id, deletedAt: null }).lean(),
+    resolveAssignedTo(req.body),
+  ]);
+  if (!existingLead) return next(new AppError('Lead not found', 404));
+
+  const patch = { ...req.body, ...(assignedTo ? { assignedTo } : {}) };
+  const editHistoryEntries = buildLeadEditHistory(existingLead, patch, req.user);
+
+  const update = { $set: patch };
+  if (editHistoryEntries.length) update.$push = { editHistory: { $each: editHistoryEntries } };
+
   const lead = await Lead.findOneAndUpdate(
     { _id: req.params.id, deletedAt: null },
-    { $set: req.body },
+    update,
     { new: true, runValidators: false }
   );
   if (!lead) return next(new AppError('Lead not found', 404));
