@@ -28,13 +28,20 @@ async function applyOrderVisibility(user, filter) {
       const myStickerType = ROLE_TO_STICKER_TYPE[role];
       if (user.department === 'Vendors' && myStickerType) {
         // Design/Vendor Team Members (Sticker/Box/Ziplock/Butter Paper) are never the
-        // order's createdBy/assignedTo/salesPerson — their work is routed via
-        // StickerRequest.vendorId (see getStickerRequests), so scope their order
-        // visibility to whatever orders have a request routed to them instead.
-        const orderIds = await StickerRequest.find({
-          $or: [{ vendorId: user._id }, { vendorId: null, stickerType: myStickerType }],
-        }).distinct('orderId');
-        filter._id = { $in: orderIds };
+        // order's createdBy/assignedTo/salesPerson, so the createdBy/assignedTo/
+        // salesPerson visibility rule below doesn't apply to them — but restricting
+        // the order LIST itself to orders with an already-existing StickerRequest of
+        // their type (the previous approach) is wrong: an item only gets a
+        // StickerRequest doc once it's actually acted on (e.g. "Send for Approval"),
+        // so a brand-new order whose Box item hasn't been touched yet, or one still
+        // waiting on an upstream Sticker-print step, has no 'Box' StickerRequest yet
+        // and was silently excluded — whole orders vanishing from the Box vendor's
+        // queue. Which items/rows within an order route to which vendor tab (and to
+        // which teammate) is a multi-field decision the frontend's queue builder
+        // (Operations/data.js buildProductionQueues) already computes correctly and
+        // is the only place that logic should live, so leave the order list
+        // unrestricted here — same as Admin — and let that per-tab/per-row gating
+        // (plus getStickerRequests' per-teammate redaction) narrow it down instead.
       } else {
         const visibility = [{ createdBy: user._id }, { assignedTo: user._id }];
         const myName = user.fullName || user.name;
@@ -408,7 +415,13 @@ exports.getStickerRequests = asyncHandler(async (req, res) => {
     // vendor's own request list simply omitting it — which is indistinguishable from
     // "never assigned" and made a reassigned-away row silently reappear for them
     // whenever they're still the type's configured Auto default.
-    filter.stickerType = myStickerType;
+    // Also always include 'Sticker'-type requests (unless that IS my own type):
+    // every packaging tab's queue-visibility gate (isStickerPrinted in
+    // Operations/data.js) needs to read the upstream Sticker-print step's status
+    // for an item before showing it in my tab, even though that step belongs to a
+    // different vendor team — narrowing to only myStickerType made those requests
+    // invisible to me entirely, so items still needing that check silently vanished.
+    filter.stickerType = myStickerType === 'Sticker' ? myStickerType : { $in: [myStickerType, 'Sticker'] };
   }
   const stickers = await StickerRequest.find(filter)
     .populate('orderId', 'orderCode clientName')
@@ -422,6 +435,11 @@ exports.getStickerRequests = asyncHandler(async (req, res) => {
   let data = stickers;
   if (isVendorScoped) {
     data = stickers.map((s) => {
+      // Only redact requests of MY OWN type routed to a teammate — a cross-type
+      // request (e.g. the upstream 'Sticker' step, fetched above purely so other
+      // tabs' gates can read its status) isn't "mine to claim" at all, so it's
+      // never redacted here.
+      if (s.stickerType !== myStickerType) return s;
       const isMine = s.vendorId && String(s.vendorId._id) === String(req.user._id);
       if (isMine || !s.vendorId) return s;
       // Routed to a different teammate of the same type — expose only enough to mark

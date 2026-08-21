@@ -425,13 +425,14 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
   // ── Section A: Personalized Kit ──
   if (sections.personalized > 0) {
     const cs = CAT_STYLE.personalized;
-    const kitLabel = sections.persKitCount
-      ? ` — ${sections.persKitCount} kit${sections.persKitCount !== 1 ? 's' : ''}`
-      : '';
     html += `
       <tr>
-        <td colspan="3" style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;letter-spacing:0.5px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
-          A &nbsp;&mdash;&nbsp; PERSONALIZED KIT${kitLabel}
+        <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;letter-spacing:0.5px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+          A &nbsp;&mdash;&nbsp; PERSONALIZED KIT
+        </td>
+        <td style="padding:8px 10px;background:${cs.header};font-size:11px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};"></td>
+        <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:center;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
+          ${sections.persKitCount ? sections.persKitCount : ''}
         </td>
         <td style="padding:8px 10px;font-weight:800;color:${cs.text};background:${cs.header};font-size:11px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};">
           ${persKitRate > 0 ? persKitRate.toLocaleString() : ''}
@@ -872,14 +873,15 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
       {/* ── Section A: Personalized Kit ── */}
       {sections.personalized > 0 && (() => {
         const cs = CAT_STYLE.personalized;
-        const kitLabel = sections.persKitCount
-          ? ` — ${sections.persKitCount} kit${sections.persKitCount !== 1 ? 's' : ''}`
-          : '';
         return (
           <>
             <tr>
-              <td colSpan={3} style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, letterSpacing: 0.5, borderRight: `1px solid ${BORDER}` }}>
-                A &nbsp;—&nbsp; PERSONALIZED KIT{kitLabel}
+              <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, letterSpacing: 0.5, borderRight: `1px solid ${BORDER}` }}>
+                A &nbsp;—&nbsp; PERSONALIZED KIT
+              </td>
+              <td style={{ ...td, background: cs.header, borderRight: `1px solid ${BORDER}` }} />
+              <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'center', borderRight: `1px solid ${BORDER}` }}>
+                {sections.persKitCount ? sections.persKitCount : ''}
               </td>
               <td style={{ ...td, background: cs.header, color: cs.text, fontWeight: 800, fontSize: 11, textAlign: 'right' }}>
                 {persKitRate > 0 ? persKitRate.toLocaleString() : ''}

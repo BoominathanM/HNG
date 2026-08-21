@@ -104,6 +104,21 @@ import {
 const { Text, Title } = Typography;
 const { Option } = Select;
 
+// Derives a queue row's StickerRequest type (Box/Frosted Ziplock/Butter Paper/Wooden
+// Brush/Other/Sticker) from its React key's '-box'/'-frosted'/... suffix. Emergency-split
+// rows append an extra '-emg'/'-rem' AFTER that suffix (see data.js's makeBoxRow etc.),
+// which must be stripped first or every check below fails and silently falls through to
+// 'Sticker' — mismatching the row against the wrong StickerRequest doc.
+const queueTypeFromKey = (key) => {
+  const baseKey = (key || '').replace(/-(emg|rem)$/, '');
+  return baseKey.endsWith('-box') ? 'Box'
+    : baseKey.endsWith('-frosted') ? 'Frosted Ziplock'
+    : baseKey.endsWith('-butter') ? 'Butter Paper'
+    : baseKey.endsWith('-wooden_brush') ? 'Wooden Brush'
+    : baseKey.endsWith('-other') ? 'Other'
+    : 'Sticker';
+};
+
 // Maps a queue tab's display label to the URL slug used by /operations/invoices/:type
 // (each slug is backed by its own model — StickerInvoice/BoxInvoice/ZiplockInvoice/ButterPaperInvoice).
 const INVOICE_TYPE_SLUG = {
@@ -113,6 +128,17 @@ const INVOICE_TYPE_SLUG = {
   'Butter Paper': 'butter',
   'Wooden Brush': 'wooden_brush',
   Other: 'other',
+};
+
+// Inventory "filled" items store their size as a bare number (e.g. "15") with the actual
+// unit held separately on item.unit (ml/gram/Litres/Kg) — see Backend/src/models/InventoryItem.js.
+// Sizes that already carry their own unit text (e.g. "2.5cm x 2.5cm") are left untouched.
+const SIZE_UNIT_LABELS = { ml: 'ml', gram: 'g', g: 'g', Litres: 'L', Kg: 'Kg' };
+const formatSizeWithUnit = (size, unit) => {
+  const raw = String(size ?? '').trim();
+  if (!raw || /[a-zA-Z]/.test(raw)) return raw;
+  const unitLabel = SIZE_UNIT_LABELS[unit];
+  return unitLabel ? `${raw} ${unitLabel}` : raw;
 };
 
 // Matches StickerRequest.status (Backend/src/models/StickerRequest.js) — row.status now
@@ -261,12 +287,7 @@ export default function Operations() {
   }, [hotelDesigns]);
   // Find existing approved hotel design for a queue row
   const findHotelDesign = (record) => {
-    const stickerType = record.key?.endsWith('-box') ? 'Box'
-      : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
-      : record.key?.endsWith('-butter') ? 'Butter Paper'
-      : record.key?.endsWith('-wooden_brush') ? 'Wooden Brush'
-      : record.key?.endsWith('-other') ? 'Other'
-      : 'Sticker';
+    const stickerType = queueTypeFromKey(record.key);
     const key = `${(record.hotelLogo || '').toLowerCase()}-${(record.product || '').toLowerCase()}-${stickerType}`;
     return hotelDesignMap[key] || null;
   };
@@ -637,12 +658,7 @@ export default function Operations() {
   };
   // Find the StickerRequest document for a production-queue item (match by order + product + queue type)
   const findStickerReq = (item) => {
-    const stickerType = item.key?.endsWith('-box') ? 'Box'
-      : item.key?.endsWith('-frosted') ? 'Frosted Ziplock'
-      : item.key?.endsWith('-butter') ? 'Butter Paper'
-      : item.key?.endsWith('-wooden_brush') ? 'Wooden Brush'
-      : item.key?.endsWith('-other') ? 'Other'
-      : 'Sticker';
+    const stickerType = queueTypeFromKey(item.key);
     const pLower = (item.product || '').toLowerCase();
     const cat = item.category || '';
     const matches = stickerRequests.filter(
@@ -1041,8 +1057,9 @@ export default function Operations() {
         title: label === 'Box' ? 'Size / PVK' : 'Size',
         dataIndex: 'size',
         render: (value, record) => {
-          if (record.isKitChild) return value ? <Text type="secondary" style={{ fontSize: 11 }}>{value}</Text> : <Text type="secondary">—</Text>;
-          return value ? <Tag color="geekblue">{value}</Tag> : '—';
+          const display = formatSizeWithUnit(value, record.unit);
+          if (record.isKitChild) return display ? <Text type="secondary" style={{ fontSize: 11 }}>{display}</Text> : <Text type="secondary">—</Text>;
+          return display ? <Tag color="geekblue">{display}</Tag> : '—';
         },
       },
       {
@@ -1306,12 +1323,7 @@ export default function Operations() {
                         style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff', borderRadius: 6 }}
                         onClick={async () => {
                           const ord = apiOrders.find((o) => o.id === record.orderId);
-                          const queueType = record.key?.endsWith('-box') ? 'Box'
-                            : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
-                            : record.key?.endsWith('-butter') ? 'Butter Paper'
-                            : record.key?.endsWith('-wooden_brush') ? 'Wooden Brush'
-                            : record.key?.endsWith('-other') ? 'Other'
-                            : 'Sticker';
+                          const queueType = queueTypeFromKey(record.key);
                           try {
                             await createStickerRequest({
                               orderId: ord?.key,
@@ -1375,12 +1387,7 @@ export default function Operations() {
                     onClick={async () => {
                       const ord = apiOrders.find((o) => o.id === record.orderId);
                       try {
-                        const queueType = record.key?.endsWith('-box') ? 'Box'
-                          : record.key?.endsWith('-frosted') ? 'Frosted Ziplock'
-                          : record.key?.endsWith('-butter') ? 'Butter Paper'
-                          : record.key?.endsWith('-wooden_brush') ? 'Wooden Brush'
-                          : record.key?.endsWith('-other') ? 'Other'
-                          : 'Sticker';
+                        const queueType = queueTypeFromKey(record.key);
                         const existing = findStickerReq(record);
                         let stickerId;
                         if (existing) {

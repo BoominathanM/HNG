@@ -502,14 +502,20 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
   // Find the StickerRequest document for a given order + product combination.
   // Case-insensitive product match to guard against minor name inconsistencies.
   // Pass stickerType to restrict the search to a specific queue type (e.g. 'Sticker').
-  const findSR = (orderId, product, stickerType = null) => {
+  const findSR = (orderId, product, stickerType = null, category = null) => {
     const pLower = (product || '').toLowerCase();
-    return stickerRequests.find(
+    const matches = stickerRequests.filter(
       (s) =>
         (s.orderId?.orderCode === orderId || s.orderId === orderId) &&
         (s.product || '').toLowerCase() === pLower &&
         (stickerType === null || s.stickerType === stickerType),
     );
+    if (category === null) return matches[0];
+    // Category-scoped: when the same product appears twice in one order (once as
+    // Separate Kit, once as Personalized), each gets its OWN StickerRequest/approval —
+    // mirrors findStickerReq in index.jsx. Prefer the matching category; fall back to a
+    // legacy request with no category (orders created before this existed).
+    return matches.find((s) => (s.category || '') === category) || matches.find((s) => !s.category);
   };
 
   // Returns true when every emergency product for the order has a completed StickerRequest.
@@ -681,7 +687,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
-          status: findSR(order.id, product, 'Box')?.status || 'Pending',
+          status: findSR(order.id, product, 'Box', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,
           note: boxNote,
@@ -797,7 +803,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
-          status: findSR(order.id, product, 'Frosted Ziplock')?.status || 'Pending',
+          status: findSR(order.id, product, 'Frosted Ziplock', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
           verified: order.stockStatus === 'Received',
           note: frostedNote,
@@ -900,7 +906,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
-          status: findSR(order.id, product, 'Butter Paper')?.status || 'Pending',
+          status: findSR(order.id, product, 'Butter Paper', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
           verified: order.stockStatus === 'Received',
           note: butterNote,
@@ -1001,7 +1007,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
-          status: findSR(order.id, product, 'Wooden Brush')?.status || 'Pending',
+          status: findSR(order.id, product, 'Wooden Brush', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,
           note: woodenBrushNote,
@@ -1082,7 +1088,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
-          status: findSR(order.id, product, 'Other')?.status || 'Pending',
+          status: findSR(order.id, product, 'Other', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,
           note: otherNote,

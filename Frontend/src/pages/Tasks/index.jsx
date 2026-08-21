@@ -486,7 +486,15 @@ export default function Tasks() {
     if (item.siblingQty) {
       rows = rows.map((r) => ({ ...r, qty: Math.max(0, r.qty - item.siblingQty), doneQty: Math.max(0, r.doneQty - item.siblingQty) }));
     }
-    return rows.filter((r) => r.qty > 0).map((r) => ({ ...r, requiredQty, pendingQty: Math.max(0, requiredQty - r.doneQty) }));
+    // pendingQty = units of this task name that don't have ANY assignee yet (requiredQty
+    // minus what's already assigned, regardless of status) — not requiredQty minus doneQty.
+    // Using doneQty here used to read as "10 pending" on a freshly-assigned-but-not-started
+    // task even when, say, 5 of the 10 already had someone assigned to them: technically
+    // true (0 done) but misleading as a "still needs assigning" signal, and it fed a real
+    // bug where clicking the same Suggested Tasks chip again (see presetQty below) prefilled
+    // the full requiredQty instead of just the true unassigned remainder, risking over-
+    // assignment. doneQty is still tracked separately for the "X/Y done" + green/gold badge.
+    return rows.filter((r) => r.qty > 0).map((r) => ({ ...r, requiredQty, pendingQty: Math.max(0, requiredQty - r.qty) }));
   };
   const [createTimeConfig] = useCreateTaskTimeConfigMutation();
   const [updateTimeConfig] = useUpdateTaskTimeConfigMutation();
@@ -884,17 +892,17 @@ export default function Tasks() {
   //    (gated or not) so the leftover is never lost track of.
   // 2) Ad-hoc partial assignment on an ordinary (non-split) card — Emergency, Sample, or
   //    Regular, doesn't matter: someone assigns a task for only PART of a product's
-  //    required qty (e.g. 50 of a 100-unit Regular order) and marks it Done, with no
-  //    formal emergency split involved at all. getTaskProgress(s) (same helper the card
-  //    itself uses for its "Task Progress" badges) reports that task name's doneQty short
-  //    of requiredQty — a real leftover exactly like case 1, just reached a different way.
-  //    Only Done qty counts as "the initial portion is complete" (matches the rest of the
-  //    file's convention — see the fullyCovered comment above); an assigned-but-not-yet-
-  //    worked task doesn't count as a completed initial batch yet.
+  //    required qty (e.g. 50 of a 100-unit Regular order), with no formal emergency split
+  //    involved at all. getTaskProgress(s) (same helper the card itself uses for its "Task
+  //    Progress" badges) reports that task name's assigned qty short of requiredQty — a
+  //    real leftover exactly like case 1, just reached a different way. This surfaces the
+  //    moment the partial task is ASSIGNED (qty > 0 but < requiredQty) rather than waiting
+  //    for any of it to be started/Done, so the unassigned remainder is never left invisible
+  //    while the assigned portion works its way through the pipeline.
   const pendingRemainingList = useMemo(
     () => suggestedList.filter((s) => {
       if (typeof s.id === 'string' && s.id.endsWith('-rem')) return true;
-      return getTaskProgress(s).some((p) => p.doneQty > 0 && p.pendingQty > 0);
+      return getTaskProgress(s).some((p) => p.qty > 0 && p.qty < p.requiredQty);
     }),
     [suggestedList, tasksData],
   );
