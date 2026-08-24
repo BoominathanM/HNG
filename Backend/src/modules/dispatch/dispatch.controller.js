@@ -101,7 +101,7 @@ async function attachOrderTasks(dispatches) {
   const orderIds = [...new Set(dispatches.map((d) => d.orderId?._id || d.orderId).filter(Boolean).map(String))];
   if (orderIds.length === 0) return;
   const tasks = await Task.find({ orderId: { $in: orderIds }, deletedAt: null })
-    .select('orderId productIndex taskType assignedTo assignedToMany')
+    .select('orderId productIndex taskType assignedTo assignedToMany product')
     .lean();
   const tasksByOrder = new Map();
   tasks.forEach((t) => {

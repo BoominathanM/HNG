@@ -11,6 +11,7 @@ import {
   SearchOutlined, WhatsAppOutlined,
   FileDoneOutlined, EditOutlined, SafetyCertificateOutlined,
   AlertFilled, ExperimentOutlined, HistoryOutlined, DeleteOutlined,
+  FileSearchOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -144,6 +145,52 @@ const sumPaid = (...sources) => {
 
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
 const quotStatusColor = { 'In Process': '#7c3aed', Paid: '#6b1240', 'Partially Paid': '#B11E6A', Unpaid: '#C94F8A' };
+
+// "What Changed" pills for a priceEditHistory entry — changeType is a comma-joined string
+// like "Price Edited, Quantity Edited" written by billing.controller's describeChangeType.
+const changeTagColor = { 'Price Edited': '#B11E6A', 'Quantity Edited': '#3730a3', 'GST Edited': '#c2410c' };
+const ChangeTypeTags = ({ changeType }) => {
+  const parts = (changeType || 'Price Edited').split(',').map((p) => p.trim()).filter(Boolean);
+  return (
+    <Space size={4} wrap>
+      {parts.map((p) => (
+        <Tag key={p} style={{ borderRadius: 20, fontSize: 11, margin: 0, background: `${changeTagColor[p] || '#888'}15`, color: changeTagColor[p] || '#888', border: `1px solid ${changeTagColor[p] || '#888'}44` }}>{p}</Tag>
+      ))}
+    </Space>
+  );
+};
+
+// Per-line-item before/after detail for one edit — expanded row under a Price Edit Logs /
+// Edited Records Report row, sourced from priceEditHistory[i].itemChanges.
+const ItemChangesTable = ({ itemChanges }) => (
+  <Table
+    size="small"
+    pagination={false}
+    rowKey={(r, i) => `${r.name}-${i}`}
+    dataSource={itemChanges || []}
+    columns={[
+      { title: 'Item', dataIndex: 'name', render: (v) => <Text style={{ fontSize: 12 }}>{v}</Text> },
+      {
+        title: 'Rate', width: 160,
+        render: (_, r) => r.oldRate !== r.newRate
+          ? <Text style={{ fontSize: 12 }}><Text type="secondary" delete>₹{r.oldRate}</Text> → <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{r.newRate}</Text></Text>
+          : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+      },
+      {
+        title: 'Qty', width: 140,
+        render: (_, r) => (r.oldQty != null && r.oldQty !== r.newQty)
+          ? <Text style={{ fontSize: 12 }}><Text type="secondary" delete>{r.oldQty}</Text> → <Text style={{ color: '#52c41a', fontWeight: 600 }}>{r.newQty}</Text></Text>
+          : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+      },
+      {
+        title: 'GST %', width: 130,
+        render: (_, r) => (r.oldGst != null && r.oldGst !== r.newGst)
+          ? <Text style={{ fontSize: 12 }}><Text type="secondary" delete>{r.oldGst}%</Text> → <Text style={{ color: '#52c41a', fontWeight: 600 }}>{r.newGst}%</Text></Text>
+          : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
+      },
+    ]}
+  />
+);
 
 export default function Billing() {
   const isDark = useSelector((s) => s.theme.isDark);
@@ -724,6 +771,13 @@ export default function Billing() {
   const [priceLogsOpen, setPriceLogsOpen] = useState(false);
   const [priceLogsRecord, setPriceLogsRecord] = useState(null);
   const openPriceLogs = (record) => { setPriceLogsRecord(record); setPriceLogsOpen(true); };
+
+  // Edited Invoice & Quotation Report — aggregates priceEditHistory across EVERY invoice and
+  // quotation-in-process (not just one record) into a single flat, searchable audit report.
+  // Openable both as a global "Edited Records Report" button on each tab, and from inside the
+  // single-record Price Edit Logs modal above via "View Full Report".
+  const [editReportOpen, setEditReportOpen] = useState(false);
+  const [editReportSearch, setEditReportSearch] = useState('');
 
   const billingPartiesData = Object.values(
     invoiceList.reduce((acc, inv) => {
@@ -1598,6 +1652,64 @@ export default function Billing() {
   const totalPending = invoiceList.reduce((s, i) => s + i.balance, 0);
   const totalQuotation = quotationList.reduce((s, q) => s + (q.total || 0), 0);
 
+  // Flattens every invoice's + every in-process quotation's priceEditHistory into one list,
+  // newest first — the data source for the "Edited Invoice & Quotation Report".
+  const editedRecordsReport = useMemo(() => {
+    const rows = [];
+    invoiceList.forEach((inv) => {
+      (inv.priceEditHistory || []).forEach((h, i) => {
+        rows.push({
+          key: `inv-${inv.key}-${i}`,
+          docType: 'Invoice',
+          number: inv.inv,
+          orderNumber: inv.order,
+          client: inv.client,
+          ...h,
+        });
+      });
+    });
+    quotationList.forEach((q) => {
+      if (q.docType === 'Order') return; // already-converted rows carry the invoice's own history, shown above
+      (q.priceEditHistory || []).forEach((h, i) => {
+        rows.push({
+          key: `quot-${q.key}-${i}`,
+          docType: 'Quotation',
+          number: q.quot,
+          orderNumber: q.order,
+          client: q.client,
+          ...h,
+        });
+      });
+    });
+    return rows.sort((a, b) => new Date(b.changedAt || 0) - new Date(a.changedAt || 0));
+  }, [invoiceList, quotationList]);
+
+  const editReportFiltered = editedRecordsReport.filter((r) => {
+    const s = editReportSearch.trim().toLowerCase();
+    if (!s) return true;
+    return [r.number, r.orderNumber, r.client, r.reason, r.changeType, r.changedByName]
+      .some((v) => (v || '').toString().toLowerCase().includes(s));
+  });
+
+  const handleExportEditReport = () => {
+    const headers = ['Type', 'Invoice/Quotation No', 'Order No', 'Client', 'Edited Date/Time', 'Edited By', 'Reason for Edit', 'What Changed'];
+    const rows = editReportFiltered.map((r) => [
+      r.docType, r.number || '', r.orderNumber || '', r.client || '',
+      r.changedAt ? new Date(r.changedAt).toLocaleString() : '',
+      r.changedByName || 'System', r.reason || '', r.changeType || '',
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Edited_Invoice_Quotation_Report_${dayjs().format('YYYY-MM-DD')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="page-container fade-in">
       <div style={{ marginBottom: 20 }}>
@@ -1647,6 +1759,9 @@ export default function Billing() {
                     onChange={(dates) => setQuotDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
                     allowClear
                   />
+                  <Button icon={<FileSearchOutlined />} style={{ marginLeft: 'auto', borderRadius: 8, color: '#3730a3', borderColor: '#3730a344' }} onClick={() => setEditReportOpen(true)}>
+                    Edited Records Report
+                  </Button>
                 </div>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
@@ -1690,6 +1805,9 @@ export default function Billing() {
                     onChange={(dates) => setInvoiceDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
                     allowClear
                   />
+                  <Button icon={<FileSearchOutlined />} style={{ marginLeft: 'auto', borderRadius: 8, color: '#3730a3', borderColor: '#3730a344' }} onClick={() => setEditReportOpen(true)}>
+                    Edited Records Report
+                  </Button>
                 </div>
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
@@ -2496,8 +2614,12 @@ export default function Billing() {
         }
         open={priceLogsOpen}
         onCancel={() => setPriceLogsOpen(false)}
-        footer={null}
-        width={720}
+        footer={
+          <Button icon={<FileSearchOutlined />} onClick={() => { setPriceLogsOpen(false); setEditReportOpen(true); }}>
+            View Full Edited Records Report
+          </Button>
+        }
+        width={860}
         centered
       >
         {priceLogsRecord && (
@@ -2511,15 +2633,78 @@ export default function Billing() {
               pagination={{ pageSize: 8, size: 'small', hideOnSinglePage: true }}
               rowKey={(r, i) => `${r.changedAt}-${i}`}
               dataSource={[...(priceLogsRecord.priceEditHistory || [])].reverse()}
+              expandable={{
+                rowExpandable: (r) => (r.itemChanges || []).length > 0,
+                expandedRowRender: (r) => <ItemChangesTable itemChanges={r.itemChanges} />,
+              }}
               columns={[
                 { title: 'Date & Time', dataIndex: 'changedAt', width: 150, render: (v) => <Text style={{ fontSize: 12 }}>{v ? new Date(v).toLocaleString() : '—'}</Text> },
                 { title: 'Reason', dataIndex: 'reason', render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
-                { title: 'Old Total', dataIndex: 'oldTotal', width: 110, render: (v) => <Text type="secondary" style={{ fontSize: 12, textDecoration: 'line-through' }}>₹{(v || 0).toLocaleString()}</Text> },
-                { title: 'New Total', dataIndex: 'newTotal', width: 110, render: (v) => <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>₹{(v || 0).toLocaleString()}</Text> },
-                { title: 'Edited By', dataIndex: 'changedByName', width: 140, render: (v) => <Space size={4}><UserOutlined style={{ color: '#aaa' }} />{v || 'System'}</Space> },
+                { title: 'What Changed', dataIndex: 'changeType', width: 170, render: (v) => <ChangeTypeTags changeType={v} /> },
+                { title: 'Old Total', dataIndex: 'oldTotal', width: 100, render: (v) => <Text type="secondary" style={{ fontSize: 12, textDecoration: 'line-through' }}>₹{(v || 0).toLocaleString()}</Text> },
+                { title: 'New Total', dataIndex: 'newTotal', width: 100, render: (v) => <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>₹{(v || 0).toLocaleString()}</Text> },
+                { title: 'Edited By', dataIndex: 'changedByName', width: 130, render: (v) => <Space size={4}><UserOutlined style={{ color: '#aaa' }} />{v || 'System'}</Space> },
               ]}
             />
           )
+        )}
+      </Modal>
+
+      {/* ───────────── EDITED INVOICE & QUOTATION REPORT (all records, all edits) ───────────── */}
+      <Modal
+        title={
+          <Space>
+            <FileSearchOutlined style={{ color: '#3730a3' }} />
+            <span style={{ fontWeight: 700 }}>Edited Invoice & Quotation Report</span>
+          </Space>
+        }
+        open={editReportOpen}
+        onCancel={() => setEditReportOpen(false)}
+        footer={null}
+        width={1080}
+        centered
+      >
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+          <Input
+            prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+            placeholder="Search invoice/quotation no, order no, client, reason, edited by..."
+            allowClear
+            value={editReportSearch}
+            onChange={(e) => setEditReportSearch(e.target.value)}
+            style={{ width: 340, borderRadius: 8 }}
+          />
+          <Button icon={<DownloadOutlined />} style={{ marginLeft: 'auto' }} onClick={handleExportEditReport} disabled={editReportFiltered.length === 0}>
+            Export CSV
+          </Button>
+        </div>
+        {editedRecordsReport.length === 0 ? (
+          <div style={{ padding: '24px 0', textAlign: 'center' }}>
+            <Text type="secondary">No invoices or quotations have been modified yet.</Text>
+          </div>
+        ) : (
+          <Table
+            size="small"
+            pagination={{ pageSize: 10, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
+            rowKey="key"
+            dataSource={editReportFiltered}
+            scroll={{ x: 'max-content' }}
+            expandable={{
+              rowExpandable: (r) => (r.itemChanges || []).length > 0,
+              expandedRowRender: (r) => <ItemChangesTable itemChanges={r.itemChanges} />,
+            }}
+            columns={[
+              { title: 'Type', dataIndex: 'docType', width: 90, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 11, background: v === 'Invoice' ? '#B11E6A15' : '#7c3aed15', color: v === 'Invoice' ? '#B11E6A' : '#7c3aed', border: `1px solid ${v === 'Invoice' ? '#B11E6A44' : '#7c3aed44'}` }}>{v}</Tag> },
+              { title: 'Invoice / Quotation No', dataIndex: 'number', width: 160, render: (v) => <Text strong style={{ fontSize: 12 }}>{v || '—'}</Text> },
+              { title: 'Order No', dataIndex: 'orderNumber', width: 130, render: (v) => <Text style={{ fontSize: 12 }}>{v && v !== '—' ? v : '—'}</Text> },
+              { title: 'Client', dataIndex: 'client', width: 140, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+              { title: 'Edited Date/Time', dataIndex: 'changedAt', width: 150, render: (v) => <Text style={{ fontSize: 12 }}>{v ? new Date(v).toLocaleString() : '—'}</Text> },
+              { title: 'Edited By', dataIndex: 'changedByName', width: 130, render: (v) => <Space size={4}><UserOutlined style={{ color: '#aaa' }} />{v || 'System'}</Space> },
+              { title: 'Reason for Edit', dataIndex: 'reason', width: 200, render: (v) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text> },
+              { title: 'What Changed', dataIndex: 'changeType', width: 190, render: (v) => <ChangeTypeTags changeType={v} /> },
+              { title: 'Old Total', dataIndex: 'oldTotal', width: 100, render: (v) => <Text type="secondary" style={{ fontSize: 12, textDecoration: 'line-through' }}>₹{(v || 0).toLocaleString()}</Text> },
+              { title: 'New Total', dataIndex: 'newTotal', width: 100, render: (v) => <Text style={{ fontSize: 12, color: '#52c41a', fontWeight: 600 }}>₹{(v || 0).toLocaleString()}</Text> },
+            ]}
+          />
         )}
       </Modal>
 

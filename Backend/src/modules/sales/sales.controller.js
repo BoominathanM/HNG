@@ -1223,6 +1223,25 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Order quantity cannot be reduced once placed — it can only be increased. ${qtyDecreases.join('; ')}`, 400));
   }
 
+  // deductedQty is a backend-only bookkeeping field (utils/taskQuantity.js's
+  // checkStockDeductionGate) — the Sales edit form doesn't know about it and always resends
+  // the FULL items array on any edit (price change, adding a row, etc.), even for rows whose
+  // qty didn't change. Without this, the $set below would blindly overwrite every item back
+  // to its schema default (deductedQty: 0), making Task Management think stock was never
+  // pulled for products that were already fully deducted at order creation — even though
+  // nothing about them actually changed. Carry the prior value forward by the same
+  // orderItemKey match deductInventoryDeltaForOrder uses, so only a genuine qty increase
+  // (handled separately, below) adds to it.
+  if (Array.isArray(req.body.items)) {
+    const oldDeductedByKey = new Map(
+      (existingForQtyCheck.items || []).map((it) => [orderItemKey(it), Number(it.deductedQty) || 0])
+    );
+    req.body.items = req.body.items.map((it) => ({
+      ...it,
+      deductedQty: it.deductedQty !== undefined ? it.deductedQty : (oldDeductedByKey.get(orderItemKey(it)) || 0),
+    }));
+  }
+
   const editHistoryEntries = buildOrderEditHistory(existingForQtyCheck, req.body, req.user);
 
   const order = await Order.findOneAndUpdate(

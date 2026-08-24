@@ -77,6 +77,24 @@ const quotationSchema = new mongoose.Schema({
     newGstAmount: Number,
     oldTotal: Number,
     newTotal: Number,
+    // Human-readable summary of what kind of edit this was (e.g. "Price Edited, Quantity
+    // Edited") — derived from priceChanged/qtyChanged/gstChanged, surfaced by the Billing
+    // "Price Edit Logs" modal and the "Edited Invoice & Quotation Report".
+    changeType: String,
+    priceChanged: Boolean,
+    qtyChanged: Boolean,
+    gstChanged: Boolean,
+    // Per-line-item breakdown of exactly what changed in this edit, for the report's detailed
+    // view — a name-only snapshot (not itemId-linked) since the source row may since have moved.
+    itemChanges: [{
+      name: String,
+      oldRate: Number,
+      newRate: Number,
+      oldQty: Number,
+      newQty: Number,
+      oldGst: Number,
+      newGst: Number,
+    }],
     changedAt: { type: Date, default: Date.now },
     changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     changedByName: String,

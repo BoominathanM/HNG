@@ -877,9 +877,19 @@ export default function Tasks() {
     return map;
   }, [suggestedList, ordersList, kitPackingTasksByOrder]);
 
+  // Order status lookup (orderId -> status) — used below to catch case 3: a product
+  // whose sibling(s) already carried the order to Dispatch Ready while this one was left
+  // with zero task coverage. Reads the same ordersList the New Task modal's Order →
+  // Products selectors already use, so no extra fetch is introduced here.
+  const orderStatusById = useMemo(() => {
+    const map = new Map();
+    ordersList.forEach((o) => { if (o?._id) map.set(String(o._id), o.status); });
+    return map;
+  }, [ordersList]);
+
   // ── Pending Remaining Qty ────────────────────────────────────────────
-  // Two distinct ways a product ends up with a "leftover" quantity still owed a task,
-  // both surfaced here — this tab is NOT emergency-only, it applies the same way to
+  // Three distinct ways a product ends up with a "leftover" quantity still owed a task,
+  // all surfaced here — this tab is NOT emergency-only, it applies the same way to
   // Emergency, Sample, and Regular orders alike:
   //
   // 1) Formal emergency/urgent split — when a product is only PARTIALLY emergency
@@ -899,12 +909,25 @@ export default function Tasks() {
   //    moment the partial task is ASSIGNED (qty > 0 but < requiredQty) rather than waiting
   //    for any of it to be started/Done, so the unassigned remainder is never left invisible
   //    while the assigned portion works its way through the pipeline.
+  // 3) Stranded-by-a-sibling-dispatch — a product that never got ANY task assigned (not
+  //    even a partial one), whose order has ALREADY reached 'Dispatch Ready' because every
+  //    OTHER product/kit in it finished and forwarded the whole order (dispatchOrder
+  //    forwards on ANY sibling task completing — see computeSuggestedTasks' own comment on
+  //    its widened order-status query). getTaskProgress(s) is empty here (zero task rows),
+  //    so cases 1/2 above never catch it — but a round of dispatch has already gone out
+  //    leaving this exact product behind with no work even started, which is the same
+  //    "leftover still owed a task" story as 1/2, just starting from zero instead of a
+  //    partial qty. Ordinary in-production orders (status still 'In Production') are
+  //    deliberately excluded here — those products belong on Today's Checklist only, this
+  //    tab would otherwise flood with every not-yet-assigned product order-wide.
   const pendingRemainingList = useMemo(
     () => suggestedList.filter((s) => {
       if (typeof s.id === 'string' && s.id.endsWith('-rem')) return true;
-      return getTaskProgress(s).some((p) => p.qty > 0 && p.qty < p.requiredQty);
+      const progress = getTaskProgress(s);
+      if (progress.some((p) => p.qty > 0 && p.qty < p.requiredQty)) return true;
+      return progress.length === 0 && orderStatusById.get(String(s.orderId)) === 'Dispatch Ready';
     }),
-    [suggestedList, tasksData],
+    [suggestedList, tasksData, orderStatusById],
   );
 
   // Same { hotelName: { orderCode: [items] } } shape as hotelGroups, scoped to
@@ -1737,8 +1760,8 @@ export default function Tasks() {
                 <Alert
                   type="warning"
                   showIcon
-                  message={`Stock Not Deducted — ${deductedForCard} of ${requiredForCard} unit(s) deducted so far`}
-                  description={`${pendingQtyForCard} unit(s) still short (insufficient inventory when the order was placed/edited). Assignment stays blocked until all ${requiredForCard} unit(s) are deducted — each restock automatically pays off whatever's available toward the shortfall.`}
+                  message={`Stock Short — ${pendingQtyForCard} of ${requiredForCard} unit(s) not yet set aside`}
+                  description={`${deductedForCard} of ${requiredForCard} unit(s) for this order have been reserved from stock so far. Task assignment stays blocked until the remaining ${pendingQtyForCard} unit(s) are restocked — this happens automatically and needs no action here.`}
                   style={{ borderRadius: 8, marginBottom: 8, fontSize: 12 }}
                 />
               );

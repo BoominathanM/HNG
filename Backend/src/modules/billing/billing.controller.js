@@ -63,6 +63,9 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
 
   const editedByKey = new Map();
   let qtyChanged = false;
+  let priceChanged = false;
+  let gstChanged = false;
+  const itemChanges = [];
   for (let i = 0; i < existingRows.length; i++) {
     const oldRow = existingRows[i];
     const newRow = reqProducts[i] || {};
@@ -87,6 +90,11 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
       if (!Number.isFinite(newQty) || newQty < 0) throw new AppError(`Invalid quantity for "${label}"`, 400);
       if (newQty < oldQty) throw new AppError(`Quantity for "${label}" cannot be reduced below ${oldQty}`, 400);
       if (newQty !== oldQty) qtyChanged = true;
+    }
+    if (newRate !== oldRate) priceChanged = true;
+    if (newGst !== oldGst) gstChanged = true;
+    if (newRate !== oldRate || newGst !== oldGst || newQty !== oldQty) {
+      itemChanges.push({ name: label, oldRate, newRate, oldQty, newQty, oldGst, newGst });
     }
 
     editedByKey.set(itemMatchKey(oldRow), { rate: newRate, gst: newGst, qty: newQty });
@@ -127,6 +135,11 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
       if (newKitQty < oldKitQty) throw new AppError(`Quantity for kit "${label}" cannot be reduced below ${oldKitQty}`, 400);
       if (newKitQty !== oldKitQty) qtyChanged = true;
     }
+    if (newKitPrice !== oldKitPrice) priceChanged = true;
+    if (newKitGst !== oldKitGst) gstChanged = true;
+    if (newKitPrice !== oldKitPrice || newKitGst !== oldKitGst || newKitQty !== oldKitQty) {
+      itemChanges.push({ name: `${label} (Kit)`, oldRate: oldKitPrice, newRate: newKitPrice, oldQty: oldKitQty, newQty: newKitQty, oldGst: oldKitGst, newGst: newKitGst });
+    }
 
     const kitOrderDoc = order.kitOrders.find((k) => k && k.kitId === newKit.kitId);
     if (kitOrderDoc) {
@@ -145,6 +158,10 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     const newKitPackagePrice = Number(kitPackagePrice);
     if (!Number.isFinite(newKitPackagePrice) || newKitPackagePrice < 0) throw new AppError('Invalid personalized package price', 400);
     if (newKitPackagePrice < oldKitPackagePrice) throw new AppError(`Personalized package price cannot be reduced below ₹${oldKitPackagePrice}`, 400);
+    if (newKitPackagePrice !== oldKitPackagePrice) {
+      priceChanged = true;
+      itemChanges.push({ name: 'Personalized Package Fee', oldRate: oldKitPackagePrice, newRate: newKitPackagePrice, oldQty: null, newQty: null, oldGst: null, newGst: null });
+    }
     order.kitPrice = newKitPackagePrice;
   }
 
@@ -223,7 +240,7 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     });
   }
 
-  return { buckets, grandTotal, editedByKey };
+  return { buckets, grandTotal, editedByKey, itemChanges, priceChanged, qtyChanged, gstChanged };
 }
 
 // Applies the same floor-checked price/GST edit directly to a document's own items[] — used
@@ -235,6 +252,10 @@ function applyOrphanItemsPriceEdit(items, reqProducts, label404 = 'record') {
   if (reqProducts.length !== existingItems.length) {
     throw new AppError(`Product list does not match the ${label404} — cannot add or remove products here`, 400);
   }
+  let priceChanged = false;
+  let qtyChanged = false;
+  let gstChanged = false;
+  const itemChanges = [];
   for (let i = 0; i < existingItems.length; i++) {
     const oldRow = existingItems[i];
     const newRow = reqProducts[i] || {};
@@ -250,20 +271,27 @@ function applyOrphanItemsPriceEdit(items, reqProducts, label404 = 'record') {
     if (newGst < oldGst) throw new AppError(`GST% for "${label}" cannot be reduced below ${oldGst}%`, 400);
     items[i].price = newRate;
     items[i].gst = newGst;
+    if (newRate !== oldRate) priceChanged = true;
+    if (newGst !== oldGst) gstChanged = true;
 
     // No linked Order to sync here (that's what makes this the orphan branch), so there's no
     // Dispatch/Operations/Tasks concern — quantity is still increase-only for consistency.
+    let newQty = oldQty;
     if (newRow.qty !== undefined) {
-      const newQty = Number(newRow.qty);
+      newQty = Number(newRow.qty);
       if (!Number.isFinite(newQty) || newQty < 0) throw new AppError(`Invalid quantity for "${label}"`, 400);
       if (newQty < oldQty) throw new AppError(`Quantity for "${label}" cannot be reduced below ${oldQty}`, 400);
       items[i].qty = newQty;
       items[i].lineTotal = newQty * newRate;
+      if (newQty !== oldQty) qtyChanged = true;
+    }
+    if (newRate !== oldRate || newGst !== oldGst || newQty !== oldQty) {
+      itemChanges.push({ name: label, oldRate, newRate, oldQty, newQty, oldGst, newGst });
     }
   }
   const newSubtotal = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
   const newGstAmount = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0) * ((Number(it.gst) || 0) / 100), 0);
-  return { newSubtotal, newGstAmount };
+  return { newSubtotal, newGstAmount, itemChanges, priceChanged, qtyChanged, gstChanged };
 }
 
 // Best-effort mirror of an edited price/gst onto a document's own items[] (print/PDF line
@@ -278,6 +306,18 @@ function mirrorPriceOntoItems(items, editedByKey) {
     item.price = edit.rate;
     item.gst = edit.gst;
   });
+}
+
+// Builds the "Price Edited" / "Quantity Edited" / "GST Edited" summary shown on the Billing
+// "Price Edit Logs" modal and the "Edited Invoice & Quotation Report" — from the same
+// priceChanged/qtyChanged/gstChanged flags applyOrderPriceEdit/applyOrphanItemsPriceEdit
+// already compute while validating the edit.
+function describeChangeType(priceChanged, qtyChanged, gstChanged) {
+  const parts = [];
+  if (priceChanged) parts.push('Price Edited');
+  if (qtyChanged) parts.push('Quantity Edited');
+  if (gstChanged) parts.push('GST Edited');
+  return parts.join(', ') || 'Price Edited';
 }
 
 // ─── PARTIES ─────────────────────────────────────────────────────────────────
@@ -455,28 +495,32 @@ exports.updateInvoicePricing = asyncHandler(async (req, res, next) => {
   const oldGstAmount = invoice.gstAmount;
   const oldTotal = invoice.total;
   let editedByKey = new Map();
+  let itemChanges = [];
+  let priceChanged = false, qtyChanged = false, gstChanged = false;
 
   if (invoice.orderId) {
     const order = await Order.findOne({ _id: invoice.orderId, deletedAt: null });
     if (!order) return next(new AppError('Linked order not found', 404));
-    const { buckets, grandTotal, editedByKey: eb } = await applyOrderPriceEdit(order, {
+    const result = await applyOrderPriceEdit(order, {
       products: reqProducts, kitOrders: reqKitOrders, kitPackagePrice: req.body.kitPackagePrice, reason, user: req.user,
     });
-    editedByKey = eb;
+    editedByKey = result.editedByKey;
+    ({ itemChanges, priceChanged, qtyChanged, gstChanged } = result);
 
     // Resync Invoice from the SAME buckets/grandTotal just computed for the order, rather
     // than recomputing independently — keeps the two documents mathematically identical.
-    invoice.subtotal = buckets.taxable;
-    invoice.gstAmount = r2(buckets.gst);
-    invoice.total = grandTotal;
+    invoice.subtotal = result.buckets.taxable;
+    invoice.gstAmount = r2(result.buckets.gst);
+    invoice.total = result.grandTotal;
     invoice.balanceDue = Math.max(0, invoice.total - invoice.advanceAmount);
   } else {
     // Orphan invoice — no linked order to sync. Apply the same floor rule directly to the
     // invoice's own items[].
-    const { newSubtotal, newGstAmount } = applyOrphanItemsPriceEdit(invoice.items, reqProducts, 'invoice');
-    invoice.subtotal = r2(newSubtotal);
-    invoice.gstAmount = r2(newGstAmount);
-    invoice.total = r2(newSubtotal + newGstAmount);
+    const result = applyOrphanItemsPriceEdit(invoice.items, reqProducts, 'invoice');
+    ({ itemChanges, priceChanged, qtyChanged, gstChanged } = result);
+    invoice.subtotal = r2(result.newSubtotal);
+    invoice.gstAmount = r2(result.newGstAmount);
+    invoice.total = r2(result.newSubtotal + result.newGstAmount);
     invoice.balanceDue = Math.max(0, invoice.total - invoice.advanceAmount);
   }
 
@@ -487,6 +531,9 @@ exports.updateInvoicePricing = asyncHandler(async (req, res, next) => {
     oldSubtotal, newSubtotal: invoice.subtotal,
     oldGstAmount, newGstAmount: invoice.gstAmount,
     oldTotal, newTotal: invoice.total,
+    changeType: describeChangeType(priceChanged, qtyChanged, gstChanged),
+    priceChanged, qtyChanged, gstChanged,
+    itemChanges,
     changedAt: new Date(),
     changedBy: req.user._id,
     changedByName,
@@ -522,6 +569,8 @@ exports.updateQuotationPricing = asyncHandler(async (req, res, next) => {
   const oldGstAmount = quotation.gstAmount;
   const oldTotal = quotation.total;
   let editedByKey = new Map();
+  let itemChanges = [];
+  let priceChanged = false, qtyChanged = false, gstChanged = false;
 
   const linkedOrder = await Order.findOne({
     $or: [{ quotationId: quotation._id }, ...(quotation.leadId ? [{ leadId: quotation.leadId }] : [])],
@@ -529,24 +578,26 @@ exports.updateQuotationPricing = asyncHandler(async (req, res, next) => {
   }).sort('-createdAt');
 
   if (linkedOrder) {
-    const { buckets, grandTotal, editedByKey: eb } = await applyOrderPriceEdit(linkedOrder, {
+    const result = await applyOrderPriceEdit(linkedOrder, {
       products: reqProducts, kitOrders: reqKitOrders, kitPackagePrice: req.body.kitPackagePrice, reason, user: req.user,
     });
-    editedByKey = eb;
+    editedByKey = result.editedByKey;
+    ({ itemChanges, priceChanged, qtyChanged, gstChanged } = result);
 
     // Resync the Quotation's own summary fields from the SAME buckets/grandTotal, same
     // reasoning as the Invoice branch above — keeps both documents mathematically identical.
-    quotation.amount = buckets.taxable;
-    quotation.gstAmount = r2(buckets.gst);
-    quotation.total = grandTotal;
+    quotation.amount = result.buckets.taxable;
+    quotation.gstAmount = r2(result.buckets.gst);
+    quotation.total = result.grandTotal;
     quotation.balance = Math.max(0, quotation.total - (Number(quotation.advancePaid) || 0));
   } else {
     // Orphan quotation — no linked order yet. Apply the same floor rule directly to the
     // quotation's own items[].
-    const { newSubtotal, newGstAmount } = applyOrphanItemsPriceEdit(quotation.items, reqProducts, 'quotation');
-    quotation.amount = r2(newSubtotal);
-    quotation.gstAmount = r2(newGstAmount);
-    quotation.total = r2(newSubtotal + newGstAmount);
+    const result = applyOrphanItemsPriceEdit(quotation.items, reqProducts, 'quotation');
+    ({ itemChanges, priceChanged, qtyChanged, gstChanged } = result);
+    quotation.amount = r2(result.newSubtotal);
+    quotation.gstAmount = r2(result.newGstAmount);
+    quotation.total = r2(result.newSubtotal + result.newGstAmount);
     quotation.balance = Math.max(0, quotation.total - (Number(quotation.advancePaid) || 0));
   }
 
@@ -557,6 +608,9 @@ exports.updateQuotationPricing = asyncHandler(async (req, res, next) => {
     oldSubtotal, newSubtotal: quotation.amount,
     oldGstAmount, newGstAmount: quotation.gstAmount,
     oldTotal, newTotal: quotation.total,
+    changeType: describeChangeType(priceChanged, qtyChanged, gstChanged),
+    priceChanged, qtyChanged, gstChanged,
+    itemChanges,
     changedAt: new Date(),
     changedBy: req.user._id,
     changedByName,

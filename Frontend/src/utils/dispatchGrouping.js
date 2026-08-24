@@ -38,8 +38,18 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
   // Only a caller that explicitly passes an array (even an empty one, meaning genuinely
   // no tasks assigned yet) opts into gating rows by assignment.
   const gatingActive = tasks !== undefined;
-  const personalizedKitPackingAssigned = !gatingActive || taskList.some((t) => t.taskType === 'Personalized Kit Packing' && isTaskAssigned(t));
-  const separateKitPackingAssigned = !gatingActive || taskList.some((t) => (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') && isTaskAssigned(t));
+  // Matched by kitName (via each task's own `product` field, set to the kit group's kitName
+  // at creation — same convention OperationDetail.jsx's separateKitTasksFor/
+  // personalizedKitTasksFor already use), NOT order-wide — an order-wide `.some()` let ONE
+  // kit's assigned packing task satisfy every OTHER kit in the same order too (e.g. a Dental
+  // Kit's assigned task wrongly unlocking a sibling Shaving Kit's "Dispatch Now" row even
+  // though the Shaving Kit itself never had a kit-packing task assigned).
+  const personalizedKitPackingAssignedFor = (kitName) => !gatingActive || taskList.some((t) =>
+    t.taskType === 'Personalized Kit Packing' && isTaskAssigned(t)
+    && (t.product || '').toLowerCase() === (kitName || '').toLowerCase());
+  const separateKitPackingAssignedFor = (kitName) => !gatingActive || taskList.some((t) =>
+    (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') && isTaskAssigned(t)
+    && (t.product || '').toLowerCase() === (kitName || '').toLowerCase());
   const assignedProductIndices = new Set(
     taskList
       .filter((t) => t.taskType !== 'Kit Packing' && t.productIndex !== undefined && t.productIndex !== null && isTaskAssigned(t))
@@ -160,13 +170,6 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       const overallQty = Number(ko.overallQty) || 0;
       const isPersonalized = (ko.category || 'separate_kit') === 'personalized';
       const headerKey = `_kh_${kitId || ki}`;
-      const kitLevelAssigned = isPersonalized ? personalizedKitPackingAssigned : separateKitPackingAssigned;
-      // A component is covered either by the shared kit-level task, or by its OWN
-      // per-product task (Suggested Tasks / assignTasksPerProduct, matched via
-      // productIndex) — so assigning every component individually is enough even if the
-      // kit-level task was never created, and one truly unassigned component can't be
-      // masked by an unrelated sibling's assignment.
-      const componentAssigned = (item) => kitLevelAssigned || assignedProductIndices.has(item.productIndex);
 
       // Match this kit's component items by kitId first (reliable when present on
       // either the dispatch item or its order-item fallback), else by kit name/type.
@@ -179,6 +182,21 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       });
       kitItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
       const kitItemIds = kitItems.map((it) => it._id).filter(Boolean);
+
+      // kitOrders entries don't reliably carry their own kitName/kitType (`kitName` above
+      // often falls back to the generic "Kit N" label) — the REAL kit name, the one a
+      // "Separate/Personalized Kit Packing" task was actually filed under (Task.product,
+      // set by OperationDetail.jsx's submitKitPackingTask), lives on this kit's own
+      // component items. Resolve it from a matched component so the kit-level task lookup
+      // below is scoped to THIS kit, not every kit in the order.
+      const realKitName = kitItems.find((it) => it.kitName)?.kitName || kitName;
+      const kitLevelAssigned = isPersonalized ? personalizedKitPackingAssignedFor(realKitName) : separateKitPackingAssignedFor(realKitName);
+      // A component is covered either by the shared kit-level task, or by its OWN
+      // per-product task (Suggested Tasks / assignTasksPerProduct, matched via
+      // productIndex) — so assigning every component individually is enough even if the
+      // kit-level task was never created, and one truly unassigned component can't be
+      // masked by an unrelated sibling's assignment.
+      const componentAssigned = (item) => kitLevelAssigned || assignedProductIndices.has(item.productIndex);
 
       // Any OTHER kit/products folded into this (personalized) kit's box — matched up
       // front so the header's completeness check below covers every component that will

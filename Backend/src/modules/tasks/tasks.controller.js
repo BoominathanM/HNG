@@ -232,26 +232,39 @@ function relevantTaskNamesFor(it, timeConfigs, designType, needsPrinting) {
 // exactly why dispatchOrder (below) had to stop gating on per-product Done status for kit
 // orders entirely. 'Kit Packing' is the legacy taskType predating the Separate/Personalized
 // split (mirrors the taskType values Tasks/index.jsx's own kitPackingTasksByOrder groups by).
+//
+// Keyed by order AND kit name (via `product`, set to the kit group's own kitName at creation
+// — see OperationDetail.jsx submitKitPackingTask), NOT by order alone. An order-wide map let
+// one kit's Done packing task satisfy every OTHER kit in the same order too — e.g. Dental
+// Kit's Done "Separate Kit Packing" task wrongly marking a sibling Shaving Kit (which never
+// had a kit-packing task assigned at all) as covered, letting it reach Dispatch untouched.
+// Mirrors the per-kit scoping OperationDetail.jsx's own separateKitTasksFor/
+// personalizedKitTasksFor already use for the Task Assignment cards (see that file's comment
+// on separateKitTasksFor for the same bug in that context).
 function buildKitPackingDoneMap(doneTasks) {
-  const map = new Map(); // orderId -> { separate: bool, personalized: bool }
+  const map = new Map(); // "orderId::kitNameLower" -> { separate: bool, personalized: bool }
   doneTasks.forEach((t) => {
     if (!t.orderId) return;
-    const oid = String(t.orderId);
-    if (!map.has(oid)) map.set(oid, { separate: false, personalized: false });
-    const entry = map.get(oid);
+    const key = `${String(t.orderId)}::${(t.product || '').trim().toLowerCase()}`;
+    if (!map.has(key)) map.set(key, { separate: false, personalized: false });
+    const entry = map.get(key);
     if (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') entry.separate = true;
     if (t.taskType === 'Personalized Kit Packing') entry.personalized = true;
   });
   return map;
 }
 
-// Whether a kit-flagged item's own row is already covered by its kit's Done packing task —
-// see buildKitPackingDoneMap above. A 'personalized' component needs the Personalized Kit
-// Packing task Done; any other kit category (separate_kit, or legacy blank) needs the
-// Separate Kit Packing task Done.
-function kitComponentCoveredByKitTask(it, kitPackingDone) {
-  if (!kitPackingDone) return false;
-  return it.category === 'personalized' ? !!kitPackingDone.personalized : !!kitPackingDone.separate;
+// Whether a kit-flagged item's own row is already covered by ITS OWN kit's Done packing
+// task — see buildKitPackingDoneMap above. A 'personalized' component needs the
+// Personalized Kit Packing task Done; any other kit category (separate_kit, or legacy
+// blank) needs the Separate Kit Packing task Done — both looked up by this specific item's
+// kitName, not any other kit sharing the order.
+function kitComponentCoveredByKitTask(it, kitPackingDoneMap, orderId) {
+  if (!kitPackingDoneMap) return false;
+  const key = `${String(orderId)}::${(it.kitName || '').trim().toLowerCase()}`;
+  const entry = kitPackingDoneMap.get(key);
+  if (!entry) return false;
+  return it.category === 'personalized' ? !!entry.personalized : !!entry.separate;
 }
 
 // Whether EVERY product in this order has enough Done-status task coverage for its full
@@ -278,7 +291,7 @@ async function computeOrderDispatchReadiness(orderId) {
     .select('items kitOrders displayUnitTab').lean();
   if (!order || !(order.items || []).length) return { ready: false, missingProducts: [] };
 
-  const tasks = await Task.find({ orderId }).select('productIndex taskName qty status taskType').lean();
+  const tasks = await Task.find({ orderId }).select('productIndex taskName qty status taskType product').lean();
   const doneQtyByKey = new Map();
   const doneQtyByProduct = new Map();
   const anyDoneSet = new Set();
@@ -296,7 +309,7 @@ async function computeOrderDispatchReadiness(orderId) {
     // real, completed, full-qty work permanently invisible to the dispatch gate.
     doneQtyByProduct.set(idxKey, (doneQtyByProduct.get(idxKey) || 0) + (Number(t.qty) || 0));
   });
-  const kitPackingDone = buildKitPackingDoneMap(doneTasks).get(String(orderId));
+  const kitPackingDoneMap = buildKitPackingDoneMap(doneTasks);
 
   const timeConfigs = await TaskTimeConfig.find({ active: true }).select('taskName product active').lean();
 
@@ -315,7 +328,7 @@ async function computeOrderDispatchReadiness(orderId) {
       : (Number(it.overallQty) || Number(it.qty) || 0);
     if (requiredQty <= 0) return; // nothing required from this line — can't block on it
     // This component's own kit is already packed as a unit — see kitComponentCoveredByKitTask.
-    if (isKitItem && kitComponentCoveredByKitTask(it, kitPackingDone)) return;
+    if (isKitItem && kitComponentCoveredByKitTask(it, kitPackingDoneMap, orderId)) return;
 
     const designType = resolveDesignType(it, order);
     const needsPrintStep = normYN(it.printing) === 'YES';
@@ -527,15 +540,15 @@ async function computeSuggestedTasks() {
   // work happened, which read as the product silently vanishing/moving on its own. A
   // product with pending or not-yet-assigned work now stays visible until the task is
   // actually completed; nothing here auto-hides it earlier than that.
-  const existingTasks = await Task.find({ orderId: { $ne: null }, status: 'Done' }).select('orderId productIndex taskName qty taskType').lean();
+  const existingTasks = await Task.find({ orderId: { $ne: null }, status: 'Done' }).select('orderId productIndex taskName qty taskType product').lean();
   const qtyByKey = new Map(); // `${orderId}-${productIndex}-${normalizedTaskName}` -> summed DONE qty
   existingTasks.forEach((t) => {
     const key = `${t.orderId}-${t.productIndex ?? 'x'}-${(t.taskName || '').trim().toLowerCase()}`;
     qtyByKey.set(key, (qtyByKey.get(key) || 0) + (Number(t.qty) || 0));
   });
   const anyTaskSet = new Set(existingTasks.map((t) => `${t.orderId}-${t.productIndex ?? 'x'}`));
-  // orderId -> { separate, personalized } — see buildKitPackingDoneMap/kitComponentCoveredByKitTask.
-  const kitPackingDoneByOrder = buildKitPackingDoneMap(existingTasks);
+  // "orderId::kitNameLower" -> { separate, personalized } — see buildKitPackingDoneMap/kitComponentCoveredByKitTask.
+  const kitPackingDoneMap = buildKitPackingDoneMap(existingTasks);
   // Done qty per product regardless of task name — used only to gate a partially-emergency
   // product's REMAINING/tentative split-card (see isPartialEmergencySplit below), same
   // "any task name counts" fallback computeOrderDispatchReadiness already uses for
@@ -686,7 +699,7 @@ async function computeSuggestedTasks() {
       if (!printingReady) return;
 
       // This component's own kit is already packed as a unit — see kitComponentCoveredByKitTask.
-      if (isKitItem && kitComponentCoveredByKitTask(it, kitPackingDoneByOrder.get(String(o._id)))) return;
+      if (isKitItem && kitComponentCoveredByKitTask(it, kitPackingDoneMap, o._id)) return;
 
       // Only drop this product off the checklist once every task NAME relevant to it
       // (Filling, Packing, etc. — see relevantTaskNamesFor) has enough DONE qty to cover

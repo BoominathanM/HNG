@@ -77,7 +77,7 @@ async function checkStockDeductionGate({ orderId, productIndex }) {
   if (deducted >= required) return null;
 
   const pending = required - deducted;
-  return `Cannot assign task for "${it.itemName || 'this product'}" — only ${deducted} of ${required} unit(s) have been deducted from stock so far (${pending} unit(s) still short due to insufficient inventory when the order was placed/edited). Assignment stays blocked until all ${required} unit(s) are deducted; each restock automatically deducts whatever's available toward the shortfall (partial restocks reduce the shortfall but don't unlock assignment until it reaches 0).`;
+  return `Cannot assign task for "${it.itemName || 'this product'}" — ${pending} of ${required} unit(s) ordered are still short in stock and haven't been set aside for this order yet. This unlocks automatically as soon as the shortfall is restocked (partial restocks reduce it but won't unlock assignment until it reaches 0).`;
 }
 
 module.exports = { checkTaskQuantityOverflow, checkStockDeductionGate };

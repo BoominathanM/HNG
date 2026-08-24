@@ -2502,7 +2502,7 @@ export default function OperationDetail() {
               </Tag>
             )}
             {stockPending && (
-              <Tooltip title={`${stockDeductedQty} of ${stockRequired} unit(s) deducted from stock so far — ${stockShortQty} still short (insufficient inventory when the order was placed/edited). Assignment is blocked until all ${stockRequired} are deducted; restocking automatically pays off the shortfall.`}>
+              <Tooltip title={`${stockShortQty} of ${stockRequired} unit(s) not yet set aside from stock for this order (${stockDeductedQty} reserved so far). Task assignment stays blocked until the shortfall is restocked — this happens automatically.`}>
                 <Tag color="warning" style={{ borderRadius: 6, fontSize: 10, margin: 0 }}>{`Stock Pending (${stockDeductedQty}/${stockRequired})`}</Tag>
               </Tooltip>
             )}

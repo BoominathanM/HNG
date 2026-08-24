@@ -3398,7 +3398,10 @@ export default function Sales() {
   const { data: packingConfigRaw } = useGetPackingConfigQuery();
   const packingConfigAll = packingConfigRaw?.data || [];
   const configDisplayUnitOptions = React.useMemo(
-    () => packingConfigAll.filter(c => c.type === 'displayUnit').map(c => ({ value: c.value, label: c.label, tabMapping: c.tabMapping, subtypes: c.subtypes || [] })),
+    () => packingConfigAll
+      .filter(c => c.type === 'displayUnit')
+      .filter(c => !/wooden/i.test(c.label || '') && !/wooden/i.test(c.value || ''))
+      .map(c => ({ value: c.value, label: c.label, tabMapping: c.tabMapping, subtypes: c.subtypes || [] })),
     [packingConfigAll],
   );
   const configPackingMaterialOptions = React.useMemo(
@@ -5422,6 +5425,13 @@ export default function Sales() {
   // config) EXCEPT each product's price — that's refreshed to the item's CURRENT inventory
   // selling price (same inventoryItemId-first, then name, lookup used when a product is picked
   // from Inventory — see ProductItem's `invItem` resolution above). The original order is untouched.
+  //
+  // Unlike the normal Lead → Quotation → Negotiation → Order pipeline, a reorder used to call
+  // createDirectOrder straight away with no quotationId — so Billing's "Quotation in Process"
+  // tab (sourced purely from Quotation docs, see getQuotationsInProcess) never saw it and there
+  // was no way to ever convert it to an Invoice. Now a Quotation is created first (mirroring the
+  // Lead→Quotation payload shape) and its id is carried onto the new Order, so the reorder shows
+  // up in Billing exactly like any other order and "Convert to Invoice" works unchanged.
   const reorderOrder = async (order) => {
     try {
       let priceChanges = 0;
@@ -5446,7 +5456,73 @@ export default function Sales() {
         forwardingChargeAmount: order.forwardingChargeAmount || 0,
       }));
       const grandTotal = kitAwareTotal > 0 ? kitAwareTotal : subtotal + gstAmt;
+      const reorderItems = reorderProducts.map(p => mapOrderItem(p, order.kitDisplayUnit || order.displayUnit || ''));
+
+      // Step 1 — Quotation, so the reorder is billable through Billing's normal
+      // Quotation-in-Process → Convert to Invoice flow (see comment above).
+      const quotationPayload = {
+        clientName: order.clientName || order.hotelName,
+        leadId: order.leadId?._id || order.leadId || undefined,
+        hotelName: order.hotelName,
+        category: order.category,
+        hotelType: order.hotelType,
+        billingName: order.billingName,
+        location: order.location,
+        phone: order.phone || order.clientPhone,
+        clientPhone: order.clientPhone || order.phone,
+        contactPerson: order.contactPerson,
+        salesPerson: order.salesPerson,
+        gstNumber: order.gstNumber,
+        gstPercent: order.gstPercent,
+        billType: order.billType,
+        detailedAddress: order.detailedAddress,
+        city: order.city,
+        state: order.state,
+        pincode: order.pincode,
+        amount: subtotal,
+        gstAmount: gstAmt,
+        total: grandTotal,
+        advancePaid: 0,
+        balance: grandTotal,
+        status: 'In Process',
+        type: order.billType === 'NON_GST' ? 'Non-GST' : 'GST',
+        products: reorderProducts,
+        items: reorderItems,
+        note: `Reorder of ${order.oid || order.orderCode || ''}`.trim(),
+        displayUnit: order.displayUnit,
+        kitDisplayUnit: order.kitDisplayUnit,
+        displayUnitTab: order.displayUnitTab,
+        packingMaterial: order.packingMaterial,
+        selectedKit: order.selectedKit,
+        selectedKits: order.selectedKits || [],
+        kitOrders: order.kitOrders || [],
+        packagingIncludes: order.packagingIncludes || [],
+        packagingIncludesQty: order.packagingIncludesQty || {},
+        kitSize: order.kitSize,
+        kitSticker: order.kitSticker || undefined,
+        kitLogo: order.kitLogo || undefined,
+        kitPrinting: order.kitPrinting || undefined,
+        kitPrice: order.kitPrice != null ? Number(order.kitPrice) : undefined,
+        kitOverallQty: order.kitOverallQty,
+        productType: order.productType,
+        deliveryBy: order.deliveryBy,
+        transportationBy: order.transportationBy,
+        forwardingCharge: order.forwardingCharge,
+        forwardingChargeAmount: order.forwardingChargeAmount || 0,
+        orderDeliveryDate: order.expectedDeliveryDate,
+      };
+      let newQuotationId;
+      try {
+        const quotRes = await createSalesQuotationMutation(quotationPayload).unwrap();
+        newQuotationId = quotRes?.data?._id;
+      } catch (quotErr) {
+        enqueueSnackbar(quotErr?.data?.message || quotErr?.data || 'Failed to generate quotation for reorder — order was not created', { variant: 'error' });
+        return;
+      }
+
+      // Step 2 — Order, linked to the quotation just created above.
       const payload = {
+        quotationId: newQuotationId,
         clientName: order.clientName || order.hotelName,
         clientPartyId: order.clientPartyId?._id || order.clientPartyId,
         hotelName: order.hotelName,
@@ -5467,7 +5543,7 @@ export default function Sales() {
         pincode: order.pincode,
         products: reorderProducts,
         // Operations reads order.items — map products so reordered products show there too
-        items: reorderProducts.map(p => mapOrderItem(p, order.kitDisplayUnit || order.displayUnit || '')),
+        items: reorderItems,
         totalAmount: subtotal,
         gstAmount: gstAmt,
         total: grandTotal,
@@ -5500,8 +5576,8 @@ export default function Sales() {
       await createSalesOrderMutation(payload).unwrap();
       enqueueSnackbar(
         priceChanges > 0
-          ? `Reorder created! ${priceChanges} item${priceChanges > 1 ? 's' : ''} updated to current inventory price.`
-          : 'Reorder created with the same items and prices!',
+          ? `Reorder created! ${priceChanges} item${priceChanges > 1 ? 's' : ''} updated to current inventory price. A quotation was also generated in Billing for invoicing.`
+          : 'Reorder created with the same items and prices! A quotation was also generated in Billing for invoicing.',
         { variant: 'success' }
       );
       setViewMode('table');
@@ -6326,6 +6402,19 @@ export default function Sales() {
           <Tooltip title="Edit Delivery & Payment">
             <Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A55' }} onClick={(e) => { e.stopPropagation(); openOrderEditModal(r); }} />
           </Tooltip>
+          <Popconfirm
+            title="Reorder this order?"
+            description="Creates a new order with the same products, quantities and specs — each item's price is refreshed to its CURRENT inventory selling price. Your original order stays unchanged."
+            onConfirm={(e) => { e?.stopPropagation?.(); reorderOrder(r); }}
+            onCancel={(e) => e?.stopPropagation?.()}
+            okText="Create Reorder"
+            cancelText="Cancel"
+            okButtonProps={{ style: { background: '#1677ff', borderColor: '#1677ff' } }}
+          >
+            <Tooltip title="Reorder">
+              <Button size="small" icon={<ReloadOutlined />} style={{ color: '#1677ff', borderColor: '#1677ff55' }} onClick={(e) => e.stopPropagation()} />
+            </Tooltip>
+          </Popconfirm>
           <Tooltip title="Send via WhatsApp">
             <Button size="small" icon={<WhatsAppOutlined />} style={{ background: '#25D366', color: '#fff', border: 'none' }} onClick={() => sendViaWhatsApp(r)} />
           </Tooltip>
