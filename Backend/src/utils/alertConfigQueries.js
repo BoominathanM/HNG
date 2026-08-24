@@ -7,6 +7,7 @@ const Task = require('../models/Task');
 const PurchaseOrder = require('../models/PurchaseOrder');
 const InventoryItem = require('../models/InventoryItem');
 const QuotationRequest = require('../models/QuotationRequest');
+const DispatchRecord = require('../models/DispatchRecord');
 
 // Grace period ('low_stock'/'quotation_request' only) — how long a record must stay
 // pending before the FIRST alert fires, in milliseconds. Every other group has no grace
@@ -122,6 +123,50 @@ async function getPendingRecordsForConfig(config) {
       title: `Invoice mismatch pending — Order ${r.orderCode || r._id}`,
       link: '/sales',
     }));
+  }
+
+  if (config.group === 'dispatch_status') {
+    // Hybrid recipient group — unlike every other group here, this one notifies TWO
+    // audiences at once: the order's own assigned sales person (dynamic, resolved
+    // per-record exactly like 'dispatch_reason' via recipientUserId) AND the fixed
+    // Finance users an admin picks in config.recipientUserIds (like 'lr_payment'). The
+    // per-item vs. per-config recipient matching is done in
+    // modules/alerts/alerts.controller.js's HYBRID_RECIPIENT_GROUPS handling.
+    const RECENT_WINDOW_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+    const recentCutoff = new Date(Date.now() - RECENT_WINDOW_MS);
+
+    const [partialRounds, completedRounds] = await Promise.all([
+      // "Order goes for partial dispatch" — naturally bounded, same as
+      // getPendingDispatches: drops out the moment the final round flips
+      // dispatchType to 'Full Dispatch' (status leaves 'Confirmed').
+      DispatchRecord.find({ status: 'Confirmed', dispatchType: 'Partial Dispatch' })
+        .populate('orderId', 'orderCode assignedTo').lean(),
+      // "Complete the dispatch process" — the order's final round is fully dispatched.
+      // Unlike every other pending set here, 'Dispatched' has no further terminal
+      // transition to age it out naturally, so this is capped to a recent window
+      // (per-user snooze/stop can dismiss sooner) to keep it from growing without
+      // bound over the app's lifetime.
+      DispatchRecord.find({ status: 'Dispatched', dispatchedAt: { $gte: recentCutoff } })
+        .populate('orderId', 'orderCode assignedTo').lean(),
+    ]);
+
+    const toItem = (r, label) => {
+      const o = r.orderId;
+      if (!o?.assignedTo) return null; // no assigned sales person to notify — nothing to alert on
+      return {
+        recordType: 'DispatchRecord',
+        recordId: r._id,
+        record: r,
+        recipientUserId: o.assignedTo,
+        title: `${label} — Order ${o.orderCode || r.dispatchCode}`,
+        link: '/dispatch',
+      };
+    };
+
+    return [
+      ...partialRounds.map((r) => toItem(r, 'Partial dispatch confirmed')),
+      ...completedRounds.map((r) => toItem(r, 'Dispatch completed')),
+    ].filter(Boolean);
   }
 
   if (config.group === 'lr_payment') {

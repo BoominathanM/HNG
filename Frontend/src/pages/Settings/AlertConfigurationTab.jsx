@@ -29,7 +29,7 @@ const DESIGN_ROLES = [
   { role: 'Other', label: 'Other' },
 ];
 
-function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel, dynamicRecipient, graceLabel }) {
+function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel, dynamicRecipient, dynamicNote, recipientsOptional, graceLabel }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -68,7 +68,7 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
   };
 
   const handleSave = async () => {
-    if (isEnabled && !dynamicRecipient && !recipients.length) {
+    if (isEnabled && !dynamicRecipient && !recipientsOptional && !recipients.length) {
       enqueueSnackbar('Select at least one recipient before enabling this alert', { variant: 'warning' });
       return;
     }
@@ -116,9 +116,15 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
 
       <Divider style={{ margin: '12px 0' }} />
 
+      {dynamicNote && (
+        <div style={{ marginBottom: 12, padding: '6px 10px', borderRadius: 8, background: PRIMARY_ALPHA(0.08) }}>
+          <Text style={{ color: subText, fontSize: 12 }}>{dynamicNote}</Text>
+        </div>
+      )}
+
       {!dynamicRecipient && (
         <>
-          <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>Recipients ({deptLabel})</Text>
+          <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>Recipients ({deptLabel}){recipientsOptional ? ' — optional' : ''}</Text>
           <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: 8, maxHeight: 160, overflowY: 'auto', marginTop: 6, marginBottom: 12 }}>
             {recipientPool.length === 0 ? (
               <Text style={{ color: subText, fontSize: 12 }}>No active {deptLabel} users found. Add one in the Users tab first.</Text>
@@ -387,6 +393,31 @@ export default function AlertConfigurationTab() {
             role={null}
             config={findConfig('dispatch_reason', null)}
             dynamicRecipient
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Dispatch Status Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          Rings when an order goes to Partial Dispatch, and again once its dispatch process is completed — always notifies the order's own assigned sales person, plus any Finance users selected below.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('dispatch_status', null)?._id || 'dispatch_status'}
+            title="Dispatch Status Alert"
+            description="Notifies the order's assigned sales person and selected Finance users about partial/completed dispatches."
+            group="dispatch_status"
+            role={null}
+            config={findConfig('dispatch_status', null)}
+            recipientPool={financeUsers}
+            deptLabel="Financial"
+            recipientsOptional
+            dynamicNote="Always notifies the order's own assigned sales person automatically — the Financial recipients below are notified in addition."
           />
         </Col>
       </Row>

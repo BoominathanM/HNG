@@ -221,11 +221,10 @@ const downloadCSVRows = (rows, filename) => {
   URL.revokeObjectURL(url);
 };
 
-// Pending Dispatches export — hotel-wise sections (each with its own Partial Dispatch
-// Count / Pending Dispatch Count summary), then every order under that hotel with the
-// SAME per-bucket pending breakdown (Personalized Kit / Separate Kit / Separate Product)
-// the on-screen Balance column shows, plus full order/contact details. The generic
-// exportCSV above only ever wrote 5 columns and dropped the balance data entirely.
+// Pending Dispatches export — hotel-wise sections, each listing every order under that
+// hotel with the SAME per-bucket pending breakdown (Personalized Kit / Separate Kit /
+// Separate Product) the on-screen Balance column shows, plus full order/contact details.
+// The generic exportCSV above only ever wrote 5 columns and dropped the balance data entirely.
 const exportPendingDispatchCSV = (orders, filename) => {
   const rows = [];
   rows.push(['Pending Dispatches Report']);
@@ -239,21 +238,6 @@ const exportPendingDispatchCSV = (orders, filename) => {
     });
     return { order: o, summary: summarizeDispatchVerification(products) };
   });
-
-  // "Partial Dispatch Count" = orders currently sitting in a Partially Dispatched state
-  // (already had one round go out); "Pending Dispatch Count" = total units across those
-  // orders still left to ship — the two numbers answer different questions, so both are
-  // reported rather than collapsing to a single order count.
-  const totalHotels = new Set(orders.map((o) => o.client || 'Unknown')).size;
-  const totalPartial = entries.filter((x) => x.order.status === 'Partially Dispatched').length;
-  const totalPendingUnits = entries.reduce((s, x) => s + x.summary.overall.pending, 0);
-
-  rows.push(['Overall Summary']);
-  rows.push(['Total Hotels', totalHotels]);
-  rows.push(['Total Pending Orders', entries.length]);
-  rows.push(['Partial Dispatch Count (orders)', totalPartial]);
-  rows.push(['Pending Dispatch Count (units still to ship)', totalPendingUnits]);
-  rows.push([]);
 
   const byHotel = new Map();
   entries.forEach((x) => {
@@ -273,10 +257,7 @@ const exportPendingDispatchCSV = (orders, filename) => {
   ];
 
   byHotel.forEach((hotelEntries, hotelName) => {
-    const hotelPartial = hotelEntries.filter((x) => x.order.status === 'Partially Dispatched').length;
-    const hotelPendingUnits = hotelEntries.reduce((s, x) => s + x.summary.overall.pending, 0);
     rows.push([`Hotel: ${hotelName}`]);
-    rows.push(['Total Orders', hotelEntries.length, 'Partial Dispatch Count', hotelPartial, 'Pending Dispatch Count', hotelPendingUnits]);
     rows.push(orderHeaders);
     hotelEntries.forEach(({ order: o, summary }) => {
       const address = [o.shippingAddress, o.shippingCity, o.shippingState, o.shippingPincode]

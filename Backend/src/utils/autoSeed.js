@@ -79,6 +79,7 @@ const ALERT_CONFIG_ROWS = [
   { group: 'operations_approval', role: null },
   { group: 'task', role: null },
   { group: 'dispatch_reason', role: null },
+  { group: 'dispatch_status', role: null },
   { group: 'lr_payment', role: null },
   { group: 'low_stock', role: null },
   { group: 'quotation_request', role: null },

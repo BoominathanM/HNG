@@ -1973,7 +1973,7 @@ export default function Reports() {
                         const tP = data.reduce((s, r) => s + r.gross_profit, 0);
                         return (
                           <Table.Summary.Row style={{ fontWeight: 700 }}>
-                            <Table.Summary.Cell colSpan={4}><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
+                            <Table.Summary.Cell colSpan={5}><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>₹{(tS ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tCgst ?? 0).toLocaleString()}</Text></Table.Summary.Cell>
                             <Table.Summary.Cell><Text strong style={{ color: '#fa8c16', fontSize: 12 }}>₹{(tSgst ?? 0).toLocaleString()}</Text></Table.Summary.Cell>

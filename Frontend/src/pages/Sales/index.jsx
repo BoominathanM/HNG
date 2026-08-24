@@ -15644,7 +15644,7 @@ export default function Sales() {
         width={Math.min(760, window.innerWidth - 32)}
       >
         {viewPartyInfo && (
-          <Descriptions bordered size="small" column={{ xs: 1, sm: 2 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ marginTop: 8 }}>
+          <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 2, lg: 2, xl: 2, xxl: 2 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ marginTop: 8 }}>
             <Descriptions.Item label="Category">{viewPartyInfo.category || 'Hotel'}</Descriptions.Item>
             <Descriptions.Item label={`${viewPartyInfo.category || 'Hotel'} / Company`}>{viewPartyInfo.hotelName || '—'}</Descriptions.Item>
             {viewPartyInfo.billingName && <Descriptions.Item label="Billing Name">{viewPartyInfo.billingName}</Descriptions.Item>}

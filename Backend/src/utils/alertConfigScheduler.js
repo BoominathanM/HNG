@@ -44,8 +44,10 @@ async function processConfig(config) {
   if (!config.audioUrl) return;
   // 'task' and 'dispatch_reason' have no fixed recipientUserIds — their recipient is
   // resolved per-record (task assignee / order's assigned sales person) in
-  // alertConfigQueries/alerts.controller.js instead.
-  if (!['task', 'dispatch_reason'].includes(config.group) && !config.recipientUserIds?.length) return;
+  // alertConfigQueries/alerts.controller.js instead. 'dispatch_status' is hybrid — it
+  // always has the order's assigned sales person as a per-record recipient even when
+  // no fixed Finance recipientUserIds have been picked yet.
+  if (!['task', 'dispatch_reason', 'dispatch_status'].includes(config.group) && !config.recipientUserIds?.length) return;
   if (!isWithinWindow(config, now)) return;
 
   const pending = await getPendingRecordsForConfig(config);

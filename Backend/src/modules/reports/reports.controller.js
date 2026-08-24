@@ -957,55 +957,155 @@ exports.getAuditorTax = asyncHandler(async (req, res) => {
 // invoices against it (a documented edge case, see parties.controller's getHotelPendingDue),
 // each invoice's row here would show that order's FULL courier total, not a per-invoice
 // split; no per-invoice courier data exists on Order.paymentCollection to split it by.
+//
+// Order.paymentCollection alone can still under-report: Billing's own "Record Payment In"
+// flow (syncBillingChain, Billing/index.jsx) ALWAYS appends the same payment entry onto the
+// linked Lead's paymentCollection too, independent of whether it lands on the "right" Order —
+// and a hotel/lead can have more than one Order (re-negotiated, redone, etc.), so the specific
+// Order that invoice.orderId happens to point to isn't guaranteed to be the one the payment
+// (and its courier charge) actually got synced onto. Billing's own document view already
+// works around this by reading whichever of Order/Lead/Quotation has the richer collection
+// (see the `paymentCollection: fullOrder?.paymentCollection || linkedLead?.paymentCollection
+// || ...` fallback chain there) — mirrored here by merging Order + Lead + Quotation
+// paymentCollection and deduping by recordedAt+paidAmount (same identity Sales' own
+// combinedPaymentCollection uses), so a courier charge that only landed on the Lead/Quotation
+// side isn't silently dropped from this report.
+const mergeCourierEntries = (order, quotation) => {
+  const orderColl = order?.paymentCollection || [];
+  const orderLead = order?.leadId && typeof order.leadId === 'object' ? order.leadId : null;
+  const quotLead = quotation?.leadId && typeof quotation.leadId === 'object' ? quotation.leadId : null;
+  const extra = [
+    ...(orderLead?.paymentCollection || []),
+    ...(quotation?.paymentCollection || []),
+    ...(quotLead?.paymentCollection || []),
+  ].filter((le) => !orderColl.some((oe) =>
+    oe?.recordedAt === le?.recordedAt && Number(oe?.paidAmount) === Number(le?.paidAmount)
+  ));
+  const seen = new Set();
+  const dedupedExtra = extra.filter((le) => {
+    const k = `${le?.recordedAt}|${le?.paidAmount}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  return [...orderColl, ...dedupedExtra];
+};
+//
+// Date attribution: forwarding charge is a one-time value fixed at invoice/order creation,
+// so it's attributed to the invoice's own invoiceDate. Courier charge, however, is entered
+// per-payment — often well after the invoice was raised — and each paymentCollection entry
+// carries its own paymentDate/recordedAt. Filtering/grouping the WHOLE report by invoiceDate
+// (as before) meant a courier charge collected this month against an older invoice either
+// vanished under a date-filtered view (the invoice itself fell outside the range) or got
+// lumped into the wrong month in the month-wise breakdown. Each courier charge is now
+// filtered/grouped by its own payment date instead, independent of the invoice's date.
 exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
-  const invoices = await Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
+  const { startDate, endDate } = req.query;
+  const rangeStart = startDate ? new Date(startDate) : null;
+  const rangeEnd = endDate ? new Date(endDate) : null;
+  // Absent any date filter, everything is in range. With a filter, a charge whose date can't
+  // be resolved at all is excluded (rather than always shown/always hidden either way).
+  const inRange = (d) => {
+    if (!rangeStart && !rangeEnd) return true;
+    if (!d) return false;
+    const t = new Date(d).getTime();
+    if (Number.isNaN(t)) return false;
+    if (rangeStart && t < rangeStart.getTime()) return false;
+    if (rangeEnd && t > rangeEnd.getTime()) return false;
+    return true;
+  };
+
+  const invoices = await Invoice.find({})
     .populate('partyId', 'name')
-    .populate('orderId', 'forwardingChargeAmount paymentCollection')
+    .populate({
+      path: 'orderId',
+      select: 'forwardingChargeAmount paymentCollection leadId',
+      populate: { path: 'leadId', select: 'paymentCollection' },
+    })
+    .populate({
+      path: 'quotationId',
+      select: 'paymentCollection leadId',
+      populate: { path: 'leadId', select: 'paymentCollection' },
+    })
     .sort('-invoiceDate');
 
   const data = [];
   const monthlyHotelMap = {};
+  const invoiceIdsPerGroup = {};
 
-  invoices.forEach((inv) => {
-    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
-    const forwardingCharge = Number(order?.forwardingChargeAmount) || 0;
-    const courierCharge = r2((order?.paymentCollection || []).reduce(
-      (s, e) => s + (Number(e?.courierCharge) || 0), 0
-    ));
-    if (!forwardingCharge && !courierCharge) return;
-
-    const hotel = inv.partyId?.name || 'Unknown';
-    const month = inv.invoiceDate?.toLocaleString('default', { month: 'short' }) || '';
-    const year = inv.invoiceDate?.getFullYear() || '';
-
-    data.push({
-      key: String(inv._id),
-      hotel,
-      month,
-      year,
-      invoiceNo: inv.invoiceNumber || '',
-      invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10) || '',
-      forwardingCharge: r2(forwardingCharge),
-      courierCharge,
-      totalCharge: r2(forwardingCharge + courierCharge),
-    });
-
+  const addToGroup = (month, year, hotel, forwardingCharge, courierCharge, invId) => {
     const groupKey = `${month}-${year}|${hotel}`;
     if (!monthlyHotelMap[groupKey]) {
       monthlyHotelMap[groupKey] = { key: groupKey, month, year, hotel, forwardingCharge: 0, courierCharge: 0, totalCharge: 0, invoiceCount: 0 };
+      invoiceIdsPerGroup[groupKey] = new Set();
     }
-    monthlyHotelMap[groupKey].forwardingCharge += forwardingCharge;
-    monthlyHotelMap[groupKey].courierCharge += courierCharge;
-    monthlyHotelMap[groupKey].totalCharge += forwardingCharge + courierCharge;
-    monthlyHotelMap[groupKey].invoiceCount += 1;
+    const g = monthlyHotelMap[groupKey];
+    g.forwardingCharge += forwardingCharge;
+    g.courierCharge += courierCharge;
+    g.totalCharge += forwardingCharge + courierCharge;
+    if (!invoiceIdsPerGroup[groupKey].has(invId)) {
+      invoiceIdsPerGroup[groupKey].add(invId);
+      g.invoiceCount += 1;
+    }
+  };
+
+  invoices.forEach((inv) => {
+    const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+    const quotation = inv.quotationId && typeof inv.quotationId === 'object' ? inv.quotationId : null;
+    const hotel = inv.partyId?.name || 'Unknown';
+    const invId = String(inv._id);
+
+    const forwardingCharge = Number(order?.forwardingChargeAmount) || 0;
+    if (forwardingCharge && inRange(inv.invoiceDate)) {
+      const month = inv.invoiceDate?.toLocaleString('default', { month: 'short' }) || '';
+      const year = inv.invoiceDate?.getFullYear() || '';
+      data.push({
+        key: `${invId}-fwd`,
+        hotel,
+        month,
+        year,
+        invoiceNo: inv.invoiceNumber || '',
+        invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10) || '',
+        chargeType: 'Forwarding',
+        forwardingCharge: r2(forwardingCharge),
+        courierCharge: 0,
+        totalCharge: r2(forwardingCharge),
+      });
+      addToGroup(month, year, hotel, forwardingCharge, 0, invId);
+    }
+
+    mergeCourierEntries(order, quotation).forEach((e, idx) => {
+      const courierCharge = Number(e?.courierCharge) || 0;
+      if (!courierCharge) return;
+      // Fall back to invoiceDate for legacy entries recorded before per-entry dates were
+      // carried, so they still surface instead of silently dropping out.
+      const entryDate = e?.paymentDate || e?.recordedAt || e?.date || inv.invoiceDate;
+      if (!inRange(entryDate)) return;
+      const d = new Date(entryDate);
+      const month = d.toLocaleString('default', { month: 'short' });
+      const year = d.getFullYear();
+      data.push({
+        key: `${invId}-cour-${idx}`,
+        hotel,
+        month,
+        year,
+        invoiceNo: inv.invoiceNumber || '',
+        invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10) || '',
+        chargeType: 'Courier',
+        forwardingCharge: 0,
+        courierCharge: r2(courierCharge),
+        totalCharge: r2(courierCharge),
+      });
+      addToGroup(month, year, hotel, 0, courierCharge, invId);
+    });
   });
 
   const monthlyHotelData = Object.values(monthlyHotelMap)
     .map((r) => ({ ...r, forwardingCharge: r2(r.forwardingCharge), courierCharge: r2(r.courierCharge), totalCharge: r2(r.totalCharge) }))
     .sort((a, b) => (a.year - b.year) || (MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month)) || a.hotel.localeCompare(b.hotel));
 
-  const totalForwarding = data.reduce((s, r) => s + r.forwardingCharge, 0);
-  const totalCourier = data.reduce((s, r) => s + r.courierCharge, 0);
+  const totalForwarding = monthlyHotelData.reduce((s, r) => s + r.forwardingCharge, 0);
+  const totalCourier = monthlyHotelData.reduce((s, r) => s + r.courierCharge, 0);
 
   res.status(200).json({
     success: true,
