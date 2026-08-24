@@ -565,7 +565,7 @@ export default function Reports() {
         r.month, r.year,
         r.sales_taxable, r.sales_cgst, r.sales_sgst, r.sales_igst, r.sales_total_gst,
         r.pur_taxable, r.pur_cgst, r.pur_sgst, r.pur_igst, r.pur_total_gst,
-        r.sales_total_gst - r.pur_total_gst,
+        Math.max(r.sales_total_gst - r.pur_total_gst, 0),
       ]);
       exportToExcel(headers, rows, 'Monthly_GST_Report.csv');
     }
@@ -2403,7 +2403,8 @@ export default function Reports() {
                           title: 'Net GST Payable', key: 'net', width: 120, fixed: 'right',
                           render: (_, r) => {
                             const net = r.sales_total_gst - r.pur_total_gst;
-                            return <Text strong style={{ color: net > 0 ? '#ff4d4f' : '#52c41a', fontSize: 12 }}>₹{(net ?? 0).toLocaleString()}</Text>;
+                            const netDisplay = Math.max(net, 0);
+                            return <Text strong style={{ color: net > 0 ? '#ff4d4f' : '#52c41a', fontSize: 12 }}>₹{netDisplay.toLocaleString()}</Text>;
                           },
                         }] : []),
                       ]}
@@ -2419,6 +2420,7 @@ export default function Reports() {
                         const tPI = data.reduce((s, r) => s + r.pur_igst, 0);
                         const tPIG = data.reduce((s, r) => s + r.pur_total_gst, 0);
                         const net = tSOG - tPIG;
+                        const netDisplay = Math.max(net, 0);
                         return (
                           <Table.Summary.Row style={{ fontWeight: 700, background: isDark ? '#2a1a2e' : '#fdf5fa' }}>
                             <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
@@ -2438,7 +2440,7 @@ export default function Reports() {
                             </>}
                             {gstViewMode === 'combined' && (
                               <Table.Summary.Cell>
-                                <Text strong style={{ color: net > 0 ? '#ff4d4f' : '#52c41a', fontSize: 12 }}>₹{(net ?? 0).toLocaleString()}</Text>
+                                <Text strong style={{ color: net > 0 ? '#ff4d4f' : '#52c41a', fontSize: 12 }}>₹{netDisplay.toLocaleString()}</Text>
                               </Table.Summary.Cell>
                             )}
                           </Table.Summary.Row>
