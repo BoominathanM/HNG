@@ -11,7 +11,7 @@ import {
   PlayCircleOutlined, PauseCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
   FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
   EditOutlined, DeleteOutlined, FieldTimeOutlined, RobotOutlined, TeamOutlined,
-  InfoCircleOutlined, GiftOutlined,
+  InfoCircleOutlined, GiftOutlined, SwapOutlined, TrophyOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -19,6 +19,7 @@ import dayjs from 'dayjs';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
+import TaskPerformanceReport from '../../components/reports/TaskPerformanceReport';
 import { estimateSecFor, secToHuman, perUnitLabel, unitToSec, secToUnit, ratingColor, ratingLabel } from '../../utils/taskTime';
 import {
   useGetTasksQuery,
@@ -559,6 +560,12 @@ export default function Tasks() {
     // from its options.
     assignedToId: t.assignedTo?._id || null,
     hasMultipleAssignees: Array.isArray(t.assignedToMany) && t.assignedToMany.length > 0,
+    // Full {id, name} pairs for each shared assignee (Personalized/Separate Kit Packing) —
+    // needed to drive the per-assignee Reassign modal below (the plain-name assigneeList
+    // above has no ids to swap against).
+    assignedToManyList: (Array.isArray(t.assignedToMany) && t.assignedToMany.length)
+      ? t.assignedToMany.map((u, i) => ({ id: u?._id || null, name: u?.fullName || t.assigneeNames?.[i] || '' }))
+      : [],
     // Backend stores 'Done'; the UI keys everything off 'Completed'. Normalize for display.
     status: t.status === 'Done' ? 'Completed' : t.status,
     priority: t.priority || (t.isEmergency ? 'High' : 'Normal'),
@@ -626,6 +633,14 @@ export default function Tasks() {
   // hotel selection along (both reset to the hotel-cards view on tab change — see the main
   // Tabs' onChange handler).
   const [selectedPendingHotel, setSelectedPendingHotel] = useState(null);
+  // Reassign Assignees modal (admin-only) — for Personalized/Separate Kit Packing tasks
+  // that carry several assignees on one task record (assignedToMany). The regular
+  // single-select Reassign column can't express "swap just this one person", so this
+  // modal lists every current assignee with its own replacement dropdown.
+  const [reassignKitModalOpen, setReassignKitModalOpen] = useState(false);
+  const [reassignKitTask, setReassignKitTask] = useState(null);
+  const [reassignKitSelections, setReassignKitSelections] = useState({}); // { [assigneeId]: newUserId }
+  const [reassignKitSaving, setReassignKitSaving] = useState(false);
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null);
   const [assignForm] = Form.useForm();
@@ -984,6 +999,44 @@ export default function Tasks() {
       enqueueSnackbar('Task reassigned', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to reassign task', { variant: 'error' });
+    }
+  };
+
+  // Same admin-only "switch before work starts" move as handleReassignTask above, but
+  // for Personalized/Separate Kit Packing tasks where several people share one task
+  // record — swaps out exactly the one assignee named by fromAssignedTo, leaving the
+  // rest of the group on the task untouched. Called once per changed row from the
+  // Reassign Assignees modal below.
+  const handleReassignKitAssignee = async (taskKey, fromAssignedTo, newAssignedTo) => {
+    if (!newAssignedTo || !fromAssignedTo) return;
+    await reassignTask({ id: taskKey, assignedTo: newAssignedTo, fromAssignedTo }).unwrap();
+  };
+
+  const openReassignKitModal = (row) => {
+    setReassignKitTask(row);
+    setReassignKitSelections({});
+    setReassignKitModalOpen(true);
+  };
+
+  // Only the rows an admin actually picked a replacement for get submitted — swapping
+  // one out of five assignees shouldn't touch the other four. Runs sequentially since
+  // each call re-reads/re-saves the same task document.
+  const submitReassignKit = async () => {
+    const changes = Object.entries(reassignKitSelections).filter(([, newId]) => newId);
+    if (!changes.length || !reassignKitTask) return;
+    setReassignKitSaving(true);
+    try {
+      for (const [fromId, newId] of changes) {
+        await handleReassignKitAssignee(reassignKitTask.key, fromId, newId);
+      }
+      enqueueSnackbar(`Reassigned ${changes.length} assignee${changes.length > 1 ? 's' : ''}`, { variant: 'success' });
+      setReassignKitModalOpen(false);
+      setReassignKitTask(null);
+      setReassignKitSelections({});
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to reassign', { variant: 'error' });
+    } finally {
+      setReassignKitSaving(false);
     }
   };
 
@@ -1450,11 +1503,18 @@ export default function Tasks() {
       key: 'reassign',
       width: 190,
       render: (_, r) => {
-        if (r.hasMultipleAssignees) {
-          return <Tooltip title="Tasks with multiple assignees can't be reassigned here"><Text type="secondary" style={{ fontSize: 11 }}>—</Text></Tooltip>;
-        }
         if (r.status !== 'Pending') {
           return <Tooltip title="Only a task that hasn't started can be reassigned"><Text type="secondary" style={{ fontSize: 11 }}>—</Text></Tooltip>;
+        }
+        // Personalized/Separate Kit Packing tasks share one task record across several
+        // assignees — "the" assignee doesn't mean anything there, so swapping one person
+        // out happens in a dedicated modal instead of this single-select dropdown.
+        if (r.hasMultipleAssignees) {
+          return (
+            <Button size="small" icon={<SwapOutlined />} onClick={(e) => { e.stopPropagation(); openReassignKitModal(r); }}>
+              Reassign
+            </Button>
+          );
         }
         const options = assignableUsers.filter((u) => u._id !== r.assignedToId);
         return (
@@ -2757,6 +2817,16 @@ export default function Tasks() {
               </div>
             ),
           },
+          {
+            key: 'task_performance',
+            label: (
+              <Space size={6}>
+                <TrophyOutlined />
+                Performance Report
+              </Space>
+            ),
+            children: <TaskPerformanceReport />,
+          },
         ])}
         activeKey={activeKeyFor(mainTab)}
       />
@@ -3077,6 +3147,71 @@ export default function Tasks() {
             </Button>
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* ── Reassign Assignees Modal (admin-only) — Personalized/Separate Kit Packing
+          tasks share one task record across several people (assignedToMany), so
+          reassignment here means swapping out one person at a time rather than the
+          whole task. Each row is independent: pick a replacement only for the people
+          being changed and leave the rest untouched. */}
+      <Modal
+        open={reassignKitModalOpen}
+        onCancel={() => { setReassignKitModalOpen(false); setReassignKitTask(null); setReassignKitSelections({}); }}
+        title={
+          <Space>
+            <SwapOutlined style={{ color: '#B11E6A' }} />
+            <span>Reassign Assignees</span>
+            {reassignKitTask?.id && <Tag color="default">{reassignKitTask.id}</Tag>}
+          </Space>
+        }
+        footer={[
+          <Button key="cancel" onClick={() => { setReassignKitModalOpen(false); setReassignKitTask(null); setReassignKitSelections({}); }}>
+            Cancel
+          </Button>,
+          <Button
+            key="save"
+            type="primary"
+            loading={reassignKitSaving}
+            disabled={reassignKitSaving || !Object.values(reassignKitSelections).some(Boolean)}
+            onClick={submitReassignKit}
+            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+          >
+            Save Changes
+          </Button>,
+        ]}
+        width={Math.min(520, window.innerWidth - 32)}
+        destroyOnClose
+      >
+        <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+          This task ({reassignKitTask?.title || reassignKitTask?.name}) is shared by {reassignKitTask?.assignedToManyList?.length || 0} people.
+          Pick a replacement for anyone you want to swap out — everyone else stays assigned.
+        </Text>
+        <Space direction="vertical" style={{ width: '100%' }} size={10}>
+          {(reassignKitTask?.assignedToManyList || []).map((a) => {
+            const otherCurrentIds = (reassignKitTask?.assignedToManyList || []).map((x) => x.id).filter((id) => id !== a.id);
+            const options = assignableUsers.filter((u) => u._id !== a.id && !otherCurrentIds.includes(u._id));
+            return (
+              <div key={a.id || a.name} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Space size={4} style={{ flex: 1, minWidth: 0 }}>
+                  <Avatar size={22} icon={<UserOutlined />} style={{ background: '#B11E6A', flexShrink: 0 }} />
+                  <Text style={{ fontSize: 13 }} ellipsis>{a.name || 'Unnamed'}</Text>
+                </Space>
+                <SwapOutlined style={{ color: '#999', flexShrink: 0 }} />
+                <Select
+                  placeholder="Keep as is"
+                  allowClear
+                  showSearch
+                  optionFilterProp="children"
+                  style={{ width: 220, flexShrink: 0 }}
+                  value={reassignKitSelections[a.id] || undefined}
+                  onChange={(val) => setReassignKitSelections((prev) => ({ ...prev, [a.id]: val || undefined }))}
+                >
+                  {options.map((u) => <Option key={u._id} value={u._id}>{u.fullName}</Option>)}
+                </Select>
+              </div>
+            );
+          })}
+        </Space>
       </Modal>
 
       {/* ── Kit Packing Task Assignment Modal (Separate Kit / Personalized Kit) ──

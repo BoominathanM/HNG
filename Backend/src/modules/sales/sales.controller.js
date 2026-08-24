@@ -970,6 +970,19 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
       $push: { statusHistory: { status: 'Converted', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created from negotiation' } },
     });
   }
+  // Billing can convert this same Quotation straight to an Invoice BEFORE Sales gets here
+  // and creates the actual Order — convertQuotationToInvoice's own order lookup finds
+  // nothing at that point, so the Invoice is saved with no orderId ("orphaned"). Dispatch's
+  // invoice lookup filters strictly by orderId, so that invoice becomes permanently
+  // invisible to Dispatch once the order finally exists, even though Billing still shows it.
+  // Backfill any such orphan invoice for this quotation/lead now that the order is real.
+  if (negotiation.quotationId) {
+    const Invoice = require('../../models/Invoice');
+    await Invoice.updateMany(
+      { quotationId: negotiation.quotationId, orderId: null, deletedAt: null },
+      { $set: { orderId: order._id } }
+    ).catch(() => {});
+  }
   await deductInventoryForOrder(order, req.user._id);
   await deductMaterialStockForOrder(order);
   notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} is now In Production`, link: '/operations' }).catch(() => {});

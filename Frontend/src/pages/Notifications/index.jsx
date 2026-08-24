@@ -7,6 +7,7 @@ import {
   BellOutlined, DollarOutlined, WarningOutlined, CarOutlined,
   CheckCircleOutlined, ShoppingCartOutlined, ExclamationCircleOutlined,
   BoxPlotOutlined, DeleteOutlined, ReloadOutlined, SoundOutlined, UploadOutlined, SaveOutlined,
+  ContainerOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -30,6 +31,7 @@ const { Text } = Typography;
 const TYPE_META = {
   payment_due:  { icon: <DollarOutlined />,           color: '#6b1240', label: 'Payment' },
   low_stock:    { icon: <WarningOutlined />,           color: '#C94F8A', label: 'Stock' },
+  material_stock: { icon: <ContainerOutlined />,       color: '#0f766e', label: 'Material Stock' },
   dispatch:     { icon: <CarOutlined />,               color: '#8a1652', label: 'Dispatch' },
   task:         { icon: <CheckCircleOutlined />,       color: '#D85C9E', label: 'Task' },
   complaint:    { icon: <ExclamationCircleOutlined />, color: '#b85c00', label: 'Complaint' },

@@ -11,6 +11,7 @@ import dayjs from 'dayjs';
 import html2pdf from 'html2pdf.js';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
+import TaskPerformanceReport from '../../components/reports/TaskPerformanceReport';
 import {
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,
@@ -2200,6 +2201,12 @@ export default function Reports() {
                 </div>
               );
             })(),
+          },
+          /* ─────────── TASK MANAGEMENT PERFORMANCE REPORT ─────────── */
+          {
+            key: 'task_performance',
+            label: 'Task Management Performance',
+            children: <TaskPerformanceReport />,
           },
           /* ─────────── MONTHLY GST REPORT ─────────── */
           {

@@ -194,7 +194,17 @@ export default function Purchase() {
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
     sellerName: i.vendorId?.name || null,
     itemType: i.itemType || 'standard',
+    bulkSourceItemId: i.bulkSourceItemId?._id || i.bulkSourceItemId || null,
   })), [itemsData]);
+
+  // Filled products are refilled from their Bulk Item via Inventory's Fill Stock action, not
+  // purchased directly — so a low-stock filled product must not surface here as a separate
+  // purchasable line alongside its own Bulk Item. Direct/standard products and Bulk Items
+  // themselves are unaffected and keep showing exactly as before.
+  const lowStockInventoryItems = useMemo(
+    () => inventoryItems.filter((i) => (i.status === 'Low' || i.status === 'Out') && i.itemType !== 'filled'),
+    [inventoryItems]
+  );
 
   const dupeItemNames = useMemo(() => {
     const nameCount = {};
@@ -362,10 +372,75 @@ export default function Purchase() {
      request id (r.key). ── */
   const [pendingRowFile, setPendingRowFile] = useState({});
   const [pendingRowAmount, setPendingRowAmount] = useState({});
+  const [pendingRowGstAmount, setPendingRowGstAmount] = useState({});
   const [pendingRowSaving, setPendingRowSaving] = useState({});
+  const [pendingRowScanLoading, setPendingRowScanLoading] = useState({});
+
+  // AI-scans the quotation picked for a Bulk Purchase Request's Pending row (single
+  // item or whole batch) and auto-fills Amount/GST — same scanQuotationFile flow +
+  // extraction as the individual product's Raise Request AI Scan (handleRaiseRequestAIScan),
+  // just without a single product to match a line-item qty against.
+  //
+  // A batch group's single uploaded quotation covers several products, so the AI's
+  // extracted line items are matched (via matchScannedItem) against each product in
+  // the batch and stored per-child — this is what lets the batch group's action cell
+  // show and save a DIFFERENT amount per product instead of stamping the whole
+  // document total on every product (see handleBatchRowSave). The document total is
+  // still kept on the group key as a fallback for any product AI couldn't match.
+  const handlePendingRowAIScan = async (r) => {
+    const file = pendingRowFile[r.key];
+    if (!file) { enqueueSnackbar('Please upload the quotation file first', { variant: 'warning' }); return; }
+    setPendingRowScanLoading(prev => ({ ...prev, [r.key]: true }));
+    try {
+      const fd = new FormData();
+      fd.append('quotation', file);
+      const extracted = await scanQuotationFile(fd).unwrap();
+      const scanned = extracted?.data || {};
+      const totalAmount = Number(scanned.totalAmount) || 0;
+      const gstAmount = Number(scanned.gstAmount) || 0;
+      if (gstAmount) setPendingRowGstAmount(prev => ({ ...prev, [r.key]: gstAmount }));
+
+      if (r.isBatchGroup && (r.children || []).length) {
+        if (totalAmount) setPendingRowAmount(prev => ({ ...prev, [r.key]: totalAmount }));
+        let matchedCount = 0;
+        r.children.forEach((child) => {
+          const match = matchScannedItem(scanned.items, child.item);
+          if (match && Number(match.amount) > 0) {
+            matchedCount += 1;
+            setPendingRowAmount(prev => ({ ...prev, [child.key]: Number(match.amount) }));
+          }
+        });
+        enqueueSnackbar(
+          matchedCount
+            ? `AI matched ${matchedCount} of ${r.children.length} product(s) to its own amount — review below.`
+            : `Couldn't match individual products on the quotation — using the document total (₹${totalAmount.toLocaleString()}) for all, please verify.`,
+          { variant: matchedCount === r.children.length ? 'success' : 'warning' }
+        );
+      } else {
+        // Single product's own pending row: verify the invoice actually names this
+        // product, and — if it's a multi-product invoice sharing one total — use that
+        // product's own line amount instead of the whole document total.
+        const { match, amount, isMultiProduct, itemCount } = resolveScannedAmount(scanned, r.item);
+        if (amount) setPendingRowAmount(prev => ({ ...prev, [r.key]: amount }));
+        if (isMultiProduct && !match) {
+          enqueueSnackbar(`This quotation lists ${itemCount} products but "${r.item}" couldn't be matched by name — using the document total (₹${totalAmount.toLocaleString()}), please verify.`, { variant: 'warning' });
+        } else if (isMultiProduct) {
+          enqueueSnackbar(`Matched "${r.item}" on a ${itemCount}-product quotation — Amount: ₹${amount.toLocaleString()} (this product's own line total), GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+        } else {
+          enqueueSnackbar(`AI extracted — Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+        }
+      }
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'AI extraction failed — please enter the details manually', { variant: 'error' });
+    } finally {
+      setPendingRowScanLoading(prev => ({ ...prev, [r.key]: false }));
+    }
+  };
+
   const handlePendingRowSave = async (r) => {
     const file = pendingRowFile[r.key];
     const amount = pendingRowAmount[r.key];
+    const gstAmount = pendingRowGstAmount[r.key];
     if (!file) { enqueueSnackbar('Select the quotation file to upload', { variant: 'warning' }); return; }
     if (amount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
     setPendingRowSaving(prev => ({ ...prev, [r.key]: true }));
@@ -373,9 +448,11 @@ export default function Purchase() {
       const fd = new FormData();
       fd.append('quotation', file);
       fd.append('amount', amount);
+      if (gstAmount != null) fd.append('gstAmount', gstAmount);
       await uploadQuotationFile({ id: r.key, formData: fd }).unwrap();
       setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       setPendingRowAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+      setPendingRowGstAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       enqueueSnackbar('Quotation & amount saved', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to save quotation', { variant: 'error' });
@@ -384,25 +461,43 @@ export default function Purchase() {
     }
   };
 
+  // Per-product amount for a batch group's child: the product's own AI-matched/
+  // manually-entered value, falling back to the batch's overall amount (typed
+  // manually, or the document total when AI couldn't match that particular
+  // product), falling back to whatever was already saved for it.
+  const batchChildAmount = (r, child) => pendingRowAmount[child.key] ?? pendingRowAmount[r.key] ?? child.amount ?? null;
+
   /* ── Same upload+amount inline completion, but for a whole Bulk Purchase batch
-     group at once — one quotation/amount covers every item in the batch instead
-     of asking Purchase to repeat the upload per line item. Applies it to every
-     child request so Finance still sees amount/quotationFiles on each one. ── */
+     group at once — one quotation upload covers every item in the batch instead
+     of asking Purchase to repeat the upload per line item, but each product still
+     gets its OWN amount (see batchChildAmount/handlePendingRowAIScan) so Finance
+     sees the correct per-product amount instead of the batch total repeated. ── */
   const handleBatchRowSave = async (r) => {
     const file = pendingRowFile[r.key];
-    const amount = pendingRowAmount[r.key];
+    const gstAmount = pendingRowGstAmount[r.key];
+    const children = r.children || [];
     if (!file) { enqueueSnackbar('Select the quotation file to upload', { variant: 'warning' }); return; }
-    if (amount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
+    if (children.some((child) => batchChildAmount(r, child) == null)) {
+      enqueueSnackbar('Enter the quoted amount for every product', { variant: 'warning' });
+      return;
+    }
     setPendingRowSaving(prev => ({ ...prev, [r.key]: true }));
     try {
-      await Promise.all((r.children || []).map((child) => {
+      await Promise.all(children.map((child) => {
         const fd = new FormData();
         fd.append('quotation', file);
-        fd.append('amount', amount);
+        fd.append('amount', batchChildAmount(r, child));
+        if (gstAmount != null) fd.append('gstAmount', gstAmount);
         return uploadQuotationFile({ id: child.key, formData: fd }).unwrap();
       }));
       setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; });
-      setPendingRowAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+      setPendingRowAmount(prev => {
+        const n = { ...prev };
+        delete n[r.key];
+        children.forEach((child) => delete n[child.key]);
+        return n;
+      });
+      setPendingRowGstAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       enqueueSnackbar('Quotation & amount saved for the whole batch', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to save quotation', { variant: 'error' });
@@ -692,6 +787,8 @@ export default function Purchase() {
         igstAmount: res?.data?.igstAmount,
         gstAmount: res?.data?.gstAmount,
         totalAmount: res?.data?.totalAmount,
+        scopedToOrder: !!res?.data?.scopedToOrder,
+        invoiceGrandTotal: res?.data?.invoiceGrandTotal,
         vendorMismatch: !!res?.data?.vendorMismatch,
         poVendorName: res?.data?.poVendorName,
         qtyVerification: res?.data?.qtyVerification || null,
@@ -1178,6 +1275,22 @@ export default function Purchase() {
     });
   };
 
+  // Resolves what amount a single/separate purchase request should trust from a scanned
+  // quotation/invoice. A document that quotes only ONE product means its totalAmount
+  // already IS that product's amount — but a document quoting SEVERAL products shares
+  // one totalAmount across all of them, so once the product is verified by name, that
+  // matched line item's OWN `amount` must be used instead of stamping the whole
+  // multi-product total onto a single product (same product-wise matching the Bulk
+  // batch-group AI scan already does via matchScannedItem, applied here to one product).
+  const resolveScannedAmount = (scanned, productName) => {
+    const scannedItems = scanned.items || [];
+    const match = matchScannedItem(scannedItems, productName);
+    const totalAmount = Number(scanned.totalAmount) || 0;
+    const isMultiProduct = scannedItems.length > 1;
+    const amount = isMultiProduct ? (match ? Number(match.amount) || 0 : totalAmount) : totalAmount;
+    return { match, amount, isMultiProduct, itemCount: scannedItems.length };
+  };
+
   const handleRaiseRequestAIScan = async () => {
     if (!raiseRequestFile) { enqueueSnackbar('Please upload the quotation file first', { variant: 'warning' }); return; }
     setRaiseRequestScanLoading(true);
@@ -1186,19 +1299,20 @@ export default function Purchase() {
       fd.append('quotation', raiseRequestFile);
       const extracted = await scanQuotationFile(fd).unwrap();
       const scanned = extracted?.data || {};
-      const match = matchScannedItem(scanned.items, raiseRequestProduct?.name);
-      const matchedQty = match ? Number(match.qty) || 0 : 0;
-      const totalAmount = Number(scanned.totalAmount) || 0;
       const gstAmount = Number(scanned.gstAmount) || 0;
+      const { match, amount, isMultiProduct, itemCount } = resolveScannedAmount(scanned, raiseRequestProduct?.name);
+      const matchedQty = match ? Number(match.qty) || 0 : 0;
 
       if (matchedQty > 0) raiseRequestForm.setFieldsValue({ qty: matchedQty });
-      setRaiseRequestAmount(totalAmount || null);
+      setRaiseRequestAmount(amount || null);
       setRaiseRequestGstAmount(gstAmount || null);
 
       if (!match && (scanned.items || []).length) {
-        enqueueSnackbar(`Couldn't confidently match "${raiseRequestProduct?.name}" to a line item on the quotation — please verify the quantity manually. Amount ₹${totalAmount.toLocaleString()} and GST ₹${gstAmount.toLocaleString()} were read from the document total.`, { variant: 'warning' });
+        enqueueSnackbar(`Couldn't confidently match "${raiseRequestProduct?.name}" to a line item on the quotation — please verify the quantity and amount manually. ${isMultiProduct ? `Document total ₹${amount.toLocaleString()}` : `Amount ₹${amount.toLocaleString()}`} and GST ₹${gstAmount.toLocaleString()} were read from the document.`, { variant: 'warning' });
+      } else if (isMultiProduct) {
+        enqueueSnackbar(`Verified "${raiseRequestProduct?.name}" among ${itemCount} products on this quotation — Qty: ${matchedQty || raiseReqQtyWatch || 0}, Amount: ₹${amount.toLocaleString()} (this product's own line total), GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
       } else {
-        enqueueSnackbar(`AI extracted — Qty: ${matchedQty || raiseReqQtyWatch || 0}, Amount: ₹${totalAmount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+        enqueueSnackbar(`AI extracted — Qty: ${matchedQty || raiseReqQtyWatch || 0}, Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
       }
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'AI extraction failed — please enter the details manually', { variant: 'error' });
@@ -1523,8 +1637,8 @@ export default function Purchase() {
     setBulkSupplierName(supplierName);
     setBulkQuotationAsked(false);
     setBulkReminderDate(null);
-    const supplierItems = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.sellerName === supplierName);
-    const otherLowStock = inventoryItems.filter(i => (i.status === 'Low' || i.status === 'Out') && i.sellerName !== supplierName);
+    const supplierItems = lowStockInventoryItems.filter(i => i.sellerName === supplierName);
+    const otherLowStock = lowStockInventoryItems.filter(i => i.sellerName !== supplierName);
     const allItems = [...supplierItems, ...otherLowStock];
     setBulkItems(allItems.map(i => ({
       invKey: i.key,
@@ -1716,11 +1830,14 @@ export default function Purchase() {
       fd.append('quotation', file);
       const extracted = await scanQuotationFile(fd).unwrap();
       const scanned = extracted?.data || {};
-      const match = matchScannedItem(scanned.items, req?.item);
-      amount = Number(scanned.totalAmount) || undefined;
+      const { match, amount: resolvedAmount, isMultiProduct, itemCount } = resolveScannedAmount(scanned, req?.item);
+      amount = resolvedAmount || undefined;
       gstAmount = scanned.gstAmount !== undefined ? Number(scanned.gstAmount) || 0 : undefined;
       qty = match?.qty ? Number(match.qty) || undefined : undefined;
-      enqueueSnackbar(`AI-verified quotation — Qty: ${qty ?? req?.qty ?? '—'}, Amount: ₹${(amount || 0).toLocaleString()}, GST: ₹${(gstAmount || 0).toLocaleString()}`, { variant: 'success' });
+      const verifyNote = isMultiProduct
+        ? (match ? ` (matched "${req?.item}" among ${itemCount} products, own line amount)` : ` (couldn't match "${req?.item}" among ${itemCount} products — using document total, please verify)`)
+        : '';
+      enqueueSnackbar(`AI-verified quotation${verifyNote} — Qty: ${qty ?? req?.qty ?? '—'}, Amount: ₹${(amount || 0).toLocaleString()}, GST: ₹${(gstAmount || 0).toLocaleString()}`, { variant: isMultiProduct && !match ? 'warning' : 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'AI could not read the quotation — re-submitting without auto-filled amounts', { variant: 'warning' });
     }
@@ -1737,12 +1854,14 @@ export default function Purchase() {
       fd.append('quotation', rerequestFile);
       const extracted = await scanQuotationFile(fd).unwrap();
       const scanned = extracted?.data || {};
-      const match = matchScannedItem(scanned.items, rerequestTarget?.item);
-      const totalAmount = Number(scanned.totalAmount) || 0;
       const gstAmount = Number(scanned.gstAmount) || 0;
-      setRerequestAmount(totalAmount || null);
+      const { match, amount, isMultiProduct, itemCount } = resolveScannedAmount(scanned, rerequestTarget?.item);
+      setRerequestAmount(amount || null);
       setRerequestGstAmount(gstAmount || null);
-      enqueueSnackbar(`AI extracted — Qty read: ${match?.qty ?? '—'}, Amount: ₹${totalAmount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+      const verifyNote = isMultiProduct
+        ? (match ? ` — matched among ${itemCount} products, using its own line amount` : ` — couldn't match among ${itemCount} products, using document total, please verify`)
+        : '';
+      enqueueSnackbar(`AI extracted${verifyNote} — Qty read: ${match?.qty ?? '—'}, Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: isMultiProduct && !match ? 'warning' : 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'AI extraction failed — please enter the amount manually', { variant: 'error' });
     } finally {
@@ -1953,8 +2072,7 @@ export default function Purchase() {
                       </div>
                       <Table
                         size="small"
-                        dataSource={inventoryItems.filter((inv) => {
-                          if (inv.status !== 'Low' && inv.status !== 'Out') return false;
+                        dataSource={lowStockInventoryItems.filter((inv) => {
                           const q = stockSearch.toLowerCase();
                           const matchSearch = !q || (inv.name || '').toLowerCase().includes(q) || (inv.category || '').toLowerCase().includes(q) || (inv.code || '').toLowerCase().includes(q);
                           const linkedReq = raisedRequests.find(req => req.item === inv.name);
@@ -2311,7 +2429,7 @@ export default function Purchase() {
                         ]}
                       />
 
-                      {/* ── Bulk Purchase Requests Table (category-separated) ── */}
+                      {/* ── Bulk Purchase Requests Table ── */}
                       {(() => {
                         const allBulkReqs = raisedRequests.filter(r => r.requestType === 'bulk');
                         if (allBulkReqs.length === 0) return null;
@@ -2319,14 +2437,6 @@ export default function Purchase() {
                           if (!bulkDateRange) return true;
                           const d = req.date ? req.date.slice(0, 10) : '';
                           return d >= bulkDateRange[0] && d <= bulkDateRange[1];
-                        });
-
-                        // Group by category
-                        const categoryMap = {};
-                        bulkReqs.forEach(req => {
-                          const cat = req.category || 'Other';
-                          if (!categoryMap[cat]) categoryMap[cat] = [];
-                          categoryMap[cat].push(req);
                         });
 
                         // Collapse items that share a batchId into one expandable parent row
@@ -2553,15 +2663,19 @@ export default function Purchase() {
                           {
                             title: 'Action', key: 'action', fixed: 'right', width: 200,
                             render: (_, r) => {
-                              // Bulk batch, still Pending: one Upload/Amount/Save covers every
-                              // item in the batch — shown once on the group row instead of once
-                              // per child item, and applied to all of them on Save.
+                              // Bulk batch, still Pending: one Upload/Scan covers every item in
+                              // the batch — shown once on the group row instead of once per
+                              // child item — but each product below gets its OWN amount (AI-
+                              // matched product-wise from that single file, or typed manually)
+                              // instead of one lump amount being stamped on every product.
                               if (r.isBatchGroup && r.status === 'Pending') {
                                 const file = pendingRowFile[r.key];
-                                const amount = pendingRowAmount[r.key] ?? r.amount ?? null;
+                                const children = r.children || [];
                                 const saving = !!pendingRowSaving[r.key];
+                                const scanning = !!pendingRowScanLoading[r.key];
+                                const allAmountsSet = children.every((child) => batchChildAmount(r, child) != null);
                                 return (
-                                  <Space direction="vertical" size={4} style={{ width: 170 }}>
+                                  <Space direction="vertical" size={4} style={{ width: 190 }}>
                                     <Text type="secondary" style={{ fontSize: 10 }}>{r.payment_terms || '-'} · whole batch</Text>
                                     <Upload
                                       maxCount={1}
@@ -2571,22 +2685,45 @@ export default function Purchase() {
                                       fileList={file ? [{ uid: '1', name: file.name, status: 'done' }] : []}
                                     >
                                       <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600, width: '100%' }}>
-                                        {file ? `✓ ${file.name}` : (r.quotationFiles?.length ? 'Re-Upload' : 'Upload Quotation')}
+                                        <span style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
+                                          {file ? `✓ ${file.name}` : (r.quotationFiles?.length ? 'Re-Upload' : 'Upload Quotation')}
+                                        </span>
                                       </Button>
                                     </Upload>
-                                    <InputNumber
+                                    <Button
                                       size="small"
-                                      min={0}
-                                      placeholder="Amount (₹)"
-                                      value={amount}
-                                      onChange={v => setPendingRowAmount(prev => ({ ...prev, [r.key]: v }))}
-                                      style={{ width: '100%' }}
-                                    />
+                                      icon={<ThunderboltOutlined />}
+                                      loading={scanning}
+                                      disabled={!file}
+                                      onClick={() => handlePendingRowAIScan(r)}
+                                      style={{ borderColor: '#B11E6A66', color: '#B11E6A', fontWeight: 600, width: '100%' }}
+                                    >
+                                      {scanning ? 'Scanning...' : 'Scan with AI'}
+                                    </Button>
+                                    <Text type="secondary" style={{ fontSize: 10 }}>Amount per product:</Text>
+                                    {children.map((child) => (
+                                      <div key={child.key} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                        <Text
+                                          style={{ fontSize: 10, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                          title={child.item}
+                                        >
+                                          {child.item}
+                                        </Text>
+                                        <InputNumber
+                                          size="small"
+                                          min={0}
+                                          placeholder="₹"
+                                          value={batchChildAmount(r, child)}
+                                          onChange={v => setPendingRowAmount(prev => ({ ...prev, [child.key]: v }))}
+                                          style={{ width: 85 }}
+                                        />
+                                      </div>
+                                    ))}
                                     <Button
                                       size="small"
                                       type="primary"
                                       loading={saving}
-                                      disabled={!file || amount == null}
+                                      disabled={!file || !allAmountsSet}
                                       onClick={() => handleBatchRowSave(r)}
                                       style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 600, width: '100%' }}
                                     >
@@ -2675,6 +2812,7 @@ export default function Purchase() {
                                 const file = pendingRowFile[r.key];
                                 const amount = pendingRowAmount[r.key] ?? r.amount ?? null;
                                 const saving = !!pendingRowSaving[r.key];
+                                const scanning = !!pendingRowScanLoading[r.key];
                                 return (
                                   <Space direction="vertical" size={4} style={{ width: 170 }}>
                                     <Text type="secondary" style={{ fontSize: 10 }}>{r.payment_terms || '-'}</Text>
@@ -2686,9 +2824,21 @@ export default function Purchase() {
                                       fileList={file ? [{ uid: '1', name: file.name, status: 'done' }] : []}
                                     >
                                       <Button size="small" icon={<UploadOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600, width: '100%' }}>
-                                        {file ? `✓ ${file.name}` : (r.quotationFiles?.length ? 'Re-Upload' : 'Upload Quotation')}
+                                        <span style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
+                                          {file ? `✓ ${file.name}` : (r.quotationFiles?.length ? 'Re-Upload' : 'Upload Quotation')}
+                                        </span>
                                       </Button>
                                     </Upload>
+                                    <Button
+                                      size="small"
+                                      icon={<ThunderboltOutlined />}
+                                      loading={scanning}
+                                      disabled={!file}
+                                      onClick={() => handlePendingRowAIScan(r)}
+                                      style={{ borderColor: '#B11E6A66', color: '#B11E6A', fontWeight: 600, width: '100%' }}
+                                    >
+                                      {scanning ? 'Scanning...' : 'Scan with AI'}
+                                    </Button>
                                     <InputNumber
                                       size="small"
                                       min={0}
@@ -2793,7 +2943,7 @@ export default function Purchase() {
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 8 }}>
                               <div>
                                 <Title level={5} style={{ margin: 0, color: textColor }}>Bulk Purchase Requests</Title>
-                                <Text type="secondary">Requests raised via Bulk Purchase — grouped by category</Text>
+                                <Text type="secondary">Requests raised via Bulk Purchase</Text>
                               </div>
                               <Space wrap>
                                 <DatePicker.RangePicker
@@ -2804,40 +2954,20 @@ export default function Purchase() {
                                 <Tag color="pink" style={{ borderRadius: 10, fontWeight: 600, fontSize: 12 }}>{bulkReqs.length} Total</Tag>
                               </Space>
                             </div>
-                            {Object.entries(categoryMap).map(([cat, items]) => (
-                              <div key={cat} style={{ marginBottom: 20 }}>
-                                <div style={{
-                                  padding: '8px 14px',
-                                  background: isDark ? 'linear-gradient(135deg,#2a0d1a,#1a0f1e)' : 'linear-gradient(135deg,#fff0f6,#fce4f0)',
-                                  borderRadius: '10px 10px 0 0',
-                                  borderBottom: '2px solid #B11E6A',
-                                  display: 'flex', alignItems: 'center', gap: 10
-                                }}>
-                                  <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{cat}</Text>
-                                  <Tag color="magenta" style={{ borderRadius: 10, margin: 0, fontSize: 11 }}>
-                                    {items.length} item{items.length > 1 ? 's' : ''}
-                                  </Tag>
-                                  <Tag color={items.some(i => i.status === 'Approved') ? 'success' : items.some(i => i.status === 'Rejected') ? 'error' : 'processing'} style={{ borderRadius: 10, margin: 0, fontSize: 11 }}>
-                                    {items.some(i => i.status === 'Approved') ? 'Approved' : items.some(i => i.status === 'Rejected') ? 'Rejected' : 'Pending'}
-                                  </Tag>
-                                </div>
-                                <Table
-                                  size="small"
-                                  dataSource={groupItemsByBatch(items)}
-                                  rowKey="key"
-                                  pagination={false}
-                                  scroll={{ x: 'max-content' }}
-                                  columns={bulkTableColumns}
-                                  style={{
-                                    border: `1px solid ${isDark ? '#2a2d40' : '#f0d4e4'}`,
-                                    borderTop: 'none',
-                                    borderRadius: '0 0 10px 10px',
-                                    overflow: 'hidden'
-                                  }}
-                                  locale={{ emptyText: 'No bulk requests in this category.' }}
-                                />
-                              </div>
-                            ))}
+                            <Table
+                              size="small"
+                              dataSource={groupItemsByBatch(bulkReqs)}
+                              rowKey="key"
+                              pagination={false}
+                              scroll={{ x: 'max-content' }}
+                              columns={bulkTableColumns}
+                              style={{
+                                border: `1px solid ${isDark ? '#2a2d40' : '#f0d4e4'}`,
+                                borderRadius: 10,
+                                overflow: 'hidden'
+                              }}
+                              locale={{ emptyText: 'No bulk requests found.' }}
+                            />
                           </div>
                         );
                       })()}
@@ -4729,29 +4859,33 @@ export default function Purchase() {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Upload
-                maxCount={1}
-                beforeUpload={(file) => { setRaiseRequestFile(file); return false; }}
-                onRemove={() => setRaiseRequestFile(null)}
-                accept=".pdf,.jpg,.jpeg,.png"
-                style={{ flex: 1 }}
-              >
-                <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
-                  {raiseRequestFile ? raiseRequestFile.name : 'Upload Quotation File'}
-                </Button>
-              </Upload>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Upload
+                  maxCount={1}
+                  beforeUpload={(file) => { setRaiseRequestFile(file); return false; }}
+                  onRemove={() => setRaiseRequestFile(null)}
+                  accept=".pdf,.jpg,.jpeg,.png"
+                  style={{ width: '100%' }}
+                >
+                  <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                    <span style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
+                      {raiseRequestFile ? raiseRequestFile.name : 'Upload Quotation File'}
+                    </span>
+                  </Button>
+                </Upload>
+              </div>
               <Button
                 icon={<ThunderboltOutlined />}
                 loading={raiseRequestScanLoading}
                 onClick={handleRaiseRequestAIScan}
-                style={{ borderRadius: 8, background: raiseRequestFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: raiseRequestFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
+                style={{ borderRadius: 8, background: raiseRequestFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: raiseRequestFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}
               >
                 {raiseRequestScanLoading ? 'Scanning...' : 'Scan with AI'}
               </Button>
             </div>
             {raiseRequestFile && (
-              <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4 }}>
-                <FileTextOutlined /><Text style={{ fontSize: 11, color: '#B11E6A' }}>{raiseRequestFile.name}</Text>
+              <div style={{ marginTop: 6, fontSize: 11, color: '#B11E6A', display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
+                <FileTextOutlined style={{ flexShrink: 0 }} /><Text style={{ fontSize: 11, color: '#B11E6A', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{raiseRequestFile.name}</Text>
               </div>
             )}
             <div style={{ marginTop: 10, display: 'flex', gap: 10 }}>
@@ -4911,22 +5045,26 @@ export default function Purchase() {
                 Revised Quotation File <Text type="danger">*</Text>
               </Text>
               <div style={{ display: 'flex', gap: 8 }}>
-                <Upload
-                  maxCount={1}
-                  beforeUpload={(file) => { setRerequestFile(file); return false; }}
-                  onRemove={() => setRerequestFile(null)}
-                  accept=".pdf,.jpg,.jpeg,.png"
-                  style={{ flex: 1 }}
-                >
-                  <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
-                    {rerequestFile ? rerequestFile.name : 'Upload Quotation File'}
-                  </Button>
-                </Upload>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <Upload
+                    maxCount={1}
+                    beforeUpload={(file) => { setRerequestFile(file); return false; }}
+                    onRemove={() => setRerequestFile(null)}
+                    accept=".pdf,.jpg,.jpeg,.png"
+                    style={{ width: '100%' }}
+                  >
+                    <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>
+                      <span style={{ display: 'inline-block', maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', verticalAlign: 'middle' }}>
+                        {rerequestFile ? rerequestFile.name : 'Upload Quotation File'}
+                      </span>
+                    </Button>
+                  </Upload>
+                </div>
                 <Button
                   icon={<ThunderboltOutlined />}
                   loading={rerequestScanLoading}
                   onClick={handleRerequestAIScan}
-                  style={{ borderRadius: 8, background: rerequestFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: rerequestFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap' }}
+                  style={{ borderRadius: 8, background: rerequestFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: rerequestFile ? '#fff' : '#bbb', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}
                 >
                   {rerequestScanLoading ? 'Scanning...' : 'Scan with AI'}
                 </Button>
@@ -6276,6 +6414,16 @@ export default function Purchase() {
                     </Col>
                   ))}
                 </Row>
+                {scannedInvoiceDetails.scopedToOrder && (
+                  <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: isDark ? '#1a1500' : '#fffbe6', border: '1px solid #fa8c1644' }}>
+                    <Space>
+                      <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
+                      <Text style={{ fontSize: 12, color: '#d46b08' }}>
+                        This invoice also lists product(s) not on this PO (see "Extra items" below) — the figures above are scoped to just this order's own products, verified by name. Invoice's full printed total: ₹{Number(scannedInvoiceDetails.invoiceGrandTotal || 0).toLocaleString()}.
+                      </Text>
+                    </Space>
+                  </div>
+                )}
                 {scannedInvoiceDetails.qtyVerification && (
                   <div style={{
                     marginTop: 10, padding: '8px 12px', borderRadius: 8,

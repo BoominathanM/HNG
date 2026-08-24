@@ -563,9 +563,23 @@ async function computeSuggestedTasks() {
   // Build a stock lookup by item name (case-insensitive). NOTE: the field is `itemName`,
   // not `name` — selecting/reading `name` silently returned undefined for every item,
   // which meant EVERY product here always showed "Stock 0" regardless of real inventory.
-  const stockItems = await InventoryItem.find({ deletedAt: null }).select('itemName currentStock').lean();
+  const stockItems = await InventoryItem.find({ deletedAt: null }).select('itemName currentStock productAttributes').lean();
   const stockByName = {};
   stockItems.forEach((s) => { stockByName[(s.itemName || '').toLowerCase()] = s.currentStock; });
+  // Whether this Inventory item actually has its packaging predefined (Packing Config's
+  // packingMaterial/sticker options, set via Inventory > Add Item) — used below to catch a
+  // Sales-side defaulting bug: an item added to Inventory with NO packing config at all gives
+  // the order form nothing to route it by, so Sales/index.jsx's inferLogoType falls all the
+  // way through to a blind `'Sticker'` default. That default then wrongly qualifies the
+  // product for a "Sticker Placing" Suggested Task even though it was never actually set up
+  // to go through the Sticker design queue — see the designType override below.
+  const packingConfiguredByName = {};
+  stockItems.forEach((s) => {
+    const pa = s.productAttributes || {};
+    packingConfiguredByName[(s.itemName || '').toLowerCase()] =
+      (Array.isArray(pa.packingMaterial) && pa.packingMaterial.length > 0)
+      || (Array.isArray(pa.sticker) && pa.sticker.length > 0);
+  });
 
   // Kits aren't InventoryItems — they're a Kit (components list). Build a lookup so kit
   // line items report real component-stock readiness instead of a false "no match → 0".
@@ -631,7 +645,18 @@ async function computeSuggestedTasks() {
       }
 
       // ── Design (Sticker / Box / Frosted Ziplock / Butter Paper) readiness ──
-      const designType = resolveDesignType(it, o);
+      const rawDesignType = resolveDesignType(it, o);
+      // Only trust a 'Sticker' classification here when it's either an explicit sticker=YES
+      // choice, or a kit item, or this item's own Inventory Packing Config actually has
+      // packaging options defined — otherwise it's the blind Sales-side default described
+      // above, and downgrading it to unclassified keeps this checklist card's Suggested
+      // Tasks pointed at "Packing" (like any other product with no design step) instead of
+      // a "Sticker Placing" task that was never really applicable.
+      const designType = (!isKitItem && rawDesignType === 'Sticker'
+        && normYN(it.sticker) !== 'YES'
+        && !packingConfiguredByName[(it.itemName || '').toLowerCase()])
+        ? ''
+        : rawDesignType;
       let stickerReady = true;
       if (designType) {
         const match = stickerReqs.find((s) => (s.product || '').toLowerCase() === productKey.toLowerCase()
@@ -1376,9 +1401,11 @@ exports.approveEmergencyOps = asyncHandler(async (req, res, next) => {
 // Move a not-yet-started task to a different Task Management staff member (e.g. the
 // original assignee is on leave). Admin-only, and only while the task is still
 // 'Pending' — once work has started its timeline/duration tracking is tied to the
-// current assignee, so swapping mid-flight is not allowed. Tasks with multiple
-// assignees (assignedToMany — Personalized/Separate Kit Packing) are out of scope
-// here: "the" assignee doesn't mean anything when several people already share it.
+// current assignee, so swapping mid-flight is not allowed.
+// Tasks with multiple assignees (assignedToMany — Personalized/Separate Kit Packing)
+// are also supported: the caller passes `fromAssignedTo` to say which one of the
+// several shared assignees is being swapped out, and only that slot changes — the
+// rest of the group keeps the task exactly as before.
 // Visibility is driven entirely by getTasks' assignedTo filter above, so once this
 // saves, the task disappears from the old assignee's Task Management view and
 // appears in the new assignee's — no separate frontend filtering needed.
@@ -1390,19 +1417,44 @@ exports.reassignTask = asyncHandler(async (req, res, next) => {
   const task = await Task.findById(req.params.id);
   if (!task) return next(new AppError('Task not found', 404));
   if (task.status !== 'Pending') return next(new AppError('Only a task that has not started can be reassigned', 400));
-  if (task.assignedToMany && task.assignedToMany.length) {
-    return next(new AppError('This task has multiple assignees and cannot be reassigned here', 400));
-  }
 
-  const { assignedTo } = req.body;
+  const { assignedTo, fromAssignedTo } = req.body;
   if (!assignedTo) return next(new AppError('assignedTo is required', 400));
   const newUser = await User.findOne({ _id: assignedTo, department: 'Task Management' }).select('_id fullName').lean();
   if (!newUser) return next(new AppError('Selected user is not a Task Management staff member', 400));
 
-  const previousAssignedTo = task.assignedTo;
-  const previousAssigneeName = task.assigneeName;
-  task.assignedTo = newUser._id;
-  task.assigneeName = newUser.fullName;
+  const hasMany = Boolean(task.assignedToMany && task.assignedToMany.length);
+  let previousAssignedTo;
+  let previousAssigneeName;
+
+  if (hasMany) {
+    if (!fromAssignedTo) return next(new AppError('fromAssignedTo is required to reassign one of several assignees', 400));
+    const idx = task.assignedToMany.findIndex((id) => id.toString() === fromAssignedTo.toString());
+    if (idx === -1) return next(new AppError('Selected assignee is not on this task', 400));
+    if (task.assignedToMany.some((id) => id.toString() === assignedTo.toString())) {
+      return next(new AppError('Selected user is already assigned to this task', 400));
+    }
+    previousAssignedTo = task.assignedToMany[idx];
+    previousAssigneeName = task.assigneeNames?.[idx] || '';
+    task.assignedToMany.set(idx, newUser._id);
+    if (task.assigneeNames && task.assigneeNames.length === task.assignedToMany.length) {
+      task.assigneeNames.set(idx, newUser.fullName);
+    }
+    task.markModified('assignedToMany');
+    task.markModified('assigneeNames');
+    // assignedTo/assigneeName mirror the first entry for code that still expects a
+    // single assignee — keep them in sync when the swapped slot is that first entry.
+    if (task.assignedTo && task.assignedTo.toString() === fromAssignedTo.toString()) {
+      task.assignedTo = newUser._id;
+      task.assigneeName = newUser.fullName;
+    }
+  } else {
+    previousAssignedTo = task.assignedTo;
+    previousAssigneeName = task.assigneeName;
+    task.assignedTo = newUser._id;
+    task.assigneeName = newUser.fullName;
+  }
+
   task.switchHistory = task.switchHistory || [];
   task.switchHistory.push({
     from: previousAssignedTo || null,

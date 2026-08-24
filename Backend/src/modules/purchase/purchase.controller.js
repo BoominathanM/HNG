@@ -337,6 +337,11 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
       // no rate column was printed) — pre-fills the Received Order modal's editable Purchase
       // Price column so the batch can be costed without retyping it.
       price: match ? (Number(match.rate) || 0) : 0,
+      // This line's own taxable amount as printed on the invoice (qty × rate) — kept
+      // separate from the document-wide `amount`/`totalAmount` below so this order's own
+      // total can be computed by summing just its own matched lines when the invoice
+      // also quotes other products that aren't part of this PO (see scopedToOrder below).
+      amount: match ? (Number(match.amount) || 0) : 0,
       gstPercent,
       matched: !!match,
     };
@@ -389,6 +394,48 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
   const totalOrderedQty = items.reduce((s, it) => s + (it.orderedQty || 0), 0);
   const totalInvoiceQty = items.reduce((s, it) => s + (it.invoiceQty || 0), 0);
 
+  // Whole-invoice figures as the AI read them off the document (taxable amount = grand
+  // total minus GST, since the document only prints the grand total directly).
+  const docTaxable = Math.max((Number(extracted.totalAmount) || 0) - (Number(extracted.gstAmount) || 0), 0);
+  const docGst = Number(extracted.gstAmount) || 0;
+  const docTotal = Number(extracted.totalAmount) || 0;
+
+  // When the vendor's invoice bundles OTHER products alongside this PO's own items (the
+  // `extraItems` above), the document's printed grand total covers those extra products
+  // too — using it as-is would overstate what THIS order actually cost. So once every
+  // matched line is verified by product name, sum only THIS order's own line amounts
+  // (and their own line GST%, since GST is only ever printed as one combined breakdown at
+  // the bottom, never split out per product) instead of the shared document total. A
+  // single-product invoice, or one that exactly matches this PO with nothing extra, has
+  // no bundled cost to strip out, so it keeps using the document total exactly as before.
+  const hasExtraItems = unmatchedScanned.length > 0;
+  const matchedItemsTaxable = items.reduce((s, it) => s + (it.matched ? it.amount : 0), 0);
+  const matchedItemsGst = items.reduce((s, it) => s + (it.matched ? it.amount * (it.gstPercent / 100) : 0), 0);
+
+  let scopedTaxable = docTaxable;
+  let scopedGst = docGst;
+  let scopedTotal = docTotal;
+  let scopedCgst = Number(extracted.cgstAmount) || 0;
+  let scopedSgst = Number(extracted.sgstAmount) || 0;
+  let scopedIgst = Number(extracted.igstAmount) || 0;
+  let scopedToOrder = false;
+
+  if (hasExtraItems && matchedItemsTaxable > 0) {
+    scopedTaxable = matchedItemsTaxable;
+    scopedGst = matchedItemsGst;
+    scopedTotal = matchedItemsTaxable + matchedItemsGst;
+    // Split this order's own GST the same way the document itself split it — intra-state
+    // (CGST+SGST) invoices divide evenly, inter-state (IGST) invoices keep it all on IGST.
+    if (scopedIgst > 0 && scopedCgst <= 0 && scopedSgst <= 0) {
+      scopedIgst = scopedGst;
+    } else {
+      scopedCgst = scopedGst / 2;
+      scopedSgst = scopedGst / 2;
+      scopedIgst = 0;
+    }
+    scopedToOrder = true;
+  }
+
   res.status(200).json({
     success: true,
     data: {
@@ -399,14 +446,20 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
       vendorAddress: extracted.vendorAddress,
       vendorGST: extracted.vendorGST,
       invoiceNo: extracted.invoiceNo,
-      // Taxable amount (before GST) + CGST/SGST/IGST breakdown + combined GST + grand total,
-      // shown as separate figures on the Received Order modal instead of only the total.
-      amount: Math.max((Number(extracted.totalAmount) || 0) - (Number(extracted.gstAmount) || 0), 0),
-      cgstAmount: extracted.cgstAmount,
-      sgstAmount: extracted.sgstAmount,
-      igstAmount: extracted.igstAmount,
-      gstAmount: extracted.gstAmount,
-      totalAmount: extracted.totalAmount,
+      // Taxable amount (before GST) + CGST/SGST/IGST breakdown + combined GST + grand total —
+      // scoped to just THIS order's own products (see scopedToOrder above) whenever the
+      // invoice bundles extra products beyond this PO; otherwise identical to the document's
+      // own printed figures, same as before.
+      amount: scopedTaxable,
+      cgstAmount: scopedCgst,
+      sgstAmount: scopedSgst,
+      igstAmount: scopedIgst,
+      gstAmount: scopedGst,
+      totalAmount: scopedTotal,
+      // Kept so the frontend can show what was excluded when the invoice bundled other
+      // products — the raw whole-invoice grand total, unscoped.
+      scopedToOrder,
+      invoiceGrandTotal: docTotal,
       vendorMismatch,
       poVendorName,
       qtyVerification: {
@@ -666,9 +719,13 @@ exports.scanLR = asyncHandler(async (req, res, next) => {
     return next(new AppError(err.message || 'AI extraction failed', err.statusCode || 502));
   }
 
-  // The LR's freight/amount-charged line IS the bill's total amount — comes back as
-  // printed (may include a currency symbol/commas), so strip to a plain number.
-  const billTotalAmount = Number(String(extracted.freight || '').replace(/[^0-9.]/g, '')) || 0;
+  // Bill Total Amount is the LR's final payable total (freight + loading/unloading +
+  // GST etc.), NOT the bare freight line — an LR often prints freight, other charges,
+  // and GST as separate rows with the grand total at the bottom. Prefer the AI's
+  // extracted total; fall back to summing the parts if it couldn't find a total row.
+  const parseAmount = (v) => Number(String(v || '').replace(/[^0-9.]/g, '')) || 0;
+  const billTotalAmount = parseAmount(extracted.totalAmount)
+    || (parseAmount(extracted.freight) + parseAmount(extracted.otherCharges) + parseAmount(extracted.gstAmount));
 
   res.status(200).json({ success: true, data: { ...extracted, billTotalAmount } });
 });

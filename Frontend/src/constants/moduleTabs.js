@@ -36,6 +36,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'suggested', label: 'Suggested Task' },
     { key: 'pendingRemaining', label: 'Pending Remaining Qty' },
     { key: 'timeconfig', label: 'Time Management' },
+    { key: 'task_performance', label: 'Performance Report' },
   ],
   'Dispatch Team': [
     { key: 'dispatch', label: 'Dispatch Orders' },
@@ -94,6 +95,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'auditor_tax', label: 'Auditor Tax Report' },
     { key: 'emergency_approvals', label: 'Approval Report' },
     { key: 'switch_report', label: 'Switch Report' },
+    { key: 'task_performance', label: 'Task Management Performance' },
   ],
   Settings: [
     { key: 'general', label: 'General' },

@@ -21,6 +21,7 @@ router.get('/forwarding-courier', ctrl.getForwardingCourierReport);
 router.get('/transportation-charge', ctrl.getTransportationChargeReport);
 router.get('/my-performance', ctrl.getMyPerformance);
 router.get('/performance', ctrl.getPerformance);
+router.get('/task-performance', ctrl.getTaskPerformanceReport);
 router.get('/emergency-approvals', ctrl.getEmergencyApprovalsReport);
 router.get('/switches', ctrl.getSwitchReport);
 

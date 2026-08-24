@@ -1,4 +1,5 @@
 const Order = require('../../models/Order');
+const Lead = require('../../models/Lead');
 const StickerRequest = require('../../models/StickerRequest');
 const Task = require('../../models/Task');
 const User = require('../../models/User');
@@ -8,8 +9,10 @@ const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const MaterialStock = require('../../models/MaterialStock');
 const { notifyRoles } = require('../../utils/notify');
 const { ROLE_TO_STICKER_TYPE } = require('../../utils/alertConfigQueries');
+const { findHotelMaterialStock } = require('../../utils/materialStockMatch');
 const { sendMessage } = require('../../services/whatsAppService');
 const { computeTaskEstimate } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
@@ -78,8 +81,47 @@ exports.getOrders = asyncHandler(async (req, res) => {
     o.paymentStatus = await resolveOrderPaymentStatus(o._id).catch(() => 'Pending');
   }));
 
+  await backfillLogoUrlByHotelName(orders);
+
   res.status(200).json({ success: true, total, page, data: orders });
 });
+
+// A hotel's logo is only ever captured once, on whichever Lead happened to have it
+// uploaded (or via the "Old Hotel" lookup at lead-creation time, sales.controller.js
+// getHotelByName). A repeat hotel that gets a fresh Lead/Order created WITHOUT going
+// through that lookup (e.g. picked "New Hotel" again, or its own leadId never had the
+// upload) still has no logo of its own, so o.logoUrl and o.leadId?.hotelLogoUrl are
+// both empty even though the hotel's logo already exists on another Lead — leaving
+// the vendor tabs' (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other) Logo column
+// blank for no real reason. Backfill from the most recent Lead sharing that hotel
+// name so any order for a hotel whose logo is on record anywhere shows it.
+async function backfillLogoUrlByHotelName(orders) {
+  const missingNames = [...new Set(
+    orders
+      .filter((o) => !o.logoUrl && !o.leadId?.hotelLogoUrl)
+      .map((o) => (o.hotelName || o.clientName || '').trim())
+      .filter(Boolean)
+  )];
+  if (!missingNames.length) return;
+  const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const fallbackLeads = await Lead.find({
+    hotelName: { $in: missingNames.map((n) => new RegExp(`^${escapeRegex(n)}$`, 'i')) },
+    hotelLogoUrl: { $exists: true, $ne: '' },
+    deletedAt: null,
+  }).sort('-createdAt').select('hotelName hotelLogoUrl').lean();
+  const logoByHotel = new Map();
+  for (const l of fallbackLeads) {
+    const key = (l.hotelName || '').trim().toLowerCase();
+    if (key && !logoByHotel.has(key)) logoByHotel.set(key, l.hotelLogoUrl);
+  }
+  if (!logoByHotel.size) return;
+  orders.forEach((o) => {
+    if (o.logoUrl || o.leadId?.hotelLogoUrl) return;
+    const key = (o.hotelName || o.clientName || '').trim().toLowerCase();
+    const fallback = logoByHotel.get(key);
+    if (fallback) o.logoUrl = fallback;
+  });
+}
 
 exports.getTodaysOrders = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);
@@ -485,6 +527,26 @@ exports.createStickerRequest = asyncHandler(async (req, res) => {
     message: `${sticker.stickerType || 'Sticker'} request for "${sticker.product || 'product'}" pending approval`,
     link: '/operations',
   }).catch(() => {});
+
+  // This hotel may already have this exact packing material sitting in Inventory >
+  // Material Stocks from an earlier order (e.g. pre-printed boxes) — flag it so the
+  // design team can reuse existing stock instead of starting a fresh print run.
+  if (sticker.hotelName) {
+    const stocks = await MaterialStock.find().select('packingMaterial size stockCount hotelName').lean();
+    const matches = findHotelMaterialStock(sticker.hotelName, sticker.stickerType, stocks);
+    if (matches.length) {
+      const summary = matches.map((m) => `${m.packingMaterial}${m.size ? ` (${m.size})` : ''}: ${m.stockCount} in stock`).join(', ');
+      notifyRoles({
+        modules: ['Operations', 'Sales Team'],
+        userIds: vendorId ? [vendorId] : [],
+        type: 'material_stock',
+        title: 'Existing Material Stock Available',
+        message: `${sticker.hotelName} already has ${sticker.stickerType} material in Inventory — ${summary}. Check Material Stocks before starting a new design/print run.`,
+        link: '/inventory',
+      }).catch(() => {});
+    }
+  }
+
   res.status(201).json({ success: true, data: sticker });
 });
 

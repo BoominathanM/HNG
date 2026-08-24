@@ -881,7 +881,7 @@ export const apiSlice = createApi({
       invalidatesTags: ['Tasks'],
     }),
     reassignTask: builder.mutation({
-      query: ({ id, assignedTo }) => ({ url: `/tasks/${id}/reassign`, method: 'patch', data: { assignedTo } }),
+      query: ({ id, assignedTo, fromAssignedTo }) => ({ url: `/tasks/${id}/reassign`, method: 'patch', data: { assignedTo, ...(fromAssignedTo ? { fromAssignedTo } : {}) } }),
       invalidatesTags: ['Tasks'],
     }),
     approveEmergency: builder.mutation({
@@ -1266,6 +1266,10 @@ export const apiSlice = createApi({
     }),
     getPerformance: builder.query({
       query: (params) => ({ url: '/reports/performance', params }),
+      providesTags: ['Reports'],
+    }),
+    getTaskPerformanceReport: builder.query({
+      query: (params) => ({ url: '/reports/task-performance', params }),
       providesTags: ['Reports'],
     }),
     getEmergencyApprovalsReport: builder.query({
@@ -1719,6 +1723,7 @@ export const {
   useGetTransportationChargeReportQuery,
   useGetMyPerformanceQuery,
   useGetPerformanceQuery,
+  useGetTaskPerformanceReportQuery,
   useGetEmergencyApprovalsReportQuery,
   useGetSwitchReportQuery,
   useUploadFilesMutation,

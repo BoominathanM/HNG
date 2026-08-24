@@ -2663,10 +2663,19 @@ export default function Sales() {
       const newSubtotal = editedProds.reduce((s, p) => s + p.qty * p.rate, 0);
       const newGstAmount = editedProds.reduce((s, p) => s + p.qty * p.rate * (p.gst / 100), 0);
       const computedTotal = r2(newSubtotal + newGstAmount);
-      // Kit-aware grand total so the balance/amount-to-pay accounts for kitPrice × overallQty + forwarding
+      // Kit-aware grand total so the balance/amount-to-pay accounts for kitPrice × overallQty + forwarding.
+      // Must also carry the EDITED kitOrders/kitPrice/kitOverallQty/forwardingCharge (mirroring the same
+      // fields `updated.kitOrders` below persists) — otherwise editing a kit's price/qty on the order
+      // form recomputes the live preview correctly but saves a totalAmount still based on the pre-edit
+      // kit data, so the stored Grand Total silently disagrees with what was just edited.
       const kitAwareTotal = r2(computeRecordGrandTotal({
         ...orderEditTarget,
         products: editedProds.length > 0 ? editedProds : orderEditTarget.products,
+        kitOrders: vals.kitOrders?.length > 0 ? vals.kitOrders : (editStore.kitOrders?.length > 0 ? editStore.kitOrders : orderEditTarget.kitOrders || []),
+        kitPrice: editStore.kitPrice ?? orderEditTarget.kitPrice,
+        kitOverallQty: editStore.kitOverallQty ?? orderEditTarget.kitOverallQty,
+        forwardingCharge: vals.forwardingCharge ?? orderEditTarget.forwardingCharge,
+        forwardingChargeAmount: vals.forwardingChargeAmount ?? orderEditTarget.forwardingChargeAmount,
       }));
       const orderTotal = kitAwareTotal > 0
         ? kitAwareTotal
@@ -5054,7 +5063,17 @@ export default function Sales() {
     // material config tabMapping (resolved in Operations via packingMaterialTab) takes over routing.
     if (p?.sticker !== 'NO' && hay.includes('sticker')) return 'Sticker';
     if (p?.sticker === 'NO') return '';
-    return p?.logoType || 'Sticker';
+    // Nothing resolvable at all (no sticker/printing choice, no packing material, no keyword
+    // match — e.g. an Inventory item added with no Packing Config set up) — leave it
+    // unclassified rather than blindly guessing 'Sticker'. That blind guess used to get
+    // PERSISTED as the item's real logoType, which downstream readers (e.g. Task
+    // Management's Suggested Tasks, tasks.controller.js's resolveDesignType) trust at face
+    // value and would then wrongly offer a "Sticker Placing" task for a product that was
+    // never actually set up to go through the Sticker design queue. Operations' own queue
+    // routing (data.js getItemPackagingType) is unaffected either way — it already falls
+    // back an unclassified item to the Sticker tab itself as a last resort, so it still
+    // lands somewhere for production.
+    return p?.logoType || '';
   };
 
   // Build an order item, carrying the operations/packaging fields the Operations module reads.
@@ -8232,19 +8251,17 @@ export default function Sales() {
         Number(oLeadForTotal?.paidAmount || 0),
         (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0)
       );
-      const oEnrichedForBreakdown = oLeadForTotal ? {
-        ...oLeadForTotal,
+      // Base on oRecForTotal (order-preferring, same record oKitAwareTotal/oTotal above are
+      // computed from) rather than the raw lead — previously this spread ...oLeadForTotal first,
+      // so once products/kitOrders were edited directly on the order the Payment Summary card
+      // kept showing the stale lead-derived Grand Total instead of the updated one.
+      const oEnrichedForBreakdown = {
+        ...oRecForTotal,
         paymentCollection: o.paymentCollection,
         paidAmount: oEffectivePaidAmount,
-        forwardingCharge: o.forwardingCharge ?? oLeadForTotal.forwardingCharge,
-        forwardingChargeAmount: o.forwardingChargeAmount ?? oLeadForTotal.forwardingChargeAmount,
-        // Must carry the ORDER's own id so savePayEntry('order', ...) hits the right document.
-        // oLeadForTotal spreads the lead's _id/key which would cause "Order not found".
-        _id: o._id || o.key,
-        key: o.key || o._id,
-        leadId: o.leadId,
-        leadCode: o.leadCode,
-      } : { ...oRecForTotal, paidAmount: oEffectivePaidAmount };
+        forwardingCharge: o.forwardingCharge ?? oLeadForTotal?.forwardingCharge,
+        forwardingChargeAmount: o.forwardingChargeAmount ?? oLeadForTotal?.forwardingChargeAmount,
+      };
       const detailAdvance = Number(full.advancePaidAmount ?? full.advancePaid ?? base.advance ?? 0);
       // Fall back to the linked negotiation's (or quotation's) paid amount if the order has no payment data yet
       const linkedNegForDetail = negotiationsData.find(n => String(n.key) === String(base.negotiationId || full.negotiationId?._id || full.negotiationId));

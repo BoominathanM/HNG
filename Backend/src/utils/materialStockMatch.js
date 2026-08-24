@@ -12,6 +12,7 @@ function materialStockCategoryOf(pmRaw) {
   if (p.includes('butter') || p.includes('paper')) return 'butterPaper';
   if (p.includes('ziplock') || p.includes('frosted') || p.includes('pouch')) return 'ziplock';
   if (p.includes('box')) return 'box';
+  if (p.includes('wooden') || p.includes('wood')) return 'woodenBrush';
   return '';
 }
 
@@ -61,4 +62,38 @@ function resolveMaterialStock(it, stocks) {
   return null;
 }
 
-module.exports = { materialStockCategoryOf, normalizeSize, nameCandidatesOf, resolveMaterialStock };
+// Which packaging-design stickerType (Operations > Box/Ziplock/Butter Paper/Wooden
+// Brush/Other) each Material Stock "category" corresponds to. 'Other' has no keyword
+// of its own — it's whatever doesn't fall into a named category (mirrors how the
+// Operations "Other" packaging tab is explicit-only, never a keyword fallback).
+const STICKER_TYPE_TO_CATEGORY = {
+  Box: 'box',
+  'Frosted Ziplock': 'ziplock',
+  'Butter Paper': 'butterPaper',
+  'Wooden Brush': 'woodenBrush',
+  Other: 'other',
+};
+
+// A hotel commonly has its own pre-printed/pre-designed packing material sitting in
+// Material Stock (scoped by hotelName) from an earlier order. When a NEW design/print
+// request comes in for that same hotel + packing material, this surfaces any such
+// existing stock so the design team can reuse it instead of starting a fresh print run.
+// Independent of resolveMaterialStock() above (which is hotel-agnostic, used for the
+// generic sticker-material deduction/readiness flows) — this one is hotel-scoped and
+// includes Ziplock, since a hotel's own stocked ziplocks are exactly what this check
+// is meant to catch.
+function findHotelMaterialStock(hotelName, stickerType, stocks) {
+  const category = STICKER_TYPE_TO_CATEGORY[stickerType];
+  const hotel = String(hotelName || '').trim().toLowerCase();
+  if (!hotel || !category || !Array.isArray(stocks)) return [];
+
+  const hotelStocks = stocks.filter((s) => String(s.hotelName || '').trim().toLowerCase() === hotel
+    && Number(s.stockCount || 0) > 0);
+
+  if (category === 'other') return hotelStocks.filter((s) => !materialStockCategoryOf(s.packingMaterial));
+  return hotelStocks.filter((s) => materialStockCategoryOf(s.packingMaterial) === category);
+}
+
+module.exports = {
+  materialStockCategoryOf, normalizeSize, nameCandidatesOf, resolveMaterialStock, findHotelMaterialStock,
+};

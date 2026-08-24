@@ -408,14 +408,17 @@ const LORRY_RECEIPT_EXTRACTION_PROMPT = `You are a data-entry assistant extracti
 - fromCity: the origin/consignor city
 - toCity: the destination/consignee city
 - weight: the total weight as printed (include unit, e.g. "45.5 Kg")
-- freight: the freight/amount charged, as printed (include currency symbol if shown)
+- freight: ONLY the freight/carriage line item, as printed (include currency symbol if shown) — do NOT include loading, unloading, hamali, GST, or any other charge line, and do NOT use the grand total for this field
+- otherCharges: any charges printed separately from freight — loading, unloading, hamali, handling, etc. — summed together as a plain number (e.g. "78"), or "" if none are printed
+- gstAmount: the GST/tax amount printed, as a plain number (e.g. "43"), or "" if none is printed
+- totalAmount: the FINAL total/grand-total amount payable for this LR, as a plain number (e.g. "901"). Look for the bottom-most summary row on the charges block, usually labeled "Total", "Grand Total", "Net Amount", "To Pay", "Topay", or "Amount Payable" — this is normally freight + otherCharges + gstAmount added together, and is almost always a larger number than freight alone. If no such total row is printed anywhere on the document, compute it yourself as freight + otherCharges + gstAmount. Never leave this blank if freight is present — at minimum it should equal the freight amount.
 - packages: the number of packages/boxes as printed (plain number as a string, e.g. "30")
 - estimatedDelivery: the estimated delivery date, formatted YYYY-MM-DD if present, else ""
 - trackingUrl: a web tracking URL/link printed on the document (e.g. next to a QR code or as "Track your shipment at ..."), else ""
 
 Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
-{ "lrNumber": "", "lrDate": "", "transportName": "", "fromCity": "", "toCity": "", "weight": "", "freight": "", "packages": "", "estimatedDelivery": "", "trackingUrl": "" }
-If a field cannot be determined from the document, use an empty string for it — do not guess or invent data.`;
+{ "lrNumber": "", "lrDate": "", "transportName": "", "fromCity": "", "toCity": "", "weight": "", "freight": "", "otherCharges": "", "gstAmount": "", "totalAmount": "", "packages": "", "estimatedDelivery": "", "trackingUrl": "" }
+If a field cannot be determined from the document, use an empty string for it — do not guess or invent data (totalAmount is the one exception: compute it from the other charge fields if it isn't printed directly).`;
 
 // file: { url, originalName, mimetype } — Cloudinary-hosted, already uploaded by multer.
 async function extractLorryReceiptFields({ apiKey, model, file }) {
@@ -465,6 +468,9 @@ async function extractLorryReceiptFields({ apiKey, model, file }) {
     toCity: parsed.toCity || '',
     weight: parsed.weight || '',
     freight: parsed.freight || '',
+    otherCharges: parsed.otherCharges || '',
+    gstAmount: parsed.gstAmount || '',
+    totalAmount: parsed.totalAmount || '',
     packages: parsed.packages || '',
     estimatedDelivery: parsed.estimatedDelivery || '',
     trackingUrl: parsed.trackingUrl || '',

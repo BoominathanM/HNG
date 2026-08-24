@@ -1217,6 +1217,100 @@ exports.getPerformance = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: { leaderboard, monthlyData } });
 });
 
+// ─── TASK MANAGEMENT PERFORMANCE REPORT ───────────────────────────────────────
+// Per-user (User.department === 'Task Management') completion analytics — completion
+// rate, on-time rate (Task.completedAt vs Task.dueDate), avg auto-rating and avg
+// efficiency% (both computed on Done by tasks.controller.updateTaskStatus, see
+// utils/taskTime.computeRating) — ranked into a leaderboard. Mirrors getPerformance's
+// per-user aggregation shape (leaderboard + monthlyData) so the frontend can reuse the
+// same KPI-cards + leaderboard-table + chart layout for a different department.
+exports.getTaskPerformanceReport = asyncHandler(async (req, res) => {
+  // completedAt drives "how did they perform in this window" (mirrors getPerformance's
+  // invoiceDate filter); createdAt drives "how much work landed on them in this window"
+  // — a task can be assigned in-range but still open, or completed in-range but assigned
+  // earlier, so these are deliberately two separate filters rather than one shared one.
+  const completedDateFilter = buildDateFilterOn(req, 'completedAt');
+  const assignedDateFilter = buildDateFilterOn(req, 'createdAt');
+  const taskUsers = await User.find({ department: 'Task Management', deletedAt: null });
+
+  const monthlyByUser = {};
+
+  const leaderboard = await Promise.all(taskUsers.map(async (u, idx) => {
+    const userMatch = { $or: [{ assignedTo: u._id }, { assignedToMany: u._id }] };
+
+    const [assignedTasks, doneTasks] = await Promise.all([
+      Task.find({ ...userMatch, deletedAt: null, ...assignedDateFilter }).select('status'),
+      Task.find({ ...userMatch, status: 'Done', deletedAt: null, ...completedDateFilter })
+        .select('completedAt dueDate rating efficiencyPct isEmergency'),
+    ]);
+
+    const totalAssigned = assignedTasks.length;
+    const pending = assignedTasks.filter((t) => t.status !== 'Done').length;
+    const completed = doneTasks.length;
+
+    const withDueDate = doneTasks.filter((t) => t.dueDate);
+    const onTime = withDueDate.filter((t) => new Date(t.completedAt) <= new Date(t.dueDate)).length;
+    const late = withDueDate.length - onTime;
+
+    const ratedTasks = doneTasks.filter((t) => typeof t.rating === 'number');
+    const avgRating = ratedTasks.length
+      ? r2(ratedTasks.reduce((s, t) => s + t.rating, 0) / ratedTasks.length)
+      : 0;
+
+    const effTasks = doneTasks.filter((t) => typeof t.efficiencyPct === 'number');
+    const avgEfficiencyPct = effTasks.length
+      ? Math.round(effTasks.reduce((s, t) => s + t.efficiencyPct, 0) / effTasks.length)
+      : 0;
+
+    const emergencyHandled = doneTasks.filter((t) => t.isEmergency).length;
+
+    const completionRate = totalAssigned > 0 ? Math.round((completed / totalAssigned) * 100) : 0;
+    const onTimeRate = withDueDate.length > 0 ? Math.round((onTime / withDueDate.length) * 100) : 0;
+    const ratingPct = Math.round((avgRating / 5) * 100);
+    const efficiencyScorePct = Math.min(avgEfficiencyPct, 100);
+
+    // Equal-weighted composite (completion rate / on-time rate / rating / efficiency) so
+    // ranking rewards reliability and quality, not just raw task volume.
+    const score = completed > 0
+      ? Math.round((completionRate + onTimeRate + ratingPct + efficiencyScorePct) / 4)
+      : 0;
+
+    doneTasks.forEach((t) => {
+      const month = t.completedAt?.toLocaleString('default', { month: 'short' });
+      if (!month) return;
+      if (!monthlyByUser[month]) monthlyByUser[month] = { month };
+      monthlyByUser[month][u.fullName] = (monthlyByUser[month][u.fullName] || 0) + 1;
+    });
+
+    return {
+      key: String(u._id),
+      id: u._id,
+      name: u.fullName,
+      role: u.role,
+      totalAssigned,
+      pending,
+      completed,
+      onTime,
+      late,
+      completionRate,
+      onTimeRate,
+      avgRating,
+      avgEfficiencyPct,
+      emergencyHandled,
+      score,
+      color: PERFORMANCE_PALETTE[idx % PERFORMANCE_PALETTE.length],
+    };
+  }));
+
+  leaderboard.sort((a, b) => b.score - a.score || b.completed - a.completed);
+  leaderboard.forEach((row, idx) => { row.rank = idx + 1; });
+
+  const monthlyData = Object.values(monthlyByUser)
+    .sort((a, b) => MONTH_ORDER.indexOf(a.month) - MONTH_ORDER.indexOf(b.month));
+
+  res.status(200).json({ success: true, data: { leaderboard, monthlyData } });
+});
+
 // ─── EMERGENCY / PAYMENT / DESIGN / DISPATCH APPROVALS REPORT ─────────────────
 // There is no single shared "Approval" collection in this app — every approval-with-reason
 // workflow bolts its own fields onto its own model:

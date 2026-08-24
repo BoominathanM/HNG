@@ -54,6 +54,7 @@ import {
   useUpdateMaterialStockMutation,
   useDeleteMaterialStockMutation,
   useUploadMaterialStockInvoiceMutation,
+  useGetUsersQuery,
 } from '../../store/api/apiSlice';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
 import PhoneInput from '../../components/common/PhoneInput';
@@ -280,6 +281,7 @@ export default function Inventory() {
   const { data: invData, isLoading: invLoading } = useGetItemsQuery({ limit: 1000 });
   const { data: approvalsData } = useGetStockApprovalsQuery();
   const { data: suppliersData } = useGetVendorsQuery({ type: 'raw_material' });
+  const { data: inventoryUsersData } = useGetUsersQuery({ limit: 1000 });
   const [createItemMutation] = useCreateItemMutation();
   const [updateItemMutation] = useUpdateItemMutation();
   const [fillStockMutation] = useFillStockMutation();
@@ -291,6 +293,11 @@ export default function Inventory() {
   const [submitStockCheck] = useSubmitStockCheckMutation();
 
   const suppliers = useMemo(() => suppliersData?.data || [], [suppliersData]);
+  // Printing Suppliers: Users with department 'Vendors' (Sticker/Box/Ziplock/Butter Paper/
+  // Wooden Brush/Other) — same population shown on the Vendors & Suppliers > Printing Suppliers tab.
+  const printingSuppliers = useMemo(() => (inventoryUsersData?.data || [])
+    .filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(u.role))
+    .map(u => ({ name: u.fullName, role: u.role })), [inventoryUsersData]);
   const { data: customersData } = useGetVendorsQuery({ type: 'customer' });
   const [createVendorMutation] = useCreateVendorMutation();
   const vendorsList = useMemo(() => (customersData?.data || []).map((v) => ({
@@ -739,17 +746,18 @@ export default function Inventory() {
     });
   }, [materialStocksList, materialStockSearch, materialStockDateRange]);
 
-  // Vendor dropdown for the "Add Purchase" (Material Stock) modal — same raw-material
-  // vendor list used on the Inventory Add Item form. Keeps the currently-edited record's
-  // vendor selectable even if it doesn't match an existing vendor name (legacy free-text entries).
+  // Vendor dropdown for the "Add Purchase" (Material Stock) modal — Material Stocks tracks
+  // packing material (Box/Ziplock/Sticker/etc.) purchases, so the dropdown lists Printing
+  // Suppliers rather than raw-material vendors. Keeps the currently-edited record's vendor
+  // selectable even if it doesn't match an existing supplier name (legacy free-text entries).
   const materialStockVendorOptions = useMemo(() => {
-    const opts = suppliers.map((v) => ({ label: v.name, value: v.name }));
+    const opts = printingSuppliers.map((v) => ({ label: `${v.name} (${v.role})`, value: v.name }));
     const currentVendor = editingMaterialStock?.vendor;
     if (currentVendor && !opts.some((o) => o.value === currentVendor)) {
       opts.push({ label: currentVendor, value: currentVendor });
     }
     return opts;
-  }, [suppliers, editingMaterialStock]);
+  }, [printingSuppliers, editingMaterialStock]);
 
   const openMaterialStockModal = (item = null) => {
     if (!requireAccess(item ? 'edit' : 'add')) return;
@@ -2378,7 +2386,7 @@ export default function Inventory() {
               placeholder="Select vendor / supplier"
               style={{ borderRadius: 8 }}
               options={materialStockVendorOptions}
-              notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No vendors yet — add one in Vendors & Suppliers</span>}
+              notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No printing suppliers yet — add one in Vendors & Suppliers</span>}
             />
           </Form.Item>
           <Form.Item label="Hotel Name" name="hotelName">

@@ -49,10 +49,21 @@ const authSlice = createSlice({
         user.tabAccess = Object.fromEntries(user.tabAccess);
       }
       state.user = user;
+      // Preserve whatever token/refreshToken currently live in localStorage instead of
+      // writing back state.token/state.refreshToken: this reducer runs on every getMe
+      // refetch (including on window refocus, see apiSlice's refetchOnFocus), but
+      // axios.js's silent token-refresh rotates tokens by writing straight to
+      // localStorage without dispatching to Redux. Using the in-memory (stale) Redux
+      // tokens here would clobber a rotation that already landed in localStorage with
+      // an old, already-invalidated refresh token — causing a spurious forced logout
+      // the next time it's used.
+      let current = {};
+      try { current = JSON.parse(localStorage.getItem('hng_auth') || '{}'); } catch {}
+      state.token = current.token ?? state.token;
+      state.refreshToken = current.refreshToken ?? state.refreshToken;
       localStorage.setItem('hng_auth', JSON.stringify({
+        ...current,
         user,
-        token: state.token,
-        refreshToken: state.refreshToken,
         isAuthenticated: state.isAuthenticated,
       }));
     },

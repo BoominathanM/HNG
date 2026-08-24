@@ -9,7 +9,7 @@ import {
   MenuFoldOutlined, MenuUnfoldOutlined,
   DollarOutlined, WarningOutlined, CarOutlined, CheckCircleOutlined,
   ShoppingCartOutlined, ExclamationCircleOutlined, BoxPlotOutlined,
-  CheckOutlined, DeleteOutlined, ClearOutlined,
+  CheckOutlined, DeleteOutlined, ClearOutlined, ContainerOutlined,
 } from '@ant-design/icons';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
@@ -30,6 +30,7 @@ const { Text, Title } = Typography;
 const TYPE_META = {
   payment_due:  { icon: <DollarOutlined />,          color: '#6b1240', label: 'Payment' },
   low_stock:    { icon: <WarningOutlined />,          color: '#C94F8A', label: 'Stock' },
+  material_stock: { icon: <ContainerOutlined />,      color: '#0f766e', label: 'Material Stock' },
   dispatch:     { icon: <CarOutlined />,              color: '#8a1652', label: 'Dispatch' },
   task:         { icon: <CheckCircleOutlined />,      color: '#D85C9E', label: 'Task' },
   complaint:    { icon: <ExclamationCircleOutlined />,color: '#b85c00', label: 'Complaint' },

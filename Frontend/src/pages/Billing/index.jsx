@@ -495,7 +495,16 @@ export default function Billing() {
       : (q.status || 'Unpaid');
     return {
       key: q._id,
-      orderId: linkedOrder?._id,
+      // Prefer the backend-accurate resolution (matches by quotationId first, then leadId,
+      // newest wins — see resolveQuotationOrder) so the order id this row carries into
+      // Convert-to-Invoice is the SAME order convertQuotationToInvoice will link the invoice
+      // to. `linkedOrder` (orderByLead) is display-only "last order seen for this lead" and
+      // can silently disagree when a lead has more than one order — that mismatch was leaving
+      // the created Invoice's orderId pointing at the wrong order, so Dispatch's
+      // orderId-filtered invoice lookup for the REAL order came back empty even though the
+      // invoice was visible in Billing (Billing's own display resolves orderId the same
+      // lead-based way, masking the mismatch).
+      orderId: editOrder?._id || linkedOrder?._id,
       docType: 'Quotation',
       // Edit Pricing source rows + audit log (see editHasOrderLink above) — always parallel to
       // whatever the backend's updateQuotationPricing will load for this exact quotation.
