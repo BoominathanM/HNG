@@ -1596,6 +1596,10 @@ export default function OperationDetail() {
       key: 'product',
       render: (_, record) => {
         const name = record.itemName || record.name || record.product;
+        // Kit items (Personalized Kit / Separate Kit rows) already carry their kit name in the
+        // "Kit / Spec" column — showing the individual component's name here reads as if the
+        // task were about that single product instead of the whole kit, so leave it blank.
+        const isKitItem = !!(record.kitName || record.kitType);
         const isEmergencyProduct = record.isEmergencyProduct;
         const isEmergencyGated = record.isEmergencyGated;
         const emergencyDate = isEmergencyProduct ? emergencyProductMap[(name || '').toLowerCase()]?.date : null;
@@ -1603,7 +1607,7 @@ export default function OperationDetail() {
           <Space direction="vertical" size={2} style={{ gap: 2 }}>
             <Space size={6}>
               {isEmergencyProduct && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
-              <Text strong style={isEmergencyProduct ? { color: '#ff4d4f' } : {}}>{name || '-'}</Text>
+              <Text strong style={isEmergencyProduct ? { color: '#ff4d4f' } : {}}>{isKitItem ? '' : (name || '-')}</Text>
             </Space>
             {isEmergencyProduct && emergencyDate && (
               <Space size={4}>
