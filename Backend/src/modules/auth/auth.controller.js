@@ -30,8 +30,11 @@ const REFRESH_TOKEN_BUFFER_SECONDS = 15 * 60;
 const signToken = (id, rememberMe) =>
   jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: sessionTTLSeconds(rememberMe) });
 
+// rememberMe travels inside the refresh token itself so /auth/refresh can mint
+// a new pair from the verified JWT alone, with no DB read before the write —
+// that read-then-write gap was the other half of the lost-update race below.
 const signRefreshToken = (id, rememberMe) =>
-  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, {
+  jwt.sign({ id, rememberMe }, process.env.JWT_REFRESH_SECRET, {
     expiresIn: sessionTTLSeconds(rememberMe) + REFRESH_TOKEN_BUFFER_SECONDS,
   });
 
@@ -47,13 +50,16 @@ const sendTokens = async (user, statusCode, res, rememberMe = user.rememberMe ||
   // moment can both call /auth/refresh with the same (still-current) token —
   // the loser would otherwise be hard-rejected and force-logged-out for simply
   // losing a race, not because its session was actually invalid.
+  const update = { refreshToken, rememberMe };
   if (user.refreshToken) {
-    user.previousRefreshToken = user.refreshToken;
-    user.previousRefreshTokenExpires = new Date(Date.now() + REFRESH_GRACE_MS);
+    update.previousRefreshToken = user.refreshToken;
+    update.previousRefreshTokenExpires = new Date(Date.now() + REFRESH_GRACE_MS);
   }
-  user.refreshToken = refreshToken;
-  user.rememberMe = rememberMe;
-  await user.save({ validateBeforeSave: false });
+  // findByIdAndUpdate instead of user.save(): an atomic write, not a
+  // read-then-write on the in-memory `user` doc, so this can't lose an update
+  // to a concurrent write on the same document (see exports.refresh for the
+  // case that actually races: two /auth/refresh calls at once).
+  await User.findByIdAndUpdate(user._id, update, { runValidators: false });
 
   // flattenMaps: true converts Mongoose Map fields (permissions, tabAccess) to plain JS objects
   // so they serialize correctly in JSON (without it, Maps become "{}")
@@ -82,6 +88,28 @@ exports.login = asyncHandler(async (req, res, next) => {
   await sendTokens(user, 200, res, !!rememberMe);
 });
 
+// This used to be: read the user, decide in JS whether `refreshToken` is
+// current, then save() a rotated token. That read-then-write gap is a classic
+// lost-update race — when two requests (two open tabs, or a proactive refresh
+// racing a reactive 401-triggered one) present the same still-current token at
+// nearly the same instant, BOTH reads see it as current, BOTH mint a fresh
+// pair and get a 200, but only one save() actually persists. The other tab
+// walks away holding tokens that were never written to the DB, and the next
+// time IT tries to refresh, the token matches neither the current nor the
+// previous slot, so it gets hard-rejected and force-logged-out — even though
+// that tab was open and active the whole time. That's the exact "logout while
+// actively clicking/navigating, never while idle" symptom this fixed.
+//
+// The fix: make the rotation itself the atomicity boundary via a single
+// compare-and-swap write (findOneAndUpdate filtered on the CURRENT
+// refreshToken value). MongoDB serializes concurrent writes to one document,
+// so of two requests presenting the same current token, exactly one matches
+// and rotates; the other's filter is stale by the time its write runs and
+// simply fails to match — a clean "no-op", not a lost update. The loser then
+// falls back to a read-only check against the (now up-to-date)
+// previousRefreshToken grace slot and, if it lands within the grace window,
+// is handed the SAME token pair the winner already established — never a
+// second independent rotation, which is what would clobber the winner's pair.
 exports.refresh = asyncHandler(async (req, res, next) => {
   const { refreshToken } = req.body;
   if (!refreshToken) return next(new AppError('Refresh token required', 400));
@@ -93,20 +121,61 @@ exports.refresh = asyncHandler(async (req, res, next) => {
     return next(new AppError('Invalid or expired refresh token', 401));
   }
 
-  const user = await User.findById(decoded.id)
+  const rememberMe = !!decoded.rememberMe;
+  const newToken = signToken(decoded.id, rememberMe);
+  const newRefreshToken = signRefreshToken(decoded.id, rememberMe);
+
+  const rotated = await User.findOneAndUpdate(
+    { _id: decoded.id, refreshToken },
+    {
+      $set: {
+        refreshToken: newRefreshToken,
+        previousRefreshToken: refreshToken,
+        previousRefreshTokenExpires: new Date(Date.now() + REFRESH_GRACE_MS),
+        rememberMe,
+      },
+    },
+    { new: true }
+  );
+
+  if (rotated) {
+    const userObj = rotated.toObject({ flattenMaps: true });
+    delete userObj.password;
+    delete userObj.refreshToken;
+    return res.status(200).json({
+      success: true,
+      token: newToken,
+      refreshToken: newRefreshToken,
+      data: { user: userObj },
+    });
+  }
+
+  // Lost the CAS above — someone else just rotated this exact token (the CAS
+  // filter already proved `refreshToken` wasn't current at write time). If
+  // we're still inside that rotation's grace window, hand back the pair it
+  // already established (a read, not another rotation) instead of
+  // hard-rejecting a session that is, in fact, still perfectly valid.
+  const current = await User.findById(decoded.id)
     .select('+refreshToken +rememberMe +previousRefreshToken +previousRefreshTokenExpires');
 
-  const isCurrent = user && user.refreshToken === refreshToken;
   const isRecentlyRotated =
-    user && !isCurrent &&
-    user.previousRefreshToken === refreshToken &&
-    user.previousRefreshTokenExpires && user.previousRefreshTokenExpires > new Date();
+    current &&
+    current.previousRefreshToken === refreshToken &&
+    current.previousRefreshTokenExpires && current.previousRefreshTokenExpires > new Date();
 
-  if (!user || (!isCurrent && !isRecentlyRotated)) {
+  if (!isRecentlyRotated) {
     return next(new AppError('Invalid refresh token', 401));
   }
 
-  await sendTokens(user, 200, res, user.rememberMe);
+  const userObj = current.toObject({ flattenMaps: true });
+  delete userObj.password;
+  delete userObj.refreshToken;
+  res.status(200).json({
+    success: true,
+    token: signToken(current._id, current.rememberMe),
+    refreshToken: current.refreshToken,
+    data: { user: userObj },
+  });
 });
 
 exports.logout = asyncHandler(async (req, res) => {

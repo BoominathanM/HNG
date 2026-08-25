@@ -78,6 +78,7 @@ import {
   buildProductionQueues,
   canAssignTaskFromChecks,
   FLOW_STAGES,
+  formatSizeWithUnit,
   getCheckStateMap,
   getFlowStep,
   getProgressFromChecks,
@@ -1638,7 +1639,7 @@ export default function OperationDetail() {
 
         // ── SEPARATE PRODUCT (no kit) ─────────────────────────────────────────
         if (!kitName) {
-          const pSize     = record.size || '';
+          const pSize     = formatSizeWithUnit(record.size, record.unit, record.itemName || record.name || record.product) || '';
           const pPacking  = record.packingMaterial || record.packaging || '';
           const pMat      = record.materialCategory || record.material || '';
           const pBrand    = record.brand || '';

@@ -1,3 +1,5 @@
+import { getProductSizeUnit } from '../../utils/productSizeUnit';
+
 // ─── Item normalization helpers ────────────────────────────────────────────────
 // Exported so both Operations/index.jsx and OperationDetail.jsx can use them.
 
@@ -74,6 +76,27 @@ export const SIZE_MAP = {
   Conditioner: '2cm x 3cm',
   'Shower Gel': '2cm x 3cm',
   'Dental Kit': '3cm x 2cm',
+};
+
+// Inventory "filled" items store their size as a bare number (e.g. "15") with the actual
+// unit held separately on item.unit (ml/gram/Litres/Kg) — see Backend/src/models/InventoryItem.js.
+// Sizes that already carry their own unit text (e.g. "2.5cm x 2.5cm") are left untouched.
+// Shared by index.jsx (queue tables) and OperationDetail.jsx (product spec column) so a
+// product's size reads with its unit everywhere in Operations, not just in the queue table.
+export const SIZE_UNIT_LABELS = { ml: 'ml', gram: 'g', g: 'g', Litres: 'L', Kg: 'Kg' };
+
+// item.unit on an order line is almost always the STOCK-COUNTING unit (Pcs/Box/Pack — see
+// InventoryItem.unit, default 'Pcs'), not the physical size's unit — so it very rarely matches
+// SIZE_UNIT_LABELS above. The size's actual unit (gram/ml) is never stored per-item at all; it
+// only ever exists as the STATIC label on that product type's "Sizes (…)" spec field (Sizes
+// (gram) for soap/paste, Sizes (ml) for shampoo/moisturizer/shower gel). getProductSizeUnit
+// resolves that same definition (shared with Inventory/Sales via utils/productSizeUnit.js) by
+// product type, so Operations reads it from the single source instead of guessing on its own.
+export const formatSizeWithUnit = (size, unit, productName) => {
+  const raw = String(size ?? '').trim();
+  if (!raw || /[a-zA-Z]/.test(raw)) return raw;
+  const unitLabel = SIZE_UNIT_LABELS[unit] || getProductSizeUnit(productName);
+  return unitLabel ? `${raw}${unitLabel}` : raw;
 };
 
 export const PAYMENT_LABELS = {
@@ -590,6 +613,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             product: productName,
             qty,
             size: item.size || getDefaultSize(productName),
+            unit: item.unit || '',
             status: findSR(order.id, productName, 'Sticker')?.status || 'Pending',
             sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.7),
             verified: order.stockStatus === 'Received',
@@ -687,6 +711,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
+          unit: item.unit || '',
           status: findSR(order.id, product, 'Box', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,
@@ -803,6 +828,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
+          unit: item.unit || '',
           status: findSR(order.id, product, 'Frosted Ziplock', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
           verified: order.stockStatus === 'Received',
@@ -906,6 +932,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
+          unit: item.unit || '',
           status: findSR(order.id, product, 'Butter Paper', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.5),
           verified: order.stockStatus === 'Received',
@@ -1007,6 +1034,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
+          unit: item.unit || '',
           status: findSR(order.id, product, 'Wooden Brush', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,
@@ -1088,6 +1116,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           product,
           qty,
           size: item.size,
+          unit: item.unit || '',
           status: findSR(order.id, product, 'Other', itemCategoryOf(item))?.status || 'Pending',
           sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.65),
           verified: false,

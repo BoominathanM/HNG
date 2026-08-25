@@ -1814,9 +1814,14 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 // the actual values stored on matching inventory items.
                 const isYesNo = (fd.options || []).length === 2 && fd.options.every((o) => ['yes', 'no'].includes(String(o.value).toLowerCase()));
                 const invOpts = attrOptionsFor(fd.key);
+                // Inventory stores the raw value only (e.g. size "15"), with the unit suffix
+                // ("15g") living purely in that field's known option label (see SIZES_SOAP in
+                // Inventory/index.jsx) — so look the label up from fd.options's static list
+                // instead of echoing the bare inventory value back as its own label.
+                const fallbackLabelByValue = new Map((fd.options || []).map((o) => [String(o.value), o.label]));
                 const opts = isYesNo
                   ? fd.options
-                  : (invOpts.length ? invOpts.map((v) => ({ value: v, label: v })) : (fd.options || []));
+                  : (invOpts.length ? invOpts.map((v) => ({ value: v, label: fallbackLabelByValue.get(String(v)) ?? v })) : (fd.options || []));
                 // Sticker and Printing are mutually exclusive: picking Yes on one auto-sets the
                 // other (if this product type has one) to No, so an item never carries sticker=YES
                 // and printing=YES at once (which would otherwise leave its Ops routing ambiguous).

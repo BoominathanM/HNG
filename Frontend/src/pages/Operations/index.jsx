@@ -89,6 +89,7 @@ import {
   ORDER_CATEGORY_META,
   designerCredentials,
   FLOW_STAGES,
+  formatSizeWithUnit,
   getCheckStateMap,
   getEmergencyProductSet,
   getFlowStep,
@@ -128,17 +129,6 @@ const INVOICE_TYPE_SLUG = {
   'Butter Paper': 'butter',
   'Wooden Brush': 'wooden_brush',
   Other: 'other',
-};
-
-// Inventory "filled" items store their size as a bare number (e.g. "15") with the actual
-// unit held separately on item.unit (ml/gram/Litres/Kg) — see Backend/src/models/InventoryItem.js.
-// Sizes that already carry their own unit text (e.g. "2.5cm x 2.5cm") are left untouched.
-const SIZE_UNIT_LABELS = { ml: 'ml', gram: 'g', g: 'g', Litres: 'L', Kg: 'Kg' };
-const formatSizeWithUnit = (size, unit) => {
-  const raw = String(size ?? '').trim();
-  if (!raw || /[a-zA-Z]/.test(raw)) return raw;
-  const unitLabel = SIZE_UNIT_LABELS[unit];
-  return unitLabel ? `${raw} ${unitLabel}` : raw;
 };
 
 // Matches StickerRequest.status (Backend/src/models/StickerRequest.js) — row.status now
@@ -1057,7 +1047,7 @@ export default function Operations() {
         title: label === 'Box' ? 'Size / PVK' : 'Size',
         dataIndex: 'size',
         render: (value, record) => {
-          const display = formatSizeWithUnit(value, record.unit);
+          const display = formatSizeWithUnit(value, record.unit, record.product);
           if (record.isKitChild) return display ? <Text type="secondary" style={{ fontSize: 11 }}>{display}</Text> : <Text type="secondary">—</Text>;
           return display ? <Tag color="geekblue">{display}</Tag> : '—';
         },
@@ -1780,6 +1770,17 @@ export default function Operations() {
         const orderId = group[0].orderId;
         const order = apiOrders.find((o) => o.id === orderId);
         const isKitOrder = !!(order?.kitDisplayUnit);
+        // Per-kit size lookup: a multi-kit order's order.kitSize only ever holds ONE kit's size
+        // (the first kit saved — see Sales' newKitOrders[0]?.size), so a second/third kit in the
+        // same order showed a blank Size/PVK column here even though Sales displays each kit's
+        // own size correctly. Match by kitId (falling back to kitName for legacy rows) against
+        // order.kitOrders, same fallback chain used for displayUnit above; single-kit/legacy
+        // orders with no matching entry still fall back to order.kitSize.
+        const kitSizeFor = (kId, kName) => {
+          const kos = order?.kitOrders || [];
+          const match = kos.find((ko) => (kId && String(ko.kitId || '') === String(kId)) || (!kId && kName && (ko.kitName || ko.kitType || '') === kName));
+          return match?.size || order?.kitSize || null;
+        };
         // Group under a kit parent ONLY when items are here for KIT ASSEMBLY — i.e. the
         // order's display unit matches this tab's packaging type. When products land in this
         // tab via their own individual packingMaterialTab (not the kit display unit), show
@@ -1802,7 +1803,8 @@ export default function Operations() {
           // Non-kit, single-product, or individual-packing kit items: shown individually.
           // For kit orders with kit size, apply that size to each row.
           group.forEach((row) => {
-            const rowToShow = (isKitOrder && order?.kitSize) ? { ...row, size: order.kitSize } : row;
+            const rowKitSize = isKitOrder ? kitSizeFor(row.kitId, row.kitName) : null;
+            const rowToShow = rowKitSize ? { ...row, size: rowKitSize } : row;
             tableSource.push(rowToShow);
           });
         } else {
@@ -1858,7 +1860,7 @@ export default function Operations() {
             category: first.category,
             kitId: first.kitId || '',
             kitName: first.kitName || '',
-            size: order?.kitSize || null,
+            size: kitSizeFor(first.kitId, first.kitName),
             stickerPrinting: first.stickerPrinting,
             packagingType: first.packagingType,
             displayUnit: first.displayUnit || '',

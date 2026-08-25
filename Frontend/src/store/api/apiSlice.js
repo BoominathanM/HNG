@@ -84,6 +84,21 @@ export const apiSlice = createApi({
     }),
     changePassword: builder.mutation({
       query: (data) => ({ url: '/auth/change-password', method: 'patch', data }),
+      // Backend rotates the refresh token on password change (same as login) —
+      // without capturing it here, localStorage keeps the pre-rotation token and
+      // the next refresh (past the short grace window) gets hard-rejected,
+      // force-logging the user out for no apparent reason.
+      async onQueryStarted(_, { dispatch, queryFulfilled }) {
+        try {
+          const { data } = await queryFulfilled;
+          dispatch(setUser({
+            user: data.data?.user,
+            token: data.token,
+            refreshToken: data.refreshToken,
+          }));
+          scheduleTokenRefresh(data.token);
+        } catch {}
+      },
     }),
 
     // ── Dashboard ───────────────────────────────────────────────────────────
