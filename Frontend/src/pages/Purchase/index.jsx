@@ -636,6 +636,11 @@ export default function Purchase() {
         supplier: o.vendorId?.name || '-', vendorId: o.vendorId?._id || o.vendorId,
         item: o.itemId?.itemName || o.itemName,
         qty: o.qty, unit: o.unit, amount: o.amount,
+        // Bulk requests are consolidated into ONE PurchaseOrder (see upsertOrderForApprovedRequest)
+        // whose top-level itemId/itemName/qty/unit only ever mirror the FIRST product — the real
+        // per-product breakdown lives in `items[]`. Only exposed here when there's more than one
+        // product, so single-item orders keep rendering exactly as before.
+        items: (o.items && o.items.length > 1) ? o.items.map((it) => ({ itemName: it.itemName, qty: it.qty, unit: it.unit, amount: it.amount })) : null,
         lrNumber: o.lrNumber, trackingUrl: o.trackingUrl,
         expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
         lrCopyFile: o.lrFileUrl, paymentStatus: o.paymentStatus,
@@ -2473,6 +2478,16 @@ export default function Purchase() {
                                 : statuses.some(s => s === 'Rejected') ? 'Rejected'
                                 : statuses.some(s => s === 'Modification') ? 'Modification'
                                 : 'Pending';
+                              // The group row's Amount/GST are the batch TOTAL — sum every
+                              // product's own amount, not just the first product's — otherwise
+                              // the header row shows one product's amount instead of the total
+                              // (e.g. Loofahs' ₹787.5 instead of ₹1312.5 for the whole batch).
+                              const hasAnyAmount = batchItems.some(b => b.amount != null);
+                              const totalAmount = hasAnyAmount ? batchItems.reduce((s, b) => s + (b.amount || 0), 0) : null;
+                              // gstAmount is saved as one whole-batch value repeated on every
+                              // child (see handleBatchRowSave), not a per-product split, so the
+                              // group total is just that shared value, not a sum.
+                              const totalGst = batchItems.find(b => b.gstAmount != null)?.gstAmount ?? null;
                               rows.push({
                                 key: `batch-${first.batchId}`,
                                 isBatchGroup: true,
@@ -2481,7 +2496,8 @@ export default function Purchase() {
                                 payment_terms: first.payment_terms,
                                 date: first.date,
                                 status,
-                                amount: first.amount ?? null,
+                                amount: totalAmount,
+                                gstAmount: totalGst,
                                 quotationFiles: first.quotationFiles || [],
                                 batchId: first.batchId,
                                 children: batchItems.map(b => ({ ...b, isBatchChild: true })),
@@ -3046,7 +3062,7 @@ export default function Purchase() {
                         size="small"
                         dataSource={dispatchTrackingOrders.filter((o) => {
                           const q = dtSearch.toLowerCase();
-                          const matchSearch = !q || (o.orderId || '').toLowerCase().includes(q) || (o.supplier || '').toLowerCase().includes(q) || (o.item || '').toLowerCase().includes(q);
+                          const matchSearch = !q || (o.orderId || '').toLowerCase().includes(q) || (o.supplier || '').toLowerCase().includes(q) || (o.item || '').toLowerCase().includes(q) || (o.items || []).some((it) => (it.itemName || '').toLowerCase().includes(q));
                           const matchDelivery = !dtDeliveryFilter || o.deliveryStatus === dtDeliveryFilter;
                           const matchPay = !dtPayFilter || o.paymentStatus === dtPayFilter;
                           if (dtDateRange) {
@@ -3066,12 +3082,29 @@ export default function Purchase() {
                             render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text>
                           },
                           { title: 'Supplier', dataIndex: 'supplier', key: 'supplier', width: 130, render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
-                          { title: 'Item', dataIndex: 'item', key: 'item', width: 160, render: v => <Text strong>{v}</Text> },
+                          {
+                            title: 'Item', dataIndex: 'item', key: 'item', width: 160,
+                            render: (v, r) => {
+                              if (r.items) {
+                                return (
+                                  <Space direction="vertical" size={1}>
+                                    <Text strong>{r.items.length} Products</Text>
+                                    <Tag color="blue" style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
+                                      Bulk &times;{r.items.length}
+                                    </Tag>
+                                  </Space>
+                                );
+                              }
+                              return <Text strong>{v}</Text>;
+                            }
+                          },
                           {
                             title: 'Qty / Amt', key: 'qty_amt', width: 110,
                             render: (_, r) => (
                               <Space direction="vertical" size={0}>
-                                <Text strong>{r.qty} {r.unit}</Text>
+                                {r.items
+                                  ? <Text type="secondary" style={{ fontSize: 12 }}>{r.items.length} items</Text>
+                                  : <Text strong>{r.qty} {r.unit}</Text>}
                                 <Text style={{ color: '#B11E6A', fontSize: 11 }}>&#8377;{r.amount?.toLocaleString()}</Text>
                               </Space>
                             )
@@ -3199,6 +3232,32 @@ export default function Purchase() {
                             }
                           },
                         ]}
+                        expandable={{
+                          rowExpandable: (r) => !!r.items,
+                          expandedRowRender: (r) => (
+                            <div style={{ padding: '10px 16px', background: isDark ? '#1a1225' : '#fdf2f8', borderRadius: 8 }}>
+                              <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 8, fontSize: 12 }}>
+                                Products in this order — {r.orderId}
+                              </Text>
+                              <Table
+                                size="small"
+                                dataSource={r.items.map((it, idx) => ({ ...it, key: `${r.key}-item-${idx}` }))}
+                                rowKey="key"
+                                pagination={false}
+                                columns={[
+                                  { title: 'Item', dataIndex: 'itemName', key: 'itemName', render: v => <Text strong>{v}</Text> },
+                                  { title: 'Qty', key: 'qty', render: (_, it) => <Text>{it.qty} {it.unit}</Text> },
+                                  {
+                                    title: 'Amount', key: 'amount', align: 'right',
+                                    render: (_, it) => it.amount != null
+                                      ? <Text style={{ color: '#B11E6A', fontWeight: 600 }}>&#8377;{it.amount.toLocaleString()}</Text>
+                                      : <Text type="secondary">—</Text>
+                                  },
+                                ]}
+                              />
+                            </div>
+                          ),
+                        }}
                       />
 
                       {/* ── Missing / Short-Received Orders ── */}

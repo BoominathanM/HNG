@@ -244,6 +244,12 @@ export default function Financial() {
     key: o._id,
     poCode: o.poCode,
     item: o.itemId?.itemName || o.itemName,
+    // Bulk requests are consolidated into ONE PurchaseOrder (see upsertOrderForApprovedRequest)
+    // whose top-level itemId/itemName only mirrors the FIRST product — the real per-product
+    // breakdown lives in `items[]`. Only exposed when there's more than one product, so
+    // single-item orders keep rendering exactly as before (same convention as Purchase's
+    // Dispatch Order Tracking tab).
+    items: (o.items && o.items.length > 1) ? o.items.map((it) => ({ itemName: it.itemName, qty: it.qty, unit: it.unit, amount: it.amount })) : null,
     vendorName: o.vendorId?.name || '—',
     vendorPhone: o.vendorId?.phone || '',
     lrNumber: o.lrNumber || '—',
@@ -430,7 +436,11 @@ export default function Financial() {
           status,
           notes: [],
           batchId: first.batchId,
-          batchItems,
+          // Flagged so the nested table's Amount column shows each product's OWN
+          // quoted amount instead of the consolidated order total (findOrderForRequest
+          // resolves every child to the SAME batch order, so without this flag every
+          // row in the expanded table showed the whole batch's total repeated).
+          batchItems: batchItems.map(b => ({ ...b, isBatchChild: true })),
         });
       } else {
         rows.push(batchItems[0]);
@@ -577,6 +587,13 @@ export default function Financial() {
     {
       title: 'Amount', key: 'order_amount', width: 100, align: 'right',
       render: (_, r) => {
+        // A batch child's own quoted amount, not the whole batch's consolidated
+        // order total (every child in a batch shares one order — see batchItems above).
+        if (r.isBatchChild) {
+          return r.amount != null
+            ? <Text strong style={{ color: '#B11E6A' }}>₹{r.amount.toLocaleString()}</Text>
+            : <Text type="secondary">—</Text>;
+        }
         const order = findOrderForRequest(r);
         if (!order) return <Text type="secondary">—</Text>;
         return <Text strong style={{ color: '#B11E6A' }}>₹{order.amount?.toLocaleString()}</Text>;
@@ -1128,7 +1145,7 @@ export default function Financial() {
                                 size="small"
                                 dataSource={lrPayments.filter((r) => {
                                   const q = lrPaySearch.toLowerCase();
-                                  if (q && !((r.poCode || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.vendorName || '').toLowerCase().includes(q) || (r.lrNumber || '').toLowerCase().includes(q))) return false;
+                                  if (q && !((r.poCode || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.vendorName || '').toLowerCase().includes(q) || (r.lrNumber || '').toLowerCase().includes(q) || (r.items || []).some((it) => (it.itemName || '').toLowerCase().includes(q)))) return false;
                                   if (lrPayDateRange) {
                                     const d = r.expectedDeliveryDate || '';
                                     if (d < lrPayDateRange[0] || d > lrPayDateRange[1]) return false;
@@ -1146,9 +1163,45 @@ export default function Financial() {
                                   size: 'small',
                                 }}
                                 scroll={{ x: 'max-content' }}
+                                expandable={{
+                                  rowExpandable: (r) => !!r.items,
+                                  expandedRowRender: (r) => (
+                                    <div style={{ padding: '10px 16px', background: isDark ? '#1a1225' : '#fdf2f8', borderRadius: 8 }}>
+                                      <Text strong style={{ color: '#B11E6A', display: 'block', marginBottom: 8, fontSize: 12 }}>
+                                        Products in this order — {r.poCode}
+                                      </Text>
+                                      <Table
+                                        size="small"
+                                        dataSource={r.items.map((it, idx) => ({ ...it, key: `${r.key}-item-${idx}` }))}
+                                        rowKey="key"
+                                        pagination={false}
+                                        columns={[
+                                          { title: 'Item', dataIndex: 'itemName', key: 'itemName', render: v => <Text strong>{v}</Text> },
+                                          { title: 'Qty', key: 'qty', render: (_, it) => <Text>{it.qty} {it.unit}</Text> },
+                                          {
+                                            title: 'Amount', key: 'amount', align: 'right',
+                                            render: (_, it) => it.amount != null
+                                              ? <Text style={{ color: '#B11E6A', fontWeight: 600 }}>&#8377;{it.amount.toLocaleString()}</Text>
+                                              : <Text type="secondary">—</Text>
+                                          },
+                                        ]}
+                                      />
+                                    </div>
+                                  ),
+                                }}
                                 columns={[
                                   { title: 'PO Code', dataIndex: 'poCode', key: 'poCode', width: 110, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                                  { title: 'Item', dataIndex: 'item', key: 'item', width: 160, render: v => <Text style={{ fontWeight: 600, fontSize: 13 }}>{v}</Text> },
+                                  {
+                                    title: 'Item', dataIndex: 'item', key: 'item', width: 160,
+                                    render: (v, r) => r.items ? (
+                                      <Space direction="vertical" size={1}>
+                                        <Text strong>{r.items.length} Products</Text>
+                                        <Tag color="blue" style={{ borderRadius: 10, fontSize: 10, margin: 0, padding: '0 6px' }}>
+                                          Bulk &times;{r.items.length}
+                                        </Tag>
+                                      </Space>
+                                    ) : <Text style={{ fontWeight: 600, fontSize: 13 }}>{v}</Text>
+                                  },
                                   {
                                     title: 'Vendor', key: 'vendor', width: 165,
                                     render: (_, r) => (

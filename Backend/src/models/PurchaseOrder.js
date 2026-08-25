@@ -15,6 +15,9 @@ const purchaseOrderSchema = new mongoose.Schema({
     itemName: String,
     qty: Number,
     unit: String,
+    // This item's own quoted amount — the order-level `amount` for a multi-item
+    // batch is the sum of these, not any single item's value.
+    amount: Number,
   }],
   amount: Number,
   billNo: String,
