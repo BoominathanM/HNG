@@ -213,7 +213,11 @@ export default function DispatchDetail() {
   // dispatched yet, scaled by count (see effectiveKitOverallQty/effectivePackagingIncludes
   // below), so the printed invoice's product/kit + count based total is computed the exact
   // same way (buildDocComposition/computeCompositionGrandTotal) as the Billing invoice.
-  const buildInvoiceData = async (inv, filterVerified = true) => {
+  // roundOnly=true (used by "Print Current Dispatch Invoice") additionally drops each row's
+  // ALREADY-CONFIRMED qty from earlier rounds, leaving only what's typed into "Dispatch Now"
+  // on THIS visit — see dispatchedOrPendingQtyForKit/Item below, the only two places
+  // `confirmed` is read. Has no effect unless filterVerified is also true.
+  const buildInvoiceData = async (inv, filterVerified = true, roundOnly = false) => {
     const halfGst = Math.round((inv.gstAmount || 0) / 2 * 100) / 100;
 
     // Extract linked order (populated by API) for kit composition data
@@ -248,7 +252,7 @@ export default function DispatchDetail() {
     // per-round invoice snapshot) ignore whatever was typed for a second/third partial round.
     const dispatchedOrPendingQtyForKit = (kitId) => {
       const kd = kitId ? kitDispatchByKitId.get(String(kitId)) : null;
-      const confirmed = kd?.dispatchedQty || 0;
+      const confirmed = roundOnly ? 0 : (kd?.dispatchedQty || 0);
       return confirmed + (kitDispatchNowByKitId.get(String(kitId)) || 0);
     };
     const isKitDispatched = (kitId) => dispatchedOrPendingQtyForKit(kitId) > 0;
@@ -256,7 +260,7 @@ export default function DispatchDetail() {
     // single (non-kit) DispatchRecord item.
     const dispatchedOrPendingQtyForItem = (it) => {
       if (!it) return 0;
-      const confirmed = it.qtyDispatched || 0;
+      const confirmed = roundOnly ? 0 : (it.qtyDispatched || 0);
       return confirmed + (productDispatchNowByItemId.get(String(it._id)) || 0);
     };
 
@@ -462,6 +466,29 @@ export default function DispatchDetail() {
       return;
     }
     const invoiceData = await buildInvoiceData(rawInvoices[0], filterVerified);
+    const html = generatePrintHTML('invoice', invoiceData, invoiceSettings);
+    const win = window.open('', '_blank', 'width=900,height=700');
+    win.document.write(html);
+    win.document.close();
+    win.print();
+  };
+
+  // "Print Current Dispatch Invoice" — shows ONLY the products/kits + qty being entered into
+  // "Dispatch Now" on THIS visit (current time), excluding anything already confirmed in
+  // earlier rounds. Reuses the exact same invoice template/composition math as the other two
+  // buttons (via buildInvoiceData's roundOnly flag) so it can't drift from their totals; those
+  // two buttons and their behavior are untouched.
+  const handlePrintCurrentDispatchInvoice = async () => {
+    if (totalDispatchNow === 0) {
+      enqueueSnackbar('Enter a Dispatch Now count for at least one row before printing this round\'s invoice.', { variant: 'warning' });
+      return;
+    }
+    const rawInvoices = orderInvoicesData?.data || [];
+    if (rawInvoices.length === 0) {
+      enqueueSnackbar('No invoice found for this order. Please create one from the Billing page.', { variant: 'warning' });
+      return;
+    }
+    const invoiceData = await buildInvoiceData(rawInvoices[0], true, true);
     const html = generatePrintHTML('invoice', invoiceData, invoiceSettings);
     const win = window.open('', '_blank', 'width=900,height=700');
     win.document.write(html);
@@ -2215,6 +2242,18 @@ export default function DispatchDetail() {
                       Print Invoice (Dispatched Only)
                     </Button>
                   )}
+                  {/* Print Current Dispatch Invoice — this round's "Dispatch Now" qty only,
+                      excluding anything already confirmed in earlier rounds. Independent of
+                      the two buttons above, which are unchanged. */}
+                  <Button
+                    icon={<PrinterOutlined />}
+                    block
+                    disabled={totalDispatchNow === 0}
+                    onClick={handlePrintCurrentDispatchInvoice}
+                    style={{ borderColor: '#B11E6A55', color: '#B11E6A', fontWeight: 600, marginTop: 8 }}
+                  >
+                    Print Current Dispatch Invoice (This Round)
+                  </Button>
                   {!orderInvoicesData?.data?.length && (
                     <Text style={{ fontSize: 11, color: '#aaa', display: 'block', marginTop: 6 }}>
                       No invoice linked yet — create one from the Billing page first.

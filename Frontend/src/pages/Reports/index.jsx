@@ -1684,7 +1684,7 @@ export default function Reports() {
                   {plProductFilter && selectedProductMonthly ? (
                     /* ── Single-product monthly detail ── */
                     <Row gutter={[14, 14]} style={{ paddingTop: 4 }}>
-                      <Col xs={24} lg={16}>
+                      <Col xs={24} lg={14}>
                         <ResponsiveContainer width="100%" height={220}>
                           <BarChart data={selectedProductMonthly} barGap={4}>
                             <CartesianGrid strokeDasharray="3 3" stroke={gridColor} />
@@ -1699,28 +1699,44 @@ export default function Reports() {
                           </BarChart>
                         </ResponsiveContainer>
                       </Col>
-                      <Col xs={24} lg={8}>
+                      <Col xs={24} lg={10}>
                         <Table
                           size="small"
                           dataSource={selectedProductMonthly}
                           pagination={false}
                           rowKey="month"
+                          scroll={{ x: 520 }}
                           columns={[
                             { title: 'Month', dataIndex: 'month', key: 'month', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                            { title: 'Sold Qty', dataIndex: 'qty', key: 'qty', align: 'center', render: v => <Tag style={{ background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>{(v ?? 0).toLocaleString()}</Tag> },
+                            {
+                              title: 'Stock Qty', key: 'stockQty', align: 'center',
+                              render: () => {
+                                const sq = selectedProductStats?.stockQty ?? 0;
+                                return (
+                                  <Tag style={{ background: sq < 200 ? '#ff4d4f15' : '#52c41a15', color: sq < 200 ? '#ff4d4f' : '#52c41a', border: `1px solid ${sq < 200 ? '#ff4d4f33' : '#52c41a33'}`, borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
+                                    {sq.toLocaleString()}
+                                  </Tag>
+                                );
+                              },
+                            },
                             { title: 'Sales',    dataIndex: 'sales',       key: 'sales',       render: v => <Text style={{ fontSize: 12, color: '#D85C9E', fontWeight: 600 }}>₹{(v ?? 0).toLocaleString()}</Text> },
                             { title: 'Gross P.', dataIndex: 'grossProfit', key: 'grossProfit', render: v => <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 700 }}>₹{(v ?? 0).toLocaleString()}</Text> },
                             { title: 'Net P.',   dataIndex: 'netProfit',   key: 'netProfit',   render: v => <Text style={{ fontSize: 12, color: '#6b1240',  fontWeight: 700 }}>₹{(v ?? 0).toLocaleString()}</Text> },
                           ]}
                           summary={(data) => {
+                            const tQ = data.reduce((s, r) => s + (r.qty || 0), 0);
                             const tS = data.reduce((s, r) => s + r.sales, 0);
                             const tG = data.reduce((s, r) => s + r.grossProfit, 0);
                             const tN = data.reduce((s, r) => s + r.netProfit, 0);
                             return (
                               <Table.Summary.Row>
                                 <Table.Summary.Cell><Text strong style={{ fontSize: 12 }}>Total</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell><Text strong style={{ color: '#D85C9E', fontSize: 12 }}>₹{tS.toLocaleString()}</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>₹{tG.toLocaleString()}</Text></Table.Summary.Cell>
-                                <Table.Summary.Cell><Text strong style={{ color: '#6b1240',  fontSize: 12 }}>₹{tN.toLocaleString()}</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={1}><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>{tQ.toLocaleString()}</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={2}><Text style={{ fontSize: 11, color: '#aaa' }}>—</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={3}><Text strong style={{ color: '#D85C9E', fontSize: 12 }}>₹{tS.toLocaleString()}</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={4}><Text strong style={{ color: '#B11E6A', fontSize: 12 }}>₹{tG.toLocaleString()}</Text></Table.Summary.Cell>
+                                <Table.Summary.Cell index={5}><Text strong style={{ color: '#6b1240',  fontSize: 12 }}>₹{tN.toLocaleString()}</Text></Table.Summary.Cell>
                               </Table.Summary.Row>
                             );
                           }}
