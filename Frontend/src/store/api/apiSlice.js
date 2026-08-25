@@ -387,7 +387,7 @@ export const apiSlice = createApi({
     }),
     updatePickupOrder: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/dispatch/pickups/${id}`, method: 'patch', data }),
-      invalidatesTags: ['Pickups'],
+      invalidatesTags: ['Pickups', 'LrPayments', 'PurchaseOrders'],
     }),
 
     // ── Inventory ────────────────────────────────────────────────────────────

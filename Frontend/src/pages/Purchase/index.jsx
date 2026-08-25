@@ -56,6 +56,7 @@ import PhoneInput from '../../components/common/PhoneInput';
 import VendorBankFields from '../../components/common/VendorBankFields';
 import { emailRules, phoneValidator } from '../../utils/validation';
 import { formatQty } from '../../utils/numberFormat';
+import { viewFile, downloadFile } from '../../utils/fileDownload';
 import dayjs from 'dayjs';
 
 const { Title, Text } = Typography;
@@ -137,6 +138,17 @@ export default function Purchase() {
   const findLinkedOrder = (req) => purchaseOrders.find(o =>
     (req?.batchId && o.batchId === req.batchId) || o.requestKey === req?.key
   );
+  // A purchase cycle is "closed" once its order has been fully received & stock credited
+  // (dispatchStatus === 'Received'). Without this, the Inventory Stock Availability table
+  // keeps matching that old, completed request/order forever — so the next time the same
+  // item drops low again, it shows stale Supplier/Payment/LR data from the PREVIOUS cycle
+  // instead of a fresh request state. Walk requests newest-first (backend already sorts
+  // -createdAt) and skip over any whose linked order is fully received.
+  const findActiveRequestForItem = (name) => raisedRequests.find(req => {
+    if (req.item !== name) return false;
+    const linkedOrder = findLinkedOrder(req);
+    return !linkedOrder || linkedOrder.dispatchStatus !== 'Received';
+  });
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
@@ -242,6 +254,7 @@ export default function Purchase() {
       expectedDeliveryDate: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
       lrPaymentStatus: o.lrPaymentStatus || null,
       billTotalAmount: o.billTotalAmount || 0,
+      dispatchStatus: o.dispatchStatus || 'Pending',
     }));
     if (mapped.length > 0) dispatch(setPurchaseOrders(mapped));
   }, [purchaseOrdersData]);
@@ -2075,7 +2088,7 @@ export default function Purchase() {
                         dataSource={lowStockInventoryItems.filter((inv) => {
                           const q = stockSearch.toLowerCase();
                           const matchSearch = !q || (inv.name || '').toLowerCase().includes(q) || (inv.category || '').toLowerCase().includes(q) || (inv.code || '').toLowerCase().includes(q);
-                          const linkedReq = raisedRequests.find(req => req.item === inv.name);
+                          const linkedReq = findActiveRequestForItem(inv.name);
                           const matchStatus = !stockReqStatusFilter || (linkedReq?.status || '') === stockReqStatusFilter;
                           return matchSearch && matchStatus;
                         })}
@@ -2087,7 +2100,7 @@ export default function Purchase() {
                           onExpand: () => {},
                           showExpandColumn: false,
                           expandedRowRender: (r) => {
-                            const linkedReq = raisedRequests.find(req => req.item === r.name);
+                            const linkedReq = findActiveRequestForItem(r.name);
                             if (linkedReq) {
                               // 2-way shared notes with Financial page (stored in Redux)
                               const reqNotes = linkedReq.notes || [];
@@ -2161,7 +2174,7 @@ export default function Purchase() {
                           {
                             title: 'Supplier', key: 'supplier',
                             render: (_, r) => {
-                              const req = raisedRequests.find(req => req.item === r.name);
+                              const req = findActiveRequestForItem(r.name);
                               if (!req?.supplier) return <Text type="secondary">—</Text>;
                               return <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{req.supplier}</Text>;
                             }
@@ -2169,7 +2182,7 @@ export default function Purchase() {
                           {
                             title: 'Payment Terms', key: 'payment_terms',
                             render: (_, r) => {
-                              const req = raisedRequests.find(req => req.item === r.name);
+                              const req = findActiveRequestForItem(r.name);
                               if (!req?.payment_terms) return <Text type="secondary">—</Text>;
                               return <Text style={{ fontSize: 13 }}>{req.payment_terms}</Text>;
                             }
@@ -2177,7 +2190,7 @@ export default function Purchase() {
                           {
                             title: 'Payment Doc', key: 'payment_doc',
                             render: (_, r) => {
-                              const req = raisedRequests.find(req => req.item === r.name);
+                              const req = findActiveRequestForItem(r.name);
                               const linkedOrder = req ? findLinkedOrder(req) : null;
                               const paymentHistory = linkedOrder?.paymentHistory || [];
                               const quotationFiles = req?.quotationFiles || [];
@@ -2196,7 +2209,7 @@ export default function Purchase() {
                             title: 'Quotation Status',
                             key: 'req_status',
                             render: (_, r) => {
-                              const req = raisedRequests.find(req => req.item === r.name);
+                              const req = findActiveRequestForItem(r.name);
                               if (!req) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
                               const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing', Modification: 'warning' };
                               return <Tag color={colorMap[req.status]} style={{ borderRadius: 12 }}>{req.status}</Tag>;
@@ -2206,7 +2219,7 @@ export default function Purchase() {
                             title: 'Finance Status',
                             key: 'finance_status',
                             render: (_, r) => {
-                              const req = raisedRequests.find(req => req.item === r.name);
+                              const req = findActiveRequestForItem(r.name);
                               if (!req) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
                               if (req.status === 'Approved') return <Tag color="success" style={{ borderRadius: 12 }}>Approved</Tag>;
                               if (req.status === 'Rejected') return (
@@ -2226,7 +2239,7 @@ export default function Purchase() {
                             title: 'Upload LR Copies',
                             key: 'lr_copies',
                             render: (_, r) => {
-                              const req = raisedRequests.find(req => req.item === r.name);
+                              const req = findActiveRequestForItem(r.name);
                               const linkedOrder = req ? findLinkedOrder(req) : null;
                               if (!linkedOrder) return <Text type="secondary">—</Text>;
                               // Local lrData is session-only; fall back to the persisted PurchaseOrder
@@ -2264,7 +2277,7 @@ export default function Purchase() {
                             title: 'Action',
                             key: 'action',
                             render: (_, r) => {
-                              const req = raisedRequests.find(req => req.item === r.name);
+                              const req = findActiveRequestForItem(r.name);
                               const orderAlreadyRaised = !!findLinkedOrder(req);
                               const noteCount = req ? (req.notes || []).length : (invItemNotes[r.key] || []).length;
                               const noteBtn = (
@@ -2719,6 +2732,22 @@ export default function Purchase() {
                                         />
                                       </div>
                                     ))}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                      <Text
+                                        style={{ fontSize: 10, flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                                        title="Tax/GST amount for the whole batch quotation"
+                                      >
+                                        Tax Amount (₹)
+                                      </Text>
+                                      <InputNumber
+                                        size="small"
+                                        min={0}
+                                        placeholder="₹"
+                                        value={pendingRowGstAmount[r.key] ?? null}
+                                        onChange={v => setPendingRowGstAmount(prev => ({ ...prev, [r.key]: v }))}
+                                        style={{ width: 85 }}
+                                      />
+                                    </div>
                                     <Button
                                       size="small"
                                       type="primary"
@@ -2811,6 +2840,7 @@ export default function Purchase() {
                               if (r.status === 'Pending') {
                                 const file = pendingRowFile[r.key];
                                 const amount = pendingRowAmount[r.key] ?? r.amount ?? null;
+                                const gstAmount = pendingRowGstAmount[r.key] ?? r.gstAmount ?? null;
                                 const saving = !!pendingRowSaving[r.key];
                                 const scanning = !!pendingRowScanLoading[r.key];
                                 return (
@@ -2845,6 +2875,14 @@ export default function Purchase() {
                                       placeholder="Amount (₹)"
                                       value={amount}
                                       onChange={v => setPendingRowAmount(prev => ({ ...prev, [r.key]: v }))}
+                                      style={{ width: '100%' }}
+                                    />
+                                    <InputNumber
+                                      size="small"
+                                      min={0}
+                                      placeholder="Tax/GST Amount (₹)"
+                                      value={gstAmount}
+                                      onChange={v => setPendingRowGstAmount(prev => ({ ...prev, [r.key]: v }))}
                                       style={{ width: '100%' }}
                                     />
                                     <Button
@@ -6203,10 +6241,15 @@ export default function Purchase() {
                 <FileTextOutlined style={{ color: '#fff', fontSize: 20 }} />
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <Text strong style={{ color: '#1890ff', fontSize: 13, display: 'block' }}>{viewLRCopyModal.lrCopyFile}</Text>
+                <Text strong style={{ color: '#1890ff', fontSize: 13, display: 'block' }}>LR Document</Text>
                 <Text type="secondary" style={{ fontSize: 11 }}>LR {viewLRCopyModal.lrNumber} · {viewLRCopyModal.transportCompany}</Text>
               </div>
-              <Button size="small" icon={<DownloadOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff' }}>Download</Button>
+              <Space>
+                <Button size="small" icon={<EyeOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff' }}
+                  onClick={() => viewFile(viewLRCopyModal.lrCopyFile)}>View</Button>
+                <Button size="small" icon={<DownloadOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff' }}
+                  onClick={() => downloadFile(viewLRCopyModal.lrCopyFile, `LR-${viewLRCopyModal.lrNumber || 'copy'}`)}>Download</Button>
+              </Space>
             </div>
             <Descriptions bordered size="small" column={2}>
               <Descriptions.Item label="LR Number"><Text strong style={{ color: '#1890ff' }}>{viewLRCopyModal.lrNumber}</Text></Descriptions.Item>

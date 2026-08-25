@@ -8,6 +8,7 @@ const WhatsAppEvent = require('../../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
 const Transport = require('../../models/Transport');
 const PickupOrder = require('../../models/PickupOrder');
+const PurchaseOrder = require('../../models/PurchaseOrder');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -918,6 +919,19 @@ exports.updatePickupOrder = asyncHandler(async (req, res, next) => {
     update.reimbursementStatus = 'Pending';
   }
   const pickup = await PickupOrder.findByIdAndUpdate(req.params.id, update, { new: true });
+
+  // Mirror back onto the linked Purchase Order — Finance's LR Payment tab reads
+  // PurchaseOrder.lrPaymentStatus, a separate field from this PickupOrder.paymentStatus.
+  // payLrPayment (financial.controller.js) already syncs the other direction; this
+  // keeps Finance's view current when the Pickup Team pays directly here instead.
+  if (update.paymentStatus === 'Paid' && pickup.purchaseOrderId) {
+    const po = await PurchaseOrder.findById(pickup.purchaseOrderId);
+    if (po && po.lrPaymentStatus !== 'Paid') {
+      po.lrPaidAmount = po.billTotalAmount || po.lrPaidAmount || 0;
+      po.lrPaymentStatus = 'Paid';
+      await po.save({ validateBeforeSave: false });
+    }
+  }
 
   // Vendor shipment just dropped off — nudge Purchase to go verify/receive it.
   if (
