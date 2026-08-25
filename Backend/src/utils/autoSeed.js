@@ -83,6 +83,7 @@ const ALERT_CONFIG_ROWS = [
   { group: 'lr_payment', role: null },
   { group: 'low_stock', role: null },
   { group: 'quotation_request', role: null },
+  { group: 'short_received', role: null },
 ];
 
 const seedAlertConfigsIfMissing = async () => {

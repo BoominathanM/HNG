@@ -247,6 +247,12 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/purchase/orders/${id}/resolve-missing`, method: 'patch' }),
       invalidatesTags: ['PurchaseOrders'],
     }),
+    updatePurchaseOrderActionTaken: builder.mutation({
+      query: ({ id, actionTakenStatus }) => ({ url: `/purchase/orders/${id}/action-taken`, method: 'patch', data: { actionTakenStatus } }),
+      // 'Completely Received' credits the remaining qty to inventory, same downstream
+      // effects as receiveOrder above — invalidate the same tags.
+      invalidatesTags: ['PurchaseOrders', 'Inventory', 'Reports', 'Orders', 'Tasks'],
+    }),
     uploadPurchaseLR: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/purchase/orders/${id}/lr`, method: 'patch', data }),
       invalidatesTags: ['PurchaseOrders', 'Reports'],
@@ -1485,6 +1491,7 @@ export const {
   useReceiveOrderMutation,
   useScanReceivedInvoiceMutation,
   useResolveMissingOrderMutation,
+  useUpdatePurchaseOrderActionTakenMutation,
   useUploadPurchaseLRMutation,
   useScanPurchaseLRMutation,
   useGetLocalPurchasesQuery,

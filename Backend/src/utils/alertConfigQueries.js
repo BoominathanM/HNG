@@ -189,6 +189,26 @@ async function getPendingRecordsForConfig(config) {
     }));
   }
 
+  if (config.group === 'short_received') {
+    // A purchase order the lorry/vendor short-delivered keeps alerting Dispatch, Financial
+    // and Purchase (fixed recipientUserIds, admin-picked, same as 'lr_payment') every
+    // config.durationMinutes until Purchase marks it 'Completely Received' in the
+    // Missing/Short-Received Orders table's Action Taken dropdown — see
+    // modules/purchase/purchase.controller.js markActionTaken, which both persists that
+    // status and credits the remaining qty to inventory.
+    const items = await PurchaseOrder.find({
+      dispatchStatus: 'Partially Received',
+      actionTakenStatus: { $ne: 'Completely Received' },
+    }).lean();
+    return items.map((r) => ({
+      recordType: 'PurchaseOrder',
+      recordId: r._id,
+      record: r,
+      title: `Short-received order pending — ${r.poCode}${r.missedBy ? ` (missed by ${r.missedBy})` : ''}`,
+      link: '/purchase',
+    }));
+  }
+
   if (config.group === 'low_stock') {
     // Sync each item's lowStockSince flag before evaluating the grace period — set the
     // moment it's first seen below minStock, cleared once it's back to/above minStock

@@ -19,6 +19,7 @@ router.get('/orders', ctrl.getPurchaseOrders);
 router.post('/orders/:id/receive', upload.single('invoice'), ctrl.receiveOrder);
 router.post('/orders/:id/scan-invoice', upload.single('invoice'), ctrl.scanReceivedInvoice);
 router.patch('/orders/:id/resolve-missing', ctrl.resolveMissingOrder);
+router.patch('/orders/:id/action-taken', ctrl.markActionTaken);
 router.patch('/orders/:id/lr', upload.single('lr'), ctrl.uploadLR);
 router.post('/orders/:id/scan-lr', ctrl.scanLR);
 

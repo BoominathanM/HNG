@@ -100,6 +100,12 @@ const purchaseOrderSchema = new mongoose.Schema({
   // Set once the "attach to upcoming order" shortfall has been checked/actioned by Purchase,
   // so the info banner on the vendor's next order stops showing it.
   missingResolved: { type: Boolean, default: false },
+  // Frontend Missing/Short-Received Orders table's "Action Taken" dropdown (Purchase, Dispatch
+  // Order Tracking) — free text, one preset value 'Completely Received'. Setting it to
+  // 'Completely Received' is the only value with side effects: modules/purchase/purchase.controller.js
+  // markActionTaken credits the remaining missingQty on every short-received line to inventory
+  // and stops the 'short_received' AlertConfig reminder for this order (see alertConfigQueries.js).
+  actionTakenStatus: { type: String, default: null },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 }, { timestamps: true });
 

@@ -34,6 +34,7 @@ import {
   useReceiveOrderMutation,
   useScanReceivedInvoiceMutation,
   useResolveMissingOrderMutation,
+  useUpdatePurchaseOrderActionTakenMutation,
   useUploadPurchaseLRMutation,
   useScanPurchaseLRMutation,
   useScanLocalPurchaseInvoiceMutation,
@@ -173,6 +174,7 @@ export default function Purchase() {
   const [receiveOrderMutation] = useReceiveOrderMutation();
   const [scanReceivedInvoiceMutation] = useScanReceivedInvoiceMutation();
   const [resolveMissingOrderMutation] = useResolveMissingOrderMutation();
+  const [updateActionTakenMutation] = useUpdatePurchaseOrderActionTakenMutation();
   const [uploadPurchaseLR] = useUploadPurchaseLRMutation();
   const [scanPurchaseLR] = useScanPurchaseLRMutation();
   const [createLocalPurchaseMutation] = useCreateLocalPurchaseMutation();
@@ -652,8 +654,16 @@ export default function Purchase() {
         missedBy: o.missedBy || null,
         vendorMissedAction: o.vendorMissedAction || null,
         missingResolved: !!o.missingResolved,
+        actionTakenStatus: o.actionTakenStatus || null,
       };
     }));
+    // Surface any actionTakenStatus already persisted on the server (including custom,
+    // admin-typed values from another session) as a selectable option, so the dropdown
+    // renders the saved value instead of showing blank.
+    const savedActionValues = (dispatchTrackingData?.data || []).map((o) => o.actionTakenStatus).filter(Boolean);
+    if (savedActionValues.length) {
+      setCustomActionOptions((prev) => [...new Set([...prev, ...savedActionValues])]);
+    }
   }, [dispatchTrackingData, dtPickupOrdersData]);
 
   const [showTakenModal, setShowTakenModal] = useState(false);
@@ -3364,7 +3374,15 @@ export default function Purchase() {
                                       placeholder="Select action"
                                       value={r.actionTakenStatus || undefined}
                                       style={{ width: '100%', minWidth: 165 }}
-                                      onChange={(val) => setDispatchTrackingOrders(prev => prev.map(o => o.key === r.key ? { ...o, actionTakenStatus: val } : o))}
+                                      onChange={async (val) => {
+                                        setDispatchTrackingOrders(prev => prev.map(o => o.key === r.key ? { ...o, actionTakenStatus: val } : o));
+                                        try {
+                                          await updateActionTakenMutation({ id: r.key, actionTakenStatus: val }).unwrap();
+                                          enqueueSnackbar(val === 'Completely Received' ? 'Marked as completely received — remaining quantity added to inventory.' : 'Action Taken updated.', { variant: 'success' });
+                                        } catch (err) {
+                                          enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update Action Taken', { variant: 'error' });
+                                        }
+                                      }}
                                       dropdownRender={menu => (
                                         <>
                                           {menu}

@@ -270,6 +270,7 @@ export default function AlertConfigurationTab() {
   const opsUsers = users.filter((u) => u.department === 'Operations' && u.status === 'Active');
   const financeUsers = users.filter((u) => u.department === 'Financial' && u.status === 'Active');
   const purchaseUsers = users.filter((u) => u.department === 'Purchase' && u.status === 'Active');
+  const shortReceivedUsers = users.filter((u) => ['Dispatch', 'Financial', 'Purchase'].includes(u.department) && u.status === 'Active');
 
   if (configsLoading || usersLoading) {
     return <div style={{ textAlign: 'center', padding: 60 }}><Spin size="large" /></div>;
@@ -441,6 +442,29 @@ export default function AlertConfigurationTab() {
             config={findConfig('lr_payment', null)}
             recipientPool={financeUsers}
             deptLabel="Financial"
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Short-Received Purchase Orders Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          Rings the selected Dispatch / Financial / Purchase users while a purchase order is partially received (missed by the lorry/vendor), repeating on the schedule below, until Purchase marks it "Completely Received" in the Missing/Short-Received Orders table's Action Taken dropdown.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('short_received', null)?._id || 'short_received'}
+            title="Short-Received Purchase Orders"
+            description="Notifies selected Dispatch, Financial and Purchase users about partially received purchase orders still pending the missing quantity."
+            group="short_received"
+            role={null}
+            config={findConfig('short_received', null)}
+            recipientPool={shortReceivedUsers}
+            deptLabel="Dispatch / Financial / Purchase"
           />
         </Col>
       </Row>

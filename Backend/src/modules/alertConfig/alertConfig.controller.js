@@ -15,7 +15,7 @@ const GRACE_GROUPS = ['low_stock', 'quotation_request'];
 exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
   const { group, role, recipientUserIds, startTime, endTime, days, durationMinutes, graceValue, graceUnit, audioUrl, audioPublicId, audioName, isEnabled } = req.body;
 
-  if (!['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'dispatch_status', 'lr_payment', 'low_stock', 'quotation_request'].includes(group)) {
+  if (!['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'dispatch_status', 'lr_payment', 'low_stock', 'quotation_request', 'short_received'].includes(group)) {
     return next(new AppError('Invalid alert group', 400));
   }
   if (group === 'design' && !['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(role)) {

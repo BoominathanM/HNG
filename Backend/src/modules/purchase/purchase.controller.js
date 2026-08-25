@@ -697,6 +697,79 @@ exports.resolveMissingOrder = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: order });
 });
 
+// PATCH /api/purchase/orders/:id/action-taken — persists the Missing/Short-Received
+// Orders table's "Action Taken" dropdown (previously local-only React state, lost on
+// every refetch). Setting it to 'Completely Received' additionally credits whatever
+// quantity is still short on each line to inventory (mirrors the stock-crediting loop
+// in receiveOrder above, sized to the missing qty instead of the received qty) and
+// closes the order out — this is the only value with side effects; every other
+// (including custom, admin-added) status is just a follow-up note with no side effects.
+exports.markActionTaken = asyncHandler(async (req, res, next) => {
+  const { actionTakenStatus } = req.body;
+  if (!actionTakenStatus || typeof actionTakenStatus !== 'string') {
+    return next(new AppError('actionTakenStatus is required', 400));
+  }
+  const order = await PurchaseOrder.findById(req.params.id).populate('vendorId', 'name');
+  if (!order) return next(new AppError('Purchase order not found', 404));
+
+  order.actionTakenStatus = actionTakenStatus;
+
+  if (actionTakenStatus === 'Completely Received') {
+    const vendorId = order.vendorId?._id || order.vendorId;
+    const vendorName = order.vendorId?.name;
+    for (const li of order.receivedItems) {
+      if (!li.itemId || !li.missingQty) continue;
+      const item = await InventoryItem.findById(li.itemId);
+      if (!item) continue;
+      const before = item.currentStock;
+      const qty = li.missingQty;
+      item.purchaseBatches.push({
+        vendorId: vendorId || undefined,
+        vendorName,
+        purchaseDate: Date.now(),
+        qty,
+        remainingQty: qty,
+        purchasePrice: li.purchasePrice || 0,
+        gstPercent: li.gstPercent || 0,
+        priceType: li.priceType || 'exclusive',
+      });
+      item.currentStock = before + qty;
+      await item.save({ validateBeforeSave: false });
+      await StockMovement.create({
+        itemId: item._id,
+        movementType: 'IN',
+        qty,
+        qtyBefore: before,
+        qtyAfter: item.currentStock,
+        referenceType: 'Purchase',
+        referenceId: order._id,
+        referenceCode: order.poCode,
+        vendorId: vendorId || undefined,
+        vendorName,
+        purchaseDate: Date.now(),
+        supplyPrice: li.purchasePrice || (li.orderedQty ? order.amount / li.orderedQty : undefined),
+        approvalStatus: 'Approved',
+        approvedBy: req.user._id,
+        approvedAt: Date.now(),
+        createdBy: req.user._id,
+      });
+      li.receivedQty = (li.receivedQty || 0) + qty;
+      li.missingQty = 0;
+      // Pay off any orders that were placed/edited while this item was short of stock,
+      // oldest first, now that the remaining short-received qty has arrived.
+      backfillPendingDeductionsForItem(item._id, req.user._id).catch((err) => {
+        console.error(`Backorder backfill failed for item "${item.itemName}" after short-received completion:`, err.message);
+      });
+    }
+    // Every line is now fully accounted for — the order no longer belongs in the
+    // Missing/Short-Received table or the 'short_received' alert's pending set.
+    order.dispatchStatus = 'Received';
+  }
+
+  await order.save({ validateBeforeSave: false });
+  res.status(200).json({ success: true, data: order });
+});
+
 // POST /api/purchase/orders/:id/scan-lr — the lorry receipt file is already on Cloudinary
 // (uploaded via the LR Dragger); scan it with AI to extract LR number, transport, and the
 // Bill Total Amount so Purchase doesn't have to key them in by hand.
