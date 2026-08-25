@@ -4,21 +4,36 @@ const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
 
 // Session length: 24h by default, 30d when the user checked "Remember Me" at
-// login. The access token itself carries this full duration (not a short-lived
-// token dependent on silent background refresh) so the session length is
-// guaranteed regardless of request timing. The refresh token mirrors it and
-// exists only so the token can be rotated without forcing a manual re-login
-// mid-session (see Frontend/src/api/axios.js).
-const sessionTTL = (rememberMe) =>
+// login. This is a SLIDING window — Frontend/src/api/axios.js proactively
+// refreshes the access token in the background a few minutes before it expires
+// (and again on tab-focus if it was throttled while backgrounded), so an
+// actively-open tab keeps rotating both tokens and never actually hits the
+// wall. The window only lapses for real once the tab has been closed/idle
+// (no refresh call made) for the full duration.
+const DURATION_UNIT_SECONDS = { s: 1, m: 60, h: 3600, d: 86400 };
+const parseDurationSeconds = (str, fallbackSeconds) => {
+  const match = /^(\d+)(s|m|h|d)$/.exec(String(str || '').trim());
+  return match ? Number(match[1]) * DURATION_UNIT_SECONDS[match[2]] : fallbackSeconds;
+};
+
+const sessionTTLSeconds = (rememberMe) =>
   rememberMe
-    ? process.env.JWT_EXPIRES_IN_REMEMBER || '30d'
-    : process.env.JWT_EXPIRES_IN || '24h';
+    ? parseDurationSeconds(process.env.JWT_EXPIRES_IN_REMEMBER, 30 * 86400)
+    : parseDurationSeconds(process.env.JWT_EXPIRES_IN, 24 * 3600);
+
+// The refresh token must outlive the access token, otherwise a proactive
+// refresh that fires slightly late (background-tab timer throttling, a slow
+// network) races its own expiry and fails, forcing an unwanted logout even
+// though the tab was open and active the whole time.
+const REFRESH_TOKEN_BUFFER_SECONDS = 15 * 60;
 
 const signToken = (id, rememberMe) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: sessionTTL(rememberMe) });
+  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: sessionTTLSeconds(rememberMe) });
 
 const signRefreshToken = (id, rememberMe) =>
-  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, { expiresIn: sessionTTL(rememberMe) });
+  jwt.sign({ id }, process.env.JWT_REFRESH_SECRET, {
+    expiresIn: sessionTTLSeconds(rememberMe) + REFRESH_TOKEN_BUFFER_SECONDS,
+  });
 
 const REFRESH_GRACE_MS = 15 * 1000;
 

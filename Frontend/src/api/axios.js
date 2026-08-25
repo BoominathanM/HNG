@@ -40,8 +40,79 @@ const runRefresh = async (refreshToken) => {
     token: data.token,
     refreshToken: data.refreshToken,
   }));
+  scheduleTokenRefresh(data.token);
   return data.token;
 };
+
+// Sliding session: proactively rotate the access token a few minutes before it
+// expires instead of waiting for a 401. This is what actually makes "session
+// length" a sliding window based on activity — without it, the reactive-on-401
+// refresh only ever fires AFTER the token has already died, and the backend
+// mirrors the refresh token's expiry closely enough that a fully-dead access
+// token often means a fully-dead refresh token too, forcing a real logout even
+// for a tab that was open and active the whole time.
+const REFRESH_LEAD_MS = 5 * 60 * 1000;
+
+let refreshTimer = null;
+
+const decodeJwtExp = (token) => {
+  try {
+    const payload = token.split('.')[1];
+    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    return typeof json.exp === 'number' ? json.exp : null;
+  } catch {
+    return null;
+  }
+};
+
+export const clearScheduledRefresh = () => {
+  if (refreshTimer) {
+    clearTimeout(refreshTimer);
+    refreshTimer = null;
+  }
+};
+
+const attemptProactiveRefresh = async () => {
+  const auth = JSON.parse(localStorage.getItem('hng_auth') || '{}');
+  if (!auth.refreshToken) return;
+  try {
+    if (!refreshPromise) {
+      refreshPromise = runRefresh(auth.refreshToken).finally(() => { refreshPromise = null; });
+    }
+    await refreshPromise;
+  } catch {
+    // Leave it to the reactive 401 path (or its force-logout) to handle a
+    // genuinely dead session — a transient failure here shouldn't log anyone out.
+  }
+};
+
+export const scheduleTokenRefresh = (token) => {
+  clearScheduledRefresh();
+  const exp = decodeJwtExp(token);
+  if (!exp) return;
+  const delay = Math.max(exp * 1000 - REFRESH_LEAD_MS - Date.now(), 0);
+  refreshTimer = setTimeout(attemptProactiveRefresh, delay);
+};
+
+// Background/inactive tabs can have setTimeout throttled by the browser well
+// past its intended delay, so also check-and-refresh on tab focus.
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    const auth = JSON.parse(localStorage.getItem('hng_auth') || '{}');
+    if (!auth.token) return;
+    const exp = decodeJwtExp(auth.token);
+    if (exp && Date.now() >= exp * 1000 - REFRESH_LEAD_MS) {
+      attemptProactiveRefresh();
+    }
+  });
+}
+
+// Pick up an existing session on page load (hard refresh / new tab).
+if (typeof window !== 'undefined') {
+  const existingAuth = JSON.parse(localStorage.getItem('hng_auth') || '{}');
+  if (existingAuth.token) scheduleTokenRefresh(existingAuth.token);
+}
 
 api.interceptors.response.use(
   (res) => res,

@@ -1,5 +1,5 @@
 import { createApi } from '@reduxjs/toolkit/query/react';
-import api from '../../api/axios';
+import api, { scheduleTokenRefresh, clearScheduledRefresh } from '../../api/axios';
 import { setUser, refreshUser, logout as logoutAction } from '../slices/authSlice';
 
 const axiosBaseQuery = () => async ({ url, method = 'get', data, params }) => {
@@ -57,6 +57,7 @@ export const apiSlice = createApi({
             token: data.token,
             refreshToken: data.refreshToken,
           }));
+          scheduleTokenRefresh(data.token);
         } catch {}
       },
     }),
@@ -64,6 +65,7 @@ export const apiSlice = createApi({
       query: () => ({ url: '/auth/logout', method: 'post' }),
       async onQueryStarted(_, { dispatch, queryFulfilled }) {
         await queryFulfilled.catch(() => {});
+        clearScheduledRefresh();
         dispatch(logoutAction());
         dispatch(apiSlice.util.resetApiState());
       },

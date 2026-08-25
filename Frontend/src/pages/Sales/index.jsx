@@ -15641,10 +15641,12 @@ export default function Sales() {
         open={!!viewPartyInfo}
         onCancel={() => setViewPartyInfo(null)}
         footer={<Button onClick={() => setViewPartyInfo(null)}>Close</Button>}
-        width={Math.min(760, window.innerWidth - 32)}
+        width={Math.min(1000, window.innerWidth - 32)}
+        styles={{ body: { maxHeight: '75vh', overflowY: 'auto' } }}
       >
         {viewPartyInfo && (
-          <Descriptions bordered size="small" column={{ xs: 1, sm: 2, md: 2, lg: 2, xl: 2, xxl: 2 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ marginTop: 8 }}>
+          <div style={{ overflowX: 'auto' }}>
+          <Descriptions bordered size="small" column={{ xs: 1, sm: 1, md: 2, lg: 2, xl: 3, xxl: 3 }} labelStyle={{ fontSize: 12, whiteSpace: 'nowrap' }} contentStyle={{ fontSize: 13, fontWeight: 500, wordBreak: 'break-word' }} style={{ marginTop: 8, minWidth: 480 }}>
             <Descriptions.Item label="Category">{viewPartyInfo.category || 'Hotel'}</Descriptions.Item>
             <Descriptions.Item label={`${viewPartyInfo.category || 'Hotel'} / Company`}>{viewPartyInfo.hotelName || '—'}</Descriptions.Item>
             {viewPartyInfo.billingName && <Descriptions.Item label="Billing Name">{viewPartyInfo.billingName}</Descriptions.Item>}
@@ -15676,6 +15678,7 @@ export default function Sales() {
             {viewPartyInfo.creditPeriod > 0 && <Descriptions.Item label="Credit Period">{`${viewPartyInfo.creditPeriod} days`}</Descriptions.Item>}
             {viewPartyInfo.creditLimit > 0 && <Descriptions.Item label="Credit Limit">{`₹${Number(viewPartyInfo.creditLimit).toLocaleString()}`}</Descriptions.Item>}
           </Descriptions>
+          </div>
         )}
         {viewPartyInfo && (
           <div style={{ marginTop: 20 }}>
