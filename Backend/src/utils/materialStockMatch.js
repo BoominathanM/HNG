@@ -37,12 +37,10 @@ function nameCandidatesOf(it) {
 const KEYWORD_CATEGORY_EXCLUDED = new Set(['ziplock']);
 const KEYWORD_CATEGORY_FALLBACK = new Set(['box', 'butterPaper']);
 
-// Finds the MaterialStock row (if any) this item's packaging resolves to. Returns null
-// when the item carries no packing-material attribute at all, when it's Ziplock (never
-// tracked via Material Stock, unchanged historical deduction behavior), or when nothing
-// in stock matches by name+size (nor the Box/Butter Paper category fallback) — callers
-// treat null as "not tracked here", not as "zero in stock".
-function resolveMaterialStock(it, stocks) {
+// Core name+size (with Box/Butter Paper category fallback) matching, run against whatever
+// pool of stock rows is handed in — factored out so resolveMaterialStock can try a
+// hotel-scoped pool first before falling back to the full one (see below).
+function matchInPool(it, pool) {
   const nameCandidates = nameCandidatesOf(it);
   if (!nameCandidates.length) return null;
   const category = materialStockCategoryOf(nameCandidates.join(' '));
@@ -50,16 +48,37 @@ function resolveMaterialStock(it, stocks) {
 
   const itemSize = normalizeSize(it.size);
   for (const name of nameCandidates) {
-    const match = stocks.find((s) => String(s.packingMaterial || '').trim().toLowerCase() === name
+    const match = pool.find((s) => String(s.packingMaterial || '').trim().toLowerCase() === name
       && normalizeSize(s.size) === itemSize);
     if (match) return match;
   }
 
   if (KEYWORD_CATEGORY_FALLBACK.has(category)) {
-    const matches = stocks.filter((s) => materialStockCategoryOf(s.packingMaterial) === category);
+    const matches = pool.filter((s) => materialStockCategoryOf(s.packingMaterial) === category);
     if (matches.length) return (itemSize && matches.find((s) => normalizeSize(s.size) === itemSize)) || matches[0];
   }
   return null;
+}
+
+// Finds the MaterialStock row (if any) this item's packaging resolves to. Returns null
+// when the item carries no packing-material attribute at all, when it's Ziplock (never
+// tracked via Material Stock, unchanged historical deduction behavior), or when nothing
+// in stock matches by name+size (nor the Box/Butter Paper category fallback) — callers
+// treat null as "not tracked here", not as "zero in stock".
+//
+// `hotelName`, when given, makes this a soft preference, not a hard restriction: a
+// same-hotel match is preferred over one from a different hotel (or the hotel-agnostic
+// pool), but if no hotel-scoped match exists this still falls back to matching across
+// every row exactly like before — so hotels/materials that never got hotel-tagged keep
+// working unchanged. Omitting hotelName reproduces the old (fully hotel-agnostic) behavior.
+function resolveMaterialStock(it, stocks, hotelName = '') {
+  const hotel = String(hotelName || '').trim().toLowerCase();
+  if (hotel) {
+    const hotelPool = stocks.filter((s) => String(s.hotelName || '').trim().toLowerCase() === hotel);
+    const hotelMatch = matchInPool(it, hotelPool);
+    if (hotelMatch) return hotelMatch;
+  }
+  return matchInPool(it, stocks);
 }
 
 // Which packaging-design stickerType (Operations > Box/Ziplock/Butter Paper/Wooden

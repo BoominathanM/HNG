@@ -769,6 +769,7 @@ export default function Inventory() {
         packingMaterial: item.packingMaterial,
         size: item.size,
         stockCount: item.stockCount,
+        minStock: item.minStock,
         purchaseDate: item.purchaseDate ? dayjs(item.purchaseDate) : null,
         vendor: item.vendor,
         hotelName: item.hotelName,
@@ -2162,6 +2163,11 @@ export default function Inventory() {
                     style={{ borderRadius: 10, overflow: 'hidden' }}
                     columns={[
                       {
+                        title: 'Code',
+                        dataIndex: 'materialCode',
+                        render: v => v ? <Tag color="purple" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text>,
+                      },
+                      {
                         title: 'Packing Material',
                         dataIndex: 'packingMaterial',
                         render: v => <Text strong style={{ color: textColor }}>{v}</Text>,
@@ -2373,11 +2379,14 @@ export default function Inventory() {
               </Form.Item>
             </Col>
             <Col span={12}>
-              <Form.Item label="Purchase Date" name="purchaseDate">
-                <DatePicker style={{ width: '100%', borderRadius: 8 }} />
+              <Form.Item label="Min Stock" name="minStock" tooltip="Trigger a Low Stock Alert to Inventory/Purchase once stock falls below this after an order deduction. Leave 0 to disable.">
+                <InputNumber min={0} style={{ width: '100%', borderRadius: 8 }} placeholder="0" />
               </Form.Item>
             </Col>
           </Row>
+          <Form.Item label="Purchase Date" name="purchaseDate">
+            <DatePicker style={{ width: '100%', borderRadius: 8 }} />
+          </Form.Item>
           <Form.Item label="Vendor / Supplier" name="vendor">
             <Select
               showSearch

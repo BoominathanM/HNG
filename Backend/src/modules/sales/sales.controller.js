@@ -756,11 +756,22 @@ async function deductMaterialStockQty(rows, order) {
     if (!(qty > 0)) continue;
     try {
       const stocks = await MaterialStock.find().sort('purchaseDate');
-      const target = resolveMaterialStock(it, stocks);
+      const target = resolveMaterialStock(it, stocks, order.hotelName);
       if (!target) continue; // no matching stock entry (or Ziplock/no packing attribute) — skip rather than guess
 
       target.stockCount = Math.max(0, (target.stockCount || 0) - qty);
       await target.save();
+
+      if (target.minStock > 0 && target.stockCount < target.minStock) {
+        const isOut = target.stockCount === 0;
+        notifyRoles({
+          modules: ['Inventory', 'Purchase'],
+          type: 'low_stock',
+          title: isOut ? 'Out of Stock' : 'Low Stock Alert',
+          message: `${target.packingMaterial}${target.size ? ` (${target.size})` : ''} — ${target.stockCount}/${target.minStock} remaining (Order ${order.orderCode})`,
+          link: '/inventory',
+        }).catch(() => {});
+      }
     } catch (err) {
       console.error(`Material stock deduction failed for order ${order.orderCode}, item "${it.itemName || it.name}":`, err.message);
     }

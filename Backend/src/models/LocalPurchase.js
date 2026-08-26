@@ -2,6 +2,10 @@ const mongoose = require('mongoose');
 
 const localPurchaseSchema = new mongoose.Schema({
   lpCode: { type: String, unique: true },
+  // Which pool this purchase's items land in — 'inventory' (default, unchanged historical
+  // behavior) adds to InventoryItem/Stock Inventory as always. 'material_stock' instead adds
+  // to MaterialStock (Inventory > Material Stocks, packing materials tracked by name+size).
+  purchaseTarget: { type: String, enum: ['inventory', 'material_stock'], default: 'inventory' },
   invoiceNo: { type: String, required: true },
   // Date printed on the invoice itself (from AI scan or manual entry) — used as the
   // purchaseDate on this purchase's InventoryItem.purchaseBatches, distinct from
@@ -16,7 +20,15 @@ const localPurchaseSchema = new mongoose.Schema({
     // Optional — set when the entered item should merge into an existing Inventory item
     // by code rather than being matched by name (same convention as Inventory's Add Item
     // mergeItemCode). Left blank, addLocalPurchaseStock falls back to matching by itemName.
+    // When purchaseTarget === 'material_stock', this same field instead holds a MaterialStock
+    // materialCode to merge into (addLocalPurchaseMaterialStock falls back to name+size match).
     itemCode: String,
+    // Only meaningful when purchaseTarget === 'material_stock' — packing-material size (e.g.
+    // "15ml"), part of the name+size match key used everywhere else Material Stock is matched.
+    size: String,
+    // Only meaningful when purchaseTarget === 'material_stock' — scopes the added/merged stock
+    // to a hotel, same field as MaterialStock.hotelName. Left blank, the stock is generic/pooled.
+    hotelName: String,
     qty: Number,
     unit: String,
     amount: Number,

@@ -529,7 +529,7 @@ async function computeSuggestedTasks() {
   // anyTaskSet checks below, so only the truly-neglected ones resurface. Dispatched/Completed/
   // Closed/Cancelled orders are still excluded — those are past the point this checklist acts on.
   const orders = await Order.find({ deletedAt: null, status: { $in: ['In Production', 'Dispatch Ready'] } })
-    .select('orderCode clientName items kitOrders printingStatus printingStatusOverrides isUrgent isEmergency emergencyApproved displayUnitTab createdAt splitDates packagingIncludes packagingIncludesQty kitOverallQty').lean();
+    .select('orderCode clientName hotelName items kitOrders printingStatus printingStatusOverrides isUrgent isEmergency emergencyApproved displayUnitTab createdAt splitDates packagingIncludes packagingIncludesQty kitOverallQty').lean();
   // Same task NAME can be split across multiple tasks (different assignees), and a product
   // can independently need SEVERAL different task names (e.g. "Filling" then "Packing"),
   // each covering the full required qty on its own — see checkTaskQuantityOverflow /
@@ -591,7 +591,7 @@ async function computeSuggestedTasks() {
   // Material Stocks by name+size) — fetched once and matched per item below via the same
   // resolveMaterialStock helper sales.controller.js's deductMaterialStockForOrder uses, so
   // "is this in stock" here can never disagree with what actually gets deducted on order creation.
-  const materialStocks = await MaterialStock.find().select('packingMaterial size stockCount').lean();
+  const materialStocks = await MaterialStock.find().select('packingMaterial size stockCount hotelName').lean();
 
   const suggestions = [];
   for (const o of orders) {
@@ -709,7 +709,7 @@ async function computeSuggestedTasks() {
       // row was actually found for this item's packing material+size — an item whose
       // packaging was never entered into Material Stocks isn't treated as "out of stock",
       // just as "not tracked here" (same posture deductMaterialStockForOrder already takes).
-      const materialStockMatch = resolveMaterialStock(it, materialStocks);
+      const materialStockMatch = resolveMaterialStock(it, materialStocks, o.hotelName);
       const materialStockReady = !materialStockMatch || (materialStockMatch.stockCount || 0) >= requiredQty;
       const materialShortfall = materialStockReady ? null : {
         material: materialStockMatch.packingMaterial,

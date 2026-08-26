@@ -8,6 +8,7 @@ const StockMovement = require('../../models/StockMovement');
 const PickupOrder = require('../../models/PickupOrder');
 const QuotationComparison = require('../../models/QuotationComparison');
 const QuotationRequest = require('../../models/QuotationRequest');
+const MaterialStock = require('../../models/MaterialStock');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -15,6 +16,7 @@ const upload = require('../../config/multer');
 const { notifyRoles } = require('../../utils/notify');
 const aiService = require('../../services/aiService');
 const { backfillPendingDeductionsForItem } = require('../sales/sales.controller');
+const { normalizeSize } = require('../../utils/materialStockMatch');
 
 // ─── PURCHASE REQUESTS ────────────────────────────────────────────────────────
 exports.getRequests = asyncHandler(async (req, res) => {
@@ -966,16 +968,74 @@ async function addLocalPurchaseStock(lp, userId) {
   }
 }
 
+// Material Stocks counterpart of addLocalPurchaseStock above — used instead of it when
+// lp.purchaseTarget === 'material_stock'. Items are packing materials (Box/Ziplock/Bottle/…)
+// rather than InventoryItems: each line merges into an existing MaterialStock row by
+// materialCode (it.itemCode, validated up front in createLocalPurchase) if given, else by
+// packing-material name+size (same matching rule resolveMaterialStock uses everywhere else),
+// preferring a match scoped to the line's own hotelName if one was entered — else a brand
+// new MaterialStock row is created so the purchase still "arrives" rather than being dropped.
+// Wrapped per-item so one bad line can't block the others or the Local Purchase record itself.
+async function addLocalPurchaseMaterialStock(lp, userId) {
+  for (const it of lp.items || []) {
+    const name = (it.itemName || '').trim();
+    const qty = Number(it.qty) || 0;
+    if (!name || qty <= 0) continue;
+    try {
+      const codeRaw = String(it.itemCode || '').trim().toUpperCase();
+      let stock = codeRaw ? await MaterialStock.findOne({ materialCode: codeRaw }) : null;
+
+      if (!stock) {
+        const size = normalizeSize(it.size);
+        const hotel = String(it.hotelName || '').trim().toLowerCase();
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const nameRe = new RegExp(`^${escaped}$`, 'i');
+        const candidates = await MaterialStock.find({ packingMaterial: nameRe });
+        const sameSize = candidates.filter((s) => normalizeSize(s.size) === size);
+        stock = (hotel && sameSize.find((s) => String(s.hotelName || '').trim().toLowerCase() === hotel))
+          || sameSize[0]
+          || null;
+      }
+
+      if (stock) {
+        stock.stockCount = (stock.stockCount || 0) + qty;
+        await stock.save();
+      } else {
+        await MaterialStock.create({
+          materialCode: await generateCode('MS'),
+          packingMaterial: name,
+          size: it.size || '',
+          stockCount: qty,
+          vendor: lp.vendorName || '',
+          hotelName: it.hotelName || '',
+          purchaseDate: lp.invoiceDate || lp.createdAt || Date.now(),
+          createdBy: userId,
+        });
+      }
+    } catch (err) {
+      console.error(`[local-purchase] material stock sync failed for "${name}":`, err.message);
+    }
+  }
+}
+
 exports.createLocalPurchase = asyncHandler(async (req, res, next) => {
+  const purchaseTarget = req.body.purchaseTarget === 'material_stock' ? 'material_stock' : 'inventory';
+
   // Item Code is optional per line (manual entry or typed in after an AI invoice scan) —
-  // validate every code entered actually matches an Inventory item BEFORE the record is
+  // validate every code entered actually matches an existing item BEFORE the record is
   // created, so a typo never gets swallowed by addLocalPurchaseStock's per-item try/catch
   // and silently fails to merge (same "reject, don't silently duplicate/drop" rule as the
-  // Inventory Add Item's mergeItemCode).
+  // Inventory Add Item's mergeItemCode). Which model to validate against depends on
+  // purchaseTarget — Inventory items and Material Stock codes are separate namespaces.
   const codesEntered = [...new Set((req.body.items || [])
     .map((it) => String(it.itemCode || '').trim().toUpperCase())
     .filter(Boolean))];
-  if (codesEntered.length) {
+  if (codesEntered.length && purchaseTarget === 'material_stock') {
+    const found = await MaterialStock.find({ materialCode: { $in: codesEntered } }).select('materialCode');
+    const foundCodes = new Set(found.map((f) => f.materialCode));
+    const missing = codesEntered.filter((c) => !foundCodes.has(c));
+    if (missing.length) return next(new AppError(`No material stock found with code(s): ${missing.join(', ')}`, 400));
+  } else if (codesEntered.length) {
     const found = await InventoryItem.find({ itemCode: { $in: codesEntered }, deletedAt: null }).select('itemCode itemType itemName');
     const foundByCode = new Map(found.map((f) => [f.itemCode, f]));
     const missing = codesEntered.filter((c) => !foundByCode.has(c));
@@ -995,8 +1055,11 @@ exports.createLocalPurchase = asyncHandler(async (req, res, next) => {
   }
 
   // Bulk raw material must be tracked in Litres or Kg, same constraint as Inventory's Add Item.
-  const badBulkUnit = (req.body.items || []).find((it) => it.itemType === 'bulk' && !['Litres', 'Kg'].includes(it.unit));
-  if (badBulkUnit) return next(new AppError(`"${badBulkUnit.itemName}" is marked Bulk Raw Material — Unit must be Litres or Kg`, 400));
+  // Not applicable to Material Stocks lines (no Bulk/Direct concept there).
+  if (purchaseTarget !== 'material_stock') {
+    const badBulkUnit = (req.body.items || []).find((it) => it.itemType === 'bulk' && !['Litres', 'Kg'].includes(it.unit));
+    if (badBulkUnit) return next(new AppError(`"${badBulkUnit.itemName}" is marked Bulk Raw Material — Unit must be Litres or Kg`, 400));
+  }
 
   const lpCode = await generateCode('LP');
   let vendorId = req.body.vendorId || null;
@@ -1034,12 +1097,17 @@ exports.createLocalPurchase = asyncHandler(async (req, res, next) => {
 
   const lp = await LocalPurchase.create({
     ...req.body,
+    purchaseTarget,
     ...(vendorId ? { vendorId } : {}),
     ...(purchasePersonId ? { purchasePersonId } : {}),
     lpCode,
     createdBy: req.user._id,
   });
-  await addLocalPurchaseStock(lp, req.user._id);
+  if (purchaseTarget === 'material_stock') {
+    await addLocalPurchaseMaterialStock(lp, req.user._id);
+  } else {
+    await addLocalPurchaseStock(lp, req.user._id);
+  }
   res.status(201).json({ success: true, data: lp });
 });
 

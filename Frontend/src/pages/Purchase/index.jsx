@@ -48,6 +48,7 @@ import {
   useCompareQuotationsMutation,
   useSelectBestQuotationMutation,
   useGetPickupOrdersQuery,
+  useGetMaterialStocksQuery,
 } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
 import html2pdf from 'html2pdf.js';
@@ -160,6 +161,7 @@ export default function Purchase() {
   const { data: requestsData } = useGetRequestsQuery({ limit: 500 });
   const { data: purchaseOrdersData } = useGetPurchaseOrdersQuery({ limit: 500 });
   const { data: localPurchasesData } = useGetLocalPurchasesQuery();
+  const { data: materialStocksData } = useGetMaterialStocksQuery();
 
   const [raiseRequestMutation] = useRaiseRequestMutation();
   const [recordQuotationAskMutation] = useRecordQuotationAskMutation();
@@ -199,6 +201,11 @@ export default function Purchase() {
   const purchasePersons = useMemo(() => (purchasePersonsData?.data || []).map((p) => ({
     id: p._id, key: p._id, name: p.name, phone: p.phone, gPayNumber: p.gPayNumber,
   })), [purchasePersonsData]);
+
+  const materialStocksList = useMemo(() => (materialStocksData?.data || []).map((s) => ({
+    key: s._id, code: s.materialCode, name: s.packingMaterial, size: s.size || '',
+    stockCount: s.stockCount || 0, hotelName: s.hotelName || '',
+  })), [materialStocksData]);
 
   const inventoryItems = useMemo(() => (itemsData?.data || []).map((i) => ({
     key: i._id, code: i.itemCode, name: i.itemName,
@@ -931,6 +938,9 @@ export default function Purchase() {
   // Whether each line's Amount was entered/scanned as GST-inclusive or -exclusive — applies to
   // the whole invoice, matches the same toggle on the Purchase Order Received Order modal.
   const [localPurchasePriceType, setLocalPurchasePriceType] = useState('exclusive');
+  // Which pool this purchase's items land in — 'inventory' (default) keeps everything exactly
+  // as before; 'material_stock' routes the items into Inventory > Material Stocks instead.
+  const [localPurchaseTarget, setLocalPurchaseTarget] = useState('inventory');
   const localPurchaseNotifyRef = useRef({});
   const [localPurchaseDetailView, setLocalPurchaseDetailView] = useState(null);
 
@@ -1496,7 +1506,7 @@ export default function Purchase() {
       invoiceFile: localPurchaseInvoiceFile?.name || null,
       vendorName: values.vendorName || localPurchaseScannedDetails?.vendorName || '',
       vendorPhone: values.vendorPhone || localPurchaseScannedDetails?.vendorPhone || '',
-      items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0, gstPercent: Number(it.gstPercent) || 0, itemCode: String(it.itemCode || '').trim().toUpperCase() || undefined, itemType: it.itemType === 'bulk' ? 'bulk' : 'standard' })),
+      items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0, gstPercent: Number(it.gstPercent) || 0, itemCode: String(it.itemCode || '').trim().toUpperCase() || undefined, itemType: it.itemType === 'bulk' ? 'bulk' : 'standard', size: it.size || undefined, hotelName: it.hotelName || undefined })),
       totalAmount: values.totalAmount || localPurchaseScannedDetails?.totalAmount || 0,
       gstAmount: Number(values.gstAmount ?? localPurchaseScannedDetails?.gstAmount) || 0,
       paymentType: values.paymentType || 'credit',
@@ -1560,6 +1570,7 @@ export default function Purchase() {
         invoiceNo: newLP.invoiceNo,
         vendorName: newLP.vendorName,
         vendorPhone: newLP.vendorPhone,
+        purchaseTarget: localPurchaseTarget,
         items: (newLP.items || []).map((it) => ({
           itemName: it.itemName || it.name || 'Item',
           itemCode: it.itemCode || undefined,
@@ -1568,7 +1579,9 @@ export default function Purchase() {
           amount: Number(it.amount) || 0,
           gstPercent: Number(it.gstPercent) || 0,
           priceType: localPurchasePriceType,
-          itemType: it.itemType === 'bulk' ? 'bulk' : 'standard',
+          ...(localPurchaseTarget === 'material_stock'
+            ? { size: it.size || undefined, hotelName: it.hotelName || undefined }
+            : { itemType: it.itemType === 'bulk' ? 'bulk' : 'standard' }),
         })),
         totalAmount: Number(newLP.totalAmount) || 0,
         gstAmount: Number(newLP.gstAmount) || 0,
@@ -1595,12 +1608,19 @@ export default function Purchase() {
     setLocalPurchasePaymentType('credit');
     setLocalPurchasePaidBy('');
     setLocalPurchasePriceType('exclusive');
+    setLocalPurchaseTarget('inventory');
     enqueueSnackbar('Local purchase recorded successfully!', { variant: 'success' });
     };
 
+    const isMaterialMode = localPurchaseTarget === 'material_stock';
     const summaryLines = newLP.items.map((it) => {
-      const typeLabel = it.itemType === 'bulk' ? 'Bulk Raw Material' : 'Direct Stock';
       const code = String(it.itemCode || '').trim().toUpperCase();
+      if (isMaterialMode) {
+        if (!code) return `${it.name} — add as NEW material stock${it.size ? ` (${it.size})` : ''}`;
+        const matched = materialStocksList.find((s) => s.code === code);
+        return `${it.name} — merge into "${matched ? matched.name : code}" (${code})`;
+      }
+      const typeLabel = it.itemType === 'bulk' ? 'Bulk Raw Material' : 'Direct Stock';
       if (!code) return `${it.name} — add as NEW ${typeLabel} item`;
       const matched = inventoryItems.find((i) => i.code === code);
       return `${it.name} — merge into "${matched ? matched.name : code}" (${code}, ${typeLabel})`;
@@ -4215,12 +4235,21 @@ export default function Purchase() {
           </div>
         }
         open={showAddLocalPurchaseModal}
-        onCancel={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); setLocalPurchasePriceType('exclusive'); }}
+        onCancel={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); setLocalPurchasePriceType('exclusive'); setLocalPurchaseTarget('inventory'); }}
         footer={null}
         width={580}
         centered
       >
         <Form form={localPurchaseForm} layout="vertical" onFinish={handleAddLocalPurchase} style={{ marginTop: 8 }}>
+
+          {/* Stock Type — which pool these items land in */}
+          <Form.Item label="Stock Type" style={{ marginBottom: 16 }} tooltip="Stock Inventory adds these items to Inventory as usual. Material Stocks adds them to Inventory > Material Stocks (packing materials tracked by name + size) instead.">
+            <Select
+              value={localPurchaseTarget}
+              onChange={setLocalPurchaseTarget}
+              options={[{ value: 'inventory', label: 'Stock Inventory' }, { value: 'material_stock', label: 'Material Stocks' }]}
+            />
+          </Form.Item>
 
           {/* Invoice Scan Section */}
           <div style={{ marginBottom: 16, padding: '14px 16px', borderRadius: 12, border: '1.5px dashed #B11E6A66', background: isDark ? '#1a0f14' : '#fff8fb' }}>
@@ -4313,19 +4342,27 @@ export default function Purchase() {
             {(fields, { add, remove }) => (
               <div style={{ marginBottom: 16 }}>
                 {fields.map(({ key, name, ...restField }) => {
+                  const isMaterialMode = localPurchaseTarget === 'material_stock';
                   const typedName = String(watchedLPItems?.[name]?.itemName || '').trim().toLowerCase();
                   const typedCode = String(watchedLPItems?.[name]?.itemCode || '').trim();
-                  const rowItemType = watchedLPItems?.[name]?.itemType === 'bulk' ? 'bulk' : 'standard';
-                  // Exact (case-insensitive) name match within the same stock type — when this
-                  // exists, the line will auto-merge into it by name even without an Item Code.
+                  const typedSize = String(watchedLPItems?.[name]?.size || '').trim().toLowerCase();
+                  // Material Stocks lines have no Bulk/Direct concept — always treat as 'standard'
+                  // for rendering (e.g. keeps the Unit field a free AutoComplete) regardless of
+                  // any stale itemType value left over from switching Stock Type back and forth.
+                  const rowItemType = isMaterialMode ? 'standard' : (watchedLPItems?.[name]?.itemType === 'bulk' ? 'bulk' : 'standard');
+                  // Exact (case-insensitive) name (+ size, in Material Stocks mode) match — when
+                  // this exists, the line will auto-merge into it even without picking a code.
                   const exactMatch = typedName.length > 0
-                    ? inventoryItems.find((i) => i.itemType === rowItemType && (i.name || '').toLowerCase() === typedName)
+                    ? (isMaterialMode
+                        ? materialStocksList.find((s) => (s.name || '').toLowerCase() === typedName && (s.size || '').trim().toLowerCase() === typedSize)
+                        : inventoryItems.find((i) => i.itemType === rowItemType && (i.name || '').toLowerCase() === typedName))
                     : null;
-                  // Item Code dropdown, restricted to the same stock type (Direct/Bulk) since
-                  // the backend rejects a cross-type merge — same rule as the collision hint.
-                  const codeOptions = inventoryItems
-                    .filter((i) => i.itemType === rowItemType)
-                    .map((i) => ({ value: i.code, label: `${i.code} — ${i.name} (${formatQty(i.current)} ${i.unit})` }));
+                  // Code dropdown — Material Stock codes in Material Stocks mode, else Inventory
+                  // item codes restricted to the same stock type (Direct/Bulk), same rule as the
+                  // collision hint (the backend rejects a cross-type merge).
+                  const codeOptions = isMaterialMode
+                    ? materialStocksList.filter((s) => s.code).map((s) => ({ value: s.code, label: `${s.code} — ${s.name}${s.size ? ` (${s.size})` : ''} — ${formatQty(s.stockCount)} in stock` }))
+                    : inventoryItems.filter((i) => i.itemType === rowItemType).map((i) => ({ value: i.code, label: `${i.code} — ${i.name} (${formatQty(i.current)} ${i.unit})` }));
                   return (
                     <div key={key} style={{ marginBottom: 8, padding: '8px 8px 2px', borderRadius: 8, border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}` }}>
                       <Row gutter={6} wrap={false} align="middle">
@@ -4335,26 +4372,32 @@ export default function Purchase() {
                           </Form.Item>
                         </Col>
                         <Col flex="0 0 150px">
-                          <Form.Item {...restField} name={[name, 'itemType']} initialValue="standard" style={{ marginBottom: 6 }} tooltip="Direct Stock lands in Stock Inventory as usual. Bulk Raw Material lands on Inventory's Bulk tab (Litres/Kg) and is packed into sellable stock later via Fill Stock.">
-                            <Select
-                              size="small"
-                              options={[{ value: 'standard', label: 'Direct Stock' }, { value: 'bulk', label: 'Bulk Raw Material' }]}
-                              onChange={(v) => {
-                                const items = localPurchaseForm.getFieldValue('items') || [];
-                                const row = items[name] || {};
-                                items[name] = {
-                                  ...row,
-                                  itemType: v,
-                                  // Bulk is restricted to Litres/Kg (its Select only offers those) — fall back to
-                                  // Litres if the row didn't already hold one. Switching back to Direct Stock
-                                  // keeps whatever unit was set — Litres/Kg are valid Direct units too (e.g. oil
-                                  // sold by the packet still measured in Litres), so it's never force-reset to Pcs.
-                                  unit: v === 'bulk' && !['Litres', 'Kg'].includes(row.unit) ? 'Litres' : row.unit,
-                                };
-                                localPurchaseForm.setFieldsValue({ items });
-                              }}
-                            />
-                          </Form.Item>
+                          {isMaterialMode ? (
+                            <Form.Item {...restField} name={[name, 'size']} style={{ marginBottom: 6 }} tooltip="Packing material size (e.g. 15ml, 30x20cm) — part of what identifies this material in Material Stocks.">
+                              <Input size="small" placeholder="Size (optional)" />
+                            </Form.Item>
+                          ) : (
+                            <Form.Item {...restField} name={[name, 'itemType']} initialValue="standard" style={{ marginBottom: 6 }} tooltip="Direct Stock lands in Stock Inventory as usual. Bulk Raw Material lands on Inventory's Bulk tab (Litres/Kg) and is packed into sellable stock later via Fill Stock.">
+                              <Select
+                                size="small"
+                                options={[{ value: 'standard', label: 'Direct Stock' }, { value: 'bulk', label: 'Bulk Raw Material' }]}
+                                onChange={(v) => {
+                                  const items = localPurchaseForm.getFieldValue('items') || [];
+                                  const row = items[name] || {};
+                                  items[name] = {
+                                    ...row,
+                                    itemType: v,
+                                    // Bulk is restricted to Litres/Kg (its Select only offers those) — fall back to
+                                    // Litres if the row didn't already hold one. Switching back to Direct Stock
+                                    // keeps whatever unit was set — Litres/Kg are valid Direct units too (e.g. oil
+                                    // sold by the packet still measured in Litres), so it's never force-reset to Pcs.
+                                    unit: v === 'bulk' && !['Litres', 'Kg'].includes(row.unit) ? 'Litres' : row.unit,
+                                  };
+                                  localPurchaseForm.setFieldsValue({ items });
+                                }}
+                              />
+                            </Form.Item>
+                          )}
                         </Col>
                         <Col flex="0 0 28px">
                           {fields.length > 1 && (
@@ -4388,25 +4431,34 @@ export default function Purchase() {
                           </Form.Item>
                         </Col>
                         <Col flex="auto" style={{ minWidth: 0 }}>
-                          <Form.Item {...restField} name={[name, 'itemCode']} style={{ marginBottom: 6 }} tooltip="Pick an existing item to merge this stock into it instead of creating a duplicate. Only items of the same stock type (Direct/Bulk) selected above are listed. Leave blank to add as new.">
+                          <Form.Item {...restField} name={[name, 'itemCode']} style={{ marginBottom: 6 }} tooltip={isMaterialMode ? 'Pick an existing Material Stock row to merge this purchase into it instead of creating a duplicate. Leave blank to add as new.' : 'Pick an existing item to merge this stock into it instead of creating a duplicate. Only items of the same stock type (Direct/Bulk) selected above are listed. Leave blank to add as new.'}>
                             <Select
                               showSearch
                               allowClear
-                              placeholder="Item Code (optional — merges into existing item)"
+                              placeholder={isMaterialMode ? 'Material Code (optional — merges into existing stock)' : 'Item Code (optional — merges into existing item)'}
                               options={codeOptions}
                               filterOption={(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())}
                             />
                           </Form.Item>
                         </Col>
                       </Row>
+                      {isMaterialMode && (
+                        <Row gutter={6} wrap={false} align="middle">
+                          <Col flex="auto" style={{ minWidth: 0 }}>
+                            <Form.Item {...restField} name={[name, 'hotelName']} style={{ marginBottom: 6 }} tooltip="Optional — scopes this stock to a specific hotel, same as Inventory's Add Material Stock form. Leave blank for generic/pooled stock.">
+                              <Input size="small" placeholder="Hotel Name (optional)" />
+                            </Form.Item>
+                          </Col>
+                        </Row>
+                      )}
                       {typedName.length >= 2 && !typedCode && (
                         exactMatch ? (
                           <Text style={{ fontSize: 11, color: '#52c41a', display: 'block', marginTop: -4, marginBottom: 6 }}>
-                            <CheckCircleOutlined style={{ marginRight: 4 }} />Matches existing item "{exactMatch.name}" ({exactMatch.code}) by name — stock will merge into it automatically.
+                            <CheckCircleOutlined style={{ marginRight: 4 }} />Matches existing {isMaterialMode ? 'material stock' : 'item'} "{exactMatch.name}" ({exactMatch.code}) by name{isMaterialMode ? '+size' : ''} — stock will merge into it automatically.
                           </Text>
                         ) : (
                           <Text style={{ fontSize: 11, color: '#fa8c16', display: 'block', marginTop: -4, marginBottom: 6 }}>
-                            <WarningOutlined style={{ marginRight: 4 }} />No exact match in Inventory for this name — pick the correct item above via Item Code, or leave blank to add it as a new item.
+                            <WarningOutlined style={{ marginRight: 4 }} />No exact match in {isMaterialMode ? 'Material Stocks' : 'Inventory'} for this name — pick the correct {isMaterialMode ? 'material' : 'item'} above via {isMaterialMode ? 'Material Code' : 'Item Code'}, or leave blank to add it as new.
                           </Text>
                         )
                       )}
@@ -4623,7 +4675,7 @@ export default function Purchase() {
           )}
 
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-            <Button style={{ flex: 1 }} onClick={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); setLocalPurchasePriceType('exclusive'); }}>
+            <Button style={{ flex: 1 }} onClick={() => { setShowAddLocalPurchaseModal(false); localPurchaseForm.resetFields(); setLocalPurchaseInvoiceFile(null); setLocalPurchaseScannedDetails(null); setLocalPurchaseNewVendorDetected(false); setLocalPurchasePaymentType('credit'); setLocalPurchasePaidBy(''); setLocalPurchasePriceType('exclusive'); setLocalPurchaseTarget('inventory'); }}>
               Cancel
             </Button>
             <Button

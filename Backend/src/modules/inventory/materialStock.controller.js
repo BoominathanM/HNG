@@ -1,6 +1,7 @@
 const MaterialStock = require('../../models/MaterialStock');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
+const generateCode = require('../../utils/codeGenerator');
 
 exports.getAll = asyncHandler(async (req, res) => {
   const filter = {};
@@ -10,7 +11,8 @@ exports.getAll = asyncHandler(async (req, res) => {
 });
 
 exports.create = asyncHandler(async (req, res) => {
-  const stock = await MaterialStock.create({ ...req.body, createdBy: req.user._id });
+  const materialCode = await generateCode('MS');
+  const stock = await MaterialStock.create({ ...req.body, materialCode, createdBy: req.user._id });
   res.status(201).json({ success: true, data: stock });
 });
 

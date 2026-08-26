@@ -285,7 +285,8 @@ export const apiSlice = createApi({
     createLocalPurchase: builder.mutation({
       query: (formData) => ({ url: '/purchase/local', method: 'post', data: formData }),
       // Also invalidates Orders/Tasks — see receiveOrder's comment (same auto-backfill).
-      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses', 'Inventory', 'Reports', 'Orders', 'Tasks'],
+      // MaterialStocks — so Inventory's Material Stock tab reflects a Material Stocks-target purchase immediately.
+      invalidatesTags: ['LocalPurchases', 'LocalPurchaseExpenses', 'Inventory', 'MaterialStocks', 'Reports', 'Orders', 'Tasks'],
     }),
     getLocalPurchase: builder.query({
       query: (id) => ({ url: `/purchase/local/${id}` }),
