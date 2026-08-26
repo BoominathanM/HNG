@@ -1451,6 +1451,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     applyAttrSpec('packingMaterial', item.packingMaterial);
     applySpec('materialCategory', item.materialCategory);
     applyAttrSpec('brand', item.brand);
+    // Brush Type ('Wooden'/'Plastic') drives Operations routing to the Wooden Brush
+    // production tab (see isWoodenBrushProduct in Operations/index.jsx) — without this
+    // auto-fill it silently stayed blank unless a rep manually picked it, so a wooden
+    // brush order could reach Operations with no packaging destination at all.
+    applyAttrSpec('brushType', item.brushType);
   };
 
   // Auto-fetch Sticker Size from the selected inventory item's per-packing-material size

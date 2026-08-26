@@ -118,6 +118,20 @@ api.interceptors.response.use(
   (res) => res,
   async (error) => {
     const original = error.config;
+    // Rate-limited (429): the backend always sends `Retry-After` (seconds) on
+    // these. Retry once after that delay instead of surfacing a transient cap
+    // as a broken request — most 429s here are a momentary burst (e.g. a
+    // window-focus refetch storm, or several teammates sharing one office IP)
+    // that clears within the window, not a real failure.
+    if (error.response?.status === 429 && original && !original._retry429) {
+      original._retry429 = true;
+      const retryAfterSec = Number(error.response.headers?.['retry-after']);
+      const delayMs = Number.isFinite(retryAfterSec) && retryAfterSec > 0
+        ? retryAfterSec * 1000
+        : 1500;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(delayMs, 10000)));
+      return api(original);
+    }
     if (error.response?.status === 401 && original && !original._retry) {
       original._retry = true;
       const auth = JSON.parse(localStorage.getItem('hng_auth') || '{}');

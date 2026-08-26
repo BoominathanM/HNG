@@ -5,6 +5,7 @@ const morgan = require('morgan');
 const compression = require('compression');
 const rateLimit = require('express-rate-limit');
 const mongoSanitize = require('express-mongo-sanitize');
+const jwt = require('jsonwebtoken');
 const path = require('path');
 
 const errorHandler = require('./middleware/errorHandler');
@@ -67,10 +68,30 @@ app.use('/api/auth/login', rateLimit({
   max: 20,
   message: 'Too many login attempts. Try again in 15 minutes.',
 }));
+// Keyed per logged-in user (decoded from their JWT) rather than raw IP, so
+// staff sharing one office/NAT IP don't all draw from a single shared bucket
+// and trip each other's requests into 429s. Falls back to IP for
+// unauthenticated requests. `max` is sized to comfortably absorb the app's
+// normal background polling (alerts/notifications/tasks) plus the burst of
+// refetches RTK Query fires on window focus/reconnect, while still bounding
+// runaway/scripted traffic.
+const rateLimitKey = (req) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    try {
+      const decoded = jwt.verify(authHeader.slice(7), process.env.JWT_SECRET);
+      if (decoded && decoded.id) return `user:${decoded.id}`;
+    } catch (_) {
+      // invalid/expired token — fall back to IP-based limiting below
+    }
+  }
+  return req.ip;
+};
 app.use('/api', rateLimit({
   windowMs: 60 * 1000,
-  max: 300,
-  message: 'Too many requests from this IP.',
+  max: 600,
+  keyGenerator: rateLimitKey,
+  message: 'Too many requests. Please slow down and try again shortly.',
 }));
 
 // Body parsers

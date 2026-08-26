@@ -992,13 +992,15 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // Kit items can appear in BOTH this tab and another packaging tab simultaneously:
         //   - displayUnitTab drives the KIT ASSEMBLY step
         //   - packingMaterialTab drives the INDIVIDUAL PRODUCT PACKING step
-        // When a PERSONALIZED kit item has packingMaterialTab='Wooden Brush' but the display unit
-        // routes elsewhere, include it here for the individual packing step — independent of the
-        // kit assembly step. Restricted to personalized kits: a SEPARATE kit has no inner/outer
-        // split, so it is routed SOLELY by its display unit and must never leak into a different tab.
+        // When a kit item has packingMaterialTab='Wooden Brush' but the display unit routes
+        // elsewhere, include it here for its own manufacturing step — independent of the kit
+        // assembly step. Unlike Box/Ziplock/Butter Paper/Other (restricted to personalized kits
+        // only — see the equivalent checks below in this file — since those describe how an
+        // already-finished item gets wrapped), a wooden brush component needs its own physical
+        // manufacturing before it can go into ANY kit, personalized OR separate, so this
+        // carve-out is NOT restricted to personalized here.
         const needsWoodenBrushPacking = packType === 'wooden_brush' ||
-          (isKitItem && itemCategoryOf(item) === 'personalized'
-            && item.packingMaterialTab === 'Wooden Brush' && kitTabOf(item, order) !== 'Wooden Brush');
+          (isKitItem && item.packingMaterialTab === 'Wooden Brush' && kitTabOf(item, order) !== 'Wooden Brush');
         if (!needsWoodenBrushPacking) return;
         const product = item.product || item.itemName;
         // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.

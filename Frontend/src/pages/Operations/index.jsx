@@ -463,7 +463,13 @@ export default function Operations() {
         // "Wooden" always routes to the Wooden Brush tab — regardless of whatever packing
         // material was ALSO selected for it (Box/Ziplock/etc.) — since wooden brushes go
         // through their own production pipeline. Highest priority: overrides the config lookup.
-        const isWoodenBrushProduct = String(item.brushType || '').trim().toLowerCase() === 'wooden';
+        // Name fallback: orders saved before Brush Type auto-filled from the inventory item
+        // (or where a rep left it blank) still route correctly when the product's own name
+        // already says "wooden" — e.g. a "Wooden Brush" inventory item — instead of silently
+        // falling through to no packaging destination at all.
+        const itemNameLc = String(item.itemName || item.name || '').trim().toLowerCase();
+        const isWoodenBrushProduct = String(item.brushType || '').trim().toLowerCase() === 'wooden'
+          || (itemNameLc.includes('wooden') && itemNameLc.includes('brush'));
         // Config lookup first; string-match fallback for items without a config entry
         // (e.g. orders from before packing config was set up, or unregistered material names).
         const packingMaterialTab = isWoodenBrushProduct
