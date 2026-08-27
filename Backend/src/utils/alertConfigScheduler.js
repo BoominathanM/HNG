@@ -2,6 +2,7 @@ const cron = require('node-cron');
 const AlertConfig = require('../models/AlertConfig');
 const AlertFireLog = require('../models/AlertFireLog');
 const AlertLog = require('../models/AlertLog');
+const AlertSnooze = require('../models/AlertSnooze');
 const { getPendingRecordsForConfig } = require('./alertConfigQueries');
 
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -73,6 +74,18 @@ async function processConfig(config) {
   // Reconciliation — drop guard rows for records that resolved (dispatched/approved)
   // since the last tick, so a re-arrival can't inherit a stale lastFiredAt.
   await AlertFireLog.deleteMany({
+    configId: config._id,
+    recordId: { $nin: [...pendingIds] },
+  });
+
+  // Same reconciliation for the per-user snooze/stop overlay — otherwise a user's
+  // "Stop" (or an unexpired snooze) on an alert whose record later resolves would
+  // keep suppressing that alert if the SAME record id re-enters the pending set
+  // within AlertSnooze's 30-day TTL (e.g. a dispatch_reason order going pending →
+  // approved → pending again on invoice re-upload, or a StickerRequest looping
+  // back through 'Design Change' → 'Waiting for Approval'). Clearing it here means
+  // a genuinely new occurrence rings again instead of staying silently muted.
+  await AlertSnooze.deleteMany({
     configId: config._id,
     recordId: { $nin: [...pendingIds] },
   });

@@ -11,7 +11,7 @@ const mongoose = require('mongoose');
 // the next cron tick, bursting every recipient's audio alert simultaneously.
 const alertFireLogSchema = new mongoose.Schema({
   configId: { type: mongoose.Schema.Types.ObjectId, ref: 'AlertConfig', required: true },
-  recordType: { type: String, enum: ['StickerRequest', 'Order', 'Task', 'PurchaseOrder', 'InventoryItem', 'QuotationRequest'], required: true },
+  recordType: { type: String, enum: ['StickerRequest', 'Order', 'Task', 'PurchaseOrder', 'InventoryItem', 'QuotationRequest', 'DispatchRecord'], required: true },
   recordId: { type: mongoose.Schema.Types.ObjectId, required: true },
   lastFiredAt: { type: Date, required: true },
 }, { timestamps: true });
