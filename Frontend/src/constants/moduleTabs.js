@@ -53,6 +53,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'kit', label: 'Kit' },
     { key: 'material_stocks', label: 'Material Stocks' },
     { key: 'packing_config', label: 'Packing Material Configuration' },
+    { key: 'damaged_report', label: 'Damaged Report' },
   ],
   Purchase: [
     { key: 'stock_status', label: 'Quotation & Raise Request' },
@@ -95,6 +96,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'auditor_tax', label: 'Auditor Tax Report' },
     { key: 'emergency_approvals', label: 'Approval Report' },
     { key: 'switch_report', label: 'Switch Report' },
+    { key: 'damaged_report', label: 'Damaged Report' },
     { key: 'task_performance', label: 'Task Management Performance' },
   ],
   Settings: [

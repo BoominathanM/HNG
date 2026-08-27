@@ -8,14 +8,19 @@ const PurchaseOrder = require('../models/PurchaseOrder');
 const InventoryItem = require('../models/InventoryItem');
 const QuotationRequest = require('../models/QuotationRequest');
 const DispatchRecord = require('../models/DispatchRecord');
+const ForecastReorderState = require('../models/ForecastReorderState');
+const { getConsumptionForecastData } = require('./consumptionForecast');
 
-// Grace period ('low_stock'/'quotation_request' only) — how long a record must stay
-// pending before the FIRST alert fires, in milliseconds. Every other group has no grace
-// period (graceValue stays null) and fires immediately on first-seen-pending.
+// Grace period ('low_stock'/'quotation_request'/'consumption_forecast'/'sample_followup'
+// only) — how long a record must stay pending before the FIRST alert fires, in
+// milliseconds. graceUnit is one of 'minutes' | 'hours' | 'days'. Every other group has
+// no grace period (graceValue stays null) and fires immediately on first-seen-pending.
 function graceMs(config) {
   const val = Number(config.graceValue) || 0;
   if (val <= 0) return 0;
-  return config.graceUnit === 'hours' ? val * 60 * 60 * 1000 : val * 24 * 60 * 60 * 1000;
+  if (config.graceUnit === 'minutes') return val * 60 * 1000;
+  if (config.graceUnit === 'hours') return val * 60 * 60 * 1000;
+  return val * 24 * 60 * 60 * 1000;
 }
 
 // AlertConfig.role matches User.role ('Ziplock'), but StickerRequest.stickerType
@@ -257,6 +262,112 @@ async function getPendingRecordsForConfig(config) {
         title: `Quotation not raised — ${r.itemName}${r.vendorName ? ` (${r.vendorName})` : ''}${r.askCount > 1 ? `, asked ${r.askCount}x` : ''}`,
         link: '/purchase',
       }));
+  }
+
+  if (config.group === 'consumption_forecast') {
+    // Fires on the SAME "Reorder Now" status the Sales → Consumption Forecast tab shows
+    // (shared math in utils/consumptionForecast.js). Like 'low_stock', a per-(hotel,
+    // product) ForecastReorderState row records when the product first went "Reorder Now"
+    // so the grace period ("Alert After N days") can elapse before the first alert; the
+    // row is dropped once the product recovers (Reorder Soon / Sufficient Stock) or the
+    // hotel reorders it, which also clears the alert via the scheduler's reconciliation.
+    const now = new Date();
+    const grace = graceMs(config);
+    const rows = await getConsumptionForecastData();
+
+    const keepIds = [];
+    const pending = [];
+    for (const h of rows) {
+      for (const p of h.products || []) {
+        if (p.status !== 'Reorder Now') continue;
+        const productKey = (p.itemName || '').trim().toLowerCase();
+        if (!productKey) continue;
+        // Atomic upsert (this runs from both the scheduler tick AND every user's
+        // ~20s /alerts/active poll, so a plain findOne+create would race the unique
+        // index) — reorderNowSince is only stamped on first insert.
+        const state = await ForecastReorderState.findOneAndUpdate(
+          { partyId: h.partyId, productKey },
+          {
+            $setOnInsert: { partyId: h.partyId, productKey, reorderNowSince: now },
+            $set: { hotelName: h.hotelName, productName: p.itemName },
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+        keepIds.push(state._id);
+        if (now.getTime() - new Date(state.reorderNowSince).getTime() >= grace) {
+          const eta = p.estimatedStockOutDate ? new Date(p.estimatedStockOutDate).toISOString().slice(0, 10) : null;
+          pending.push({
+            recordType: 'ForecastReorderState',
+            recordId: state._id,
+            record: state,
+            title: `Reorder Now — ${h.hotelName}: ${p.itemName}${eta ? ` (stock-out est. ${eta})` : ''}`,
+            link: '/sales',
+          });
+        }
+      }
+    }
+    // Drop stale state rows (product recovered / hotel reordered / party removed) so a
+    // later relapse starts a fresh grace timer instead of inheriting the old one. Scope
+    // to rows that already existed when this pass started so a concurrent poll's fresh
+    // insert isn't swept away.
+    await ForecastReorderState.deleteMany({ _id: { $nin: keepIds }, createdAt: { $lt: now } });
+    return pending;
+  }
+
+  if (config.group === 'sample_followup') {
+    // N days ("Follow up after") since a SAMPLE order's dispatch, ring the order's own
+    // assigned sales person (dynamic per-record recipient, like 'dispatch_reason') to
+    // chase the hotel for feedback / a real order. Resolves when the hotel places any
+    // non-sample order after the sample went out, or after a trailing cap so old
+    // samples age out on their own; a per-user Stop also dismisses it.
+    const now = new Date();
+    const grace = graceMs(config);
+    const TRAILING_CAP_MS = grace + 30 * 24 * 60 * 60 * 1000; // stop chasing 30d past the follow-up point
+    const earliest = new Date(now.getTime() - TRAILING_CAP_MS);
+
+    // DispatchRecord.dispatchedAt is stamped only on the final full-dispatch round
+    // (dispatch.controller.js confirmDispatch) — set the moment the goods actually go
+    // out, BEFORE the dispatcher's later "Finished Dispatch / upload LR" step that
+    // flips status to 'Dispatched'. Anchor on dispatchedAt (not status) so a sample
+    // couriered out without the LR paperwork step still counts as "sent".
+    const records = await DispatchRecord.find({
+      dispatchedAt: { $ne: null, $gte: earliest },
+    }).populate('orderId', 'orderCode assignedTo clientName orderCategory clientPartyId').lean();
+
+    const out = [];
+    for (const r of records) {
+      const o = r.orderId;
+      if (!o || o.orderCategory !== 'SAMPLE' || !o.assignedTo) continue;
+      const age = now.getTime() - new Date(r.dispatchedAt).getTime();
+      if (age < grace) continue; // grace ("Follow up after N days") not elapsed yet
+
+      const orFilters = [];
+      if (o.clientPartyId) orFilters.push({ clientPartyId: o.clientPartyId });
+      if (o.clientName) {
+        const escaped = o.clientName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        orFilters.push({ clientName: new RegExp(`^${escaped}$`, 'i') });
+      }
+      const laterRealOrder = orFilters.length
+        ? await Order.findOne({
+            orderCategory: { $ne: 'SAMPLE' },
+            deletedAt: null,
+            createdAt: { $gt: r.dispatchedAt },
+            $or: orFilters,
+          }).select('_id').lean()
+        : null;
+      if (laterRealOrder) continue; // hotel already converted — nothing to chase
+
+      const days = Math.floor(age / (24 * 60 * 60 * 1000));
+      out.push({
+        recordType: 'DispatchRecord',
+        recordId: r._id,
+        record: r,
+        recipientUserId: o.assignedTo,
+        title: `Sample follow-up due — ${o.clientName || 'hotel'} (sample sent ${days}d ago)`,
+        link: '/sales',
+      });
+    }
+    return out;
   }
 
   if (config.group === 'sales_approval' || config.group === 'operations_approval') {

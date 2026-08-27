@@ -27,6 +27,15 @@ const purchaseOrderSchema = new mongoose.Schema({
     amount: Number,
   }],
   amount: Number,
+  // Quotation-stage CGST/SGST/IGST split, summed from this (possibly batched) order's
+  // PurchaseRequest(s) at approval time (see purchaseOrderSync). Used by
+  // reports.controller explodePurchaseOrderItems as the Input-GST source when the goods
+  // invoice hasn't been AI-scanned at receiving yet (receivedInvoice*Amount below take
+  // priority once present). An inter-state quotation carries igstAmount only.
+  cgstAmount: Number,
+  sgstAmount: Number,
+  igstAmount: Number,
+  gstAmount: Number,
   billNo: String,
   invNo: String,
   paymentTerms: String,
@@ -48,6 +57,14 @@ const purchaseOrderSchema = new mongoose.Schema({
   // transporter, distinct from `amount` (the vendor's goods invoice value) which must
   // never be used as the LR payable amount.
   billTotalAmount: { type: Number, default: 0 },
+  // GST portion of the LR/transport bill, AI-scanned from the LR copy (or entered manually).
+  // lrGstAmount is the combined total; the CGST/SGST/IGST split records whether the transport
+  // was billed intra-state (CGST+SGST) or inter-state (IGST). Informational — the LR bill is
+  // a freight/reimbursement charge, not goods Input GST, so it is not part of the GST reports.
+  lrGstAmount: { type: Number, default: 0 },
+  lrCgstAmount: { type: Number, default: 0 },
+  lrSgstAmount: { type: Number, default: 0 },
+  lrIgstAmount: { type: Number, default: 0 },
   expectedDeliveryDate: Date,
   // Purchase's own Paid/Not Paid toggle captured at LR-upload time, later refined to
   // 'Partial Paid'/'Paid' by Finance settling it in amounts (see lrPaidAmount) — kept

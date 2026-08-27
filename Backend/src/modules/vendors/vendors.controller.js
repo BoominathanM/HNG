@@ -200,6 +200,27 @@ exports.scanDocument = asyncHandler(async (req, res, next) => {
   }
 });
 
+// POST /api/vendors/scan-bill — AI-scan a vendor bill/invoice (image or PDF) and
+// return the extracted invoice header + line items to auto-fill the "Scan & Record
+// Vendor Bill" form. Reuses the same invoice extractor as the local-purchase scan.
+exports.scanBill = asyncHandler(async (req, res, next) => {
+  if (!req.file) return next(new AppError('Please upload the bill file', 400));
+
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) {
+    return next(new AppError('AI is not configured yet. Add your OpenAI API key under Integration → AI Integration.', 503));
+  }
+
+  const file = { url: req.file.path, originalName: req.file.originalname, mimetype: req.file.mimetype };
+  try {
+    const extracted = await aiService.extractInvoiceFields({ apiKey, model: config.model, file });
+    res.status(200).json({ success: true, data: extracted });
+  } catch (err) {
+    return next(new AppError(`AI extraction failed: ${err.message}`, err.statusCode || 502));
+  }
+});
+
 exports.generateAiSummary = asyncHandler(async (req, res, next) => {
   const vendor = await Vendor.findOne({ _id: req.params.id, deletedAt: null });
   if (!vendor) return next(new AppError('Vendor not found', 404));

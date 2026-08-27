@@ -684,7 +684,9 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
   // finishing a Partial round keeps it 'Confirmed' since items are still pending.
   if (finishedType === 'Fully Finished') dispatch.status = 'Dispatched';
   // Carry through any extra tracking details the client provides.
-  ['lrDate', 'transportName', 'fromCity', 'toCity', 'weight', 'freight', 'packages', 'estimatedDelivery'].forEach((k) => {
+  ['lrDate', 'transportName', 'fromCity', 'toCity', 'weight', 'freight', 'packages', 'estimatedDelivery',
+    // GST on the LR/transport bill + its CGST/SGST vs IGST split (AI-scanned or manual).
+    'gstAmount', 'cgstAmount', 'sgstAmount', 'igstAmount', 'totalAmount'].forEach((k) => {
     if (req.body[k] !== undefined && req.body[k] !== '') dispatch[k] = req.body[k];
   });
   if (req.file) dispatch.lrFileUrl = req.file.path;

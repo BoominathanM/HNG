@@ -21,6 +21,7 @@ import { useSelector } from 'react-redux';
 import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import DamagedReport from '../../components/reports/DamagedReport';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import dayjs from 'dayjs';
@@ -2336,6 +2337,12 @@ export default function Inventory() {
 
               </div>
             ),
+          },
+          /* ─────────── DAMAGED REPORT ─────────── */
+          {
+            key: 'damaged_report',
+            label: 'Damaged Report',
+            children: <DamagedReport />,
           },
         ])}
         activeKey={activeKeyFor(activeInvTab)}

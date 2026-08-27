@@ -10,12 +10,12 @@ exports.getAlertConfigs = asyncHandler(async (req, res) => {
 
 // Upserts by (group, role) — the UI always edits one of the 6 fixed rows,
 // never creates/deletes configs directly.
-const GRACE_GROUPS = ['low_stock', 'quotation_request'];
+const GRACE_GROUPS = ['low_stock', 'quotation_request', 'consumption_forecast', 'sample_followup'];
 
 exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
   const { group, role, recipientUserIds, startTime, endTime, days, durationMinutes, graceValue, graceUnit, audioUrl, audioPublicId, audioName, isEnabled } = req.body;
 
-  if (!['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'dispatch_status', 'lr_payment', 'low_stock', 'quotation_request', 'short_received'].includes(group)) {
+  if (!['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'dispatch_status', 'lr_payment', 'low_stock', 'quotation_request', 'short_received', 'consumption_forecast', 'sample_followup'].includes(group)) {
     return next(new AppError('Invalid alert group', 400));
   }
   if (group === 'design' && !['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(role)) {
@@ -37,7 +37,7 @@ exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
         endTime: endTime || '18:00',
         days: Array.isArray(days) ? days : [],
         durationMinutes: durationMinutes || 30,
-        ...(GRACE_GROUPS.includes(group) ? { graceValue: Number(graceValue) || null, graceUnit: graceUnit === 'hours' ? 'hours' : 'days' } : {}),
+        ...(GRACE_GROUPS.includes(group) ? { graceValue: Number(graceValue) || null, graceUnit: ['minutes', 'hours', 'days'].includes(graceUnit) ? graceUnit : 'days' } : {}),
         ...(audioUrl !== undefined ? { audioUrl, audioPublicId, audioName } : {}),
         isEnabled: !!isEnabled,
         updatedBy: req.user._id,

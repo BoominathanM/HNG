@@ -12,6 +12,7 @@ import html2pdf from 'html2pdf.js';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import TaskPerformanceReport from '../../components/reports/TaskPerformanceReport';
+import DamagedReport from '../../components/reports/DamagedReport';
 import {
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,
@@ -407,15 +408,22 @@ export default function Reports() {
   const totalExpenses = plFilteredData.reduce((s, d) =>
     s + plSelectedExpenses.reduce((sum, cat) => sum + (d.expenses[cat] || 0), 0), 0
   );
-  const totalNetProfit = totalGrossProfit - totalExpenses;
+  // Damaged-goods loss from Billing quantity reductions (Reports > Damaged Report). Cost-basis
+  // loss reduces Net Profit (the lessed units' revenue AND their COGS already dropped from
+  // Total Sales / COGS above); revenue-basis loss is a memo figure only. Not product-split, so
+  // it only applies at the un-product-filtered view.
+  const totalDamageLoss        = plFilteredData.reduce((s, d) => s + (d.damageLoss || 0), 0);
+  const totalDamageRevenueLoss = plFilteredData.reduce((s, d) => s + (d.damageRevenueLoss || 0), 0);
+  const totalNetProfit = totalGrossProfit - totalExpenses - totalDamageLoss;
   const netGstPayable  = totalSalesGst - totalCogsGst;
 
   const plChartData = plFilteredData.map(d => ({
     month: d.month,
     sales: d.sales,
     grossProfit: d.grossProfit,
+    damageLoss: d.damageLoss || 0,
     totalExpenses: plSelectedExpenses.reduce((sum, cat) => sum + (d.expenses[cat] || 0), 0),
-    netProfit: d.grossProfit - plSelectedExpenses.reduce((sum, cat) => sum + (d.expenses[cat] || 0), 0),
+    netProfit: d.grossProfit - plSelectedExpenses.reduce((sum, cat) => sum + (d.expenses[cat] || 0), 0) - (d.damageLoss || 0),
   }));
 
   const expensePieData = expenseCategoryConfig
@@ -511,13 +519,17 @@ export default function Reports() {
   const exportPlExcel = () => {
     // Exports every expense category with its own column regardless of which chips are
     // currently checked in the UI — the export is a full record, not a filtered view.
-    const headers = ['Month', 'Sales (Excl. GST)', 'Sales GST', 'COGS', 'Gross Profit', 'Paid', 'Pending', ...expenseCategoryConfig.map(c => c.label)];
-    const rows = plFilteredData.map(d => [
-      d.month, d.sales, d.salesGst || 0, d.cogs, d.grossProfit, d.paid || 0, d.pending || 0,
-      ...expenseCategoryConfig.map(c => d.expenses?.[c.key] || 0),
-    ]);
+    const headers = ['Month', 'Sales (Excl. GST)', 'Sales GST', 'COGS', 'Gross Profit', 'Damaged Goods Loss', 'Paid', 'Pending', ...expenseCategoryConfig.map(c => c.label), 'Net Profit'];
+    const rows = plFilteredData.map(d => {
+      const exp = plSelectedExpenses.reduce((sum, cat) => sum + (d.expenses?.[cat] || 0), 0);
+      return [
+        d.month, d.sales, d.salesGst || 0, d.cogs, d.grossProfit, d.damageLoss || 0, d.paid || 0, d.pending || 0,
+        ...expenseCategoryConfig.map(c => d.expenses?.[c.key] || 0),
+        d.grossProfit - exp - (d.damageLoss || 0),
+      ];
+    });
     const catTotals = expenseCategoryConfig.map(c => plFilteredData.reduce((s, d) => s + (d.expenses?.[c.key] || 0), 0));
-    rows.push(['TOTAL', totalSales, totalSalesGst, totalCogs, totalGrossProfit, totalPaid, totalPending, ...catTotals]);
+    rows.push(['TOTAL', totalSales, totalSalesGst, totalCogs, totalGrossProfit, totalDamageLoss, totalPaid, totalPending, ...catTotals, totalNetProfit]);
     exportToExcel(headers, rows, 'Profit_Loss_Report.csv');
   };
   const exportPlPdf = () => exportRefToPdf(plRef, 'Profit_Loss_Report.pdf');
@@ -1433,7 +1445,8 @@ export default function Reports() {
                     { label: 'Total Sales',   value: totalSales,       color: '#B11E6A', sub: 'Revenue from products' },
                     { label: 'Cost of Goods', value: totalCogs,        color: '#8a1652', sub: 'Purchase cost (COGS)' },
                     { label: 'Gross Profit',  value: totalGrossProfit, color: '#C94F8A', sub: `Margin: ${totalSales ? ((totalGrossProfit / totalSales) * 100).toFixed(1) : 0}%` },
-                    { label: 'Net Profit',    value: totalNetProfit,   color: '#6b1240', sub: `After ₹${(totalExpenses ?? 0).toLocaleString()} expenses` },
+                    ...(totalDamageLoss > 0 ? [{ label: 'Damaged Goods Loss', value: totalDamageLoss, color: '#ff4d4f', sub: `Lost billing value: ₹${(totalDamageRevenueLoss ?? 0).toLocaleString()}` }] : []),
+                    { label: 'Net Profit',    value: totalNetProfit,   color: '#6b1240', sub: `After ₹${(totalExpenses ?? 0).toLocaleString()} expenses${totalDamageLoss > 0 ? ` + ₹${totalDamageLoss.toLocaleString()} damage` : ''}` },
                   ].map((s, i) => (
                     <Col xs={12} sm={6} key={s.label}>
                       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}>
@@ -2313,7 +2326,9 @@ export default function Reports() {
                         { label: 'Total Input GST / ITC (Purchase)', value: totInputGst, color: '#7c3aed', sub: `CGST ₹${(totPurCgst ?? 0).toLocaleString()} + SGST ₹${(totPurSgst ?? 0).toLocaleString()} + IGST ₹${(totPurIgst ?? 0).toLocaleString()}` },
                       ] : []),
                       ...(gstViewMode === 'combined' ? [
-                        { label: 'Net GST Payable', value: Math.max(netGstPayable, 0), color: netGstPayable > 0 ? '#ff4d4f' : '#52c41a', sub: netGstPayable > 0 ? 'Amount due to govt.' : 'Credit / No liability' },
+                        // sub line also carries the inter-state reconciliation: output IGST (on sales)
+                        // minus input IGST / ITC (on inter-state purchase bills) — negative = IGST credit.
+                        { label: 'Net GST Payable', value: Math.max(netGstPayable, 0), color: netGstPayable > 0 ? '#ff4d4f' : '#52c41a', sub: `${netGstPayable > 0 ? 'Amount due to govt.' : 'Credit / No liability'} · Net IGST ₹${(totSalesIgst - totPurIgst).toLocaleString()}` },
                       ] : []),
                     ].map((s, i) => (
                       <Col xs={12} sm={8} lg={24 / 5} key={s.label}>
@@ -3453,6 +3468,13 @@ export default function Reports() {
                 </div>
               );
             })(),
+          },
+
+          /* ─────────── DAMAGED REPORT ─────────── */
+          {
+            key: 'damaged_report',
+            label: 'Damaged Report',
+            children: <DamagedReport />,
           },
         ])}
       />

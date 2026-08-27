@@ -18,6 +18,7 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import CameraCaptureModal from '../../components/common/CameraCaptureModal';
 import {
   useGetDispatchQuery,
   useConfirmDispatchMutation,
@@ -924,6 +925,10 @@ export default function DispatchDetail() {
   const [lrFileList, setLrFileList] = useState([]);
   const [aiParsing, setAiParsing] = useState(false);
   const [aiParsed, setAiParsed] = useState(null);
+  // Camera "Scan Lorry Receipt" — opens an in-app webcam capture modal (a bare
+  // `capture` attr only opens the OS file-picker on desktop).
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [scanUploading, setScanUploading] = useState(false);
   const [finishedDispatch, setFinishedDispatch] = useState(false);
   const [lrMismatchReasonInput, setLrMismatchReasonInput] = useState('');
   const [submittingLrMismatch, setSubmittingLrMismatch] = useState(false);
@@ -1181,6 +1186,12 @@ export default function DispatchDetail() {
         fromCity: lrVals.fromCity || undefined,
         toCity: lrVals.toCity || undefined,
         freight: lrVals.freight || undefined,
+        // GST on the transport bill + its CGST/SGST vs IGST split (from the LR scan).
+        gstAmount: lrVals.gstAmount || undefined,
+        cgstAmount: lrVals.cgstAmount || undefined,
+        sgstAmount: lrVals.sgstAmount || undefined,
+        igstAmount: lrVals.igstAmount || undefined,
+        totalAmount: lrVals.totalAmount || undefined,
         packages: lrVals.packages || undefined,
         estimatedDelivery: lrVals.estimatedDelivery || undefined,
       }).unwrap();
@@ -1190,11 +1201,18 @@ export default function DispatchDetail() {
     }
   };
 
-  const handleAIParse = async () => {
-    const lrFile = lrFileList?.[0];
+  // `fileOverride` is the just-captured AntD file object passed from the "Scan Lorry
+  // Receipt" camera control's onChange — lets a scan run AI extraction against exactly
+  // the file it captured, instead of always assuming lrFileList[0]. Called with no arg
+  // (or a click event, which has no .uid) from the manual "AI Parse Receipt" button,
+  // it falls back to the first file in the list — unchanged behaviour.
+  const handleAIParse = async (fileOverride) => {
+    const lrFile = (fileOverride && (fileOverride.uid || fileOverride.originFileObj || fileOverride.response))
+      ? fileOverride
+      : lrFileList?.[0];
     const fileUrl = lrFile?.url || lrFile?.response?.url;
     if (!fileUrl) {
-      enqueueSnackbar('Upload a lorry receipt first.', { variant: 'warning' });
+      enqueueSnackbar('Upload or scan a lorry receipt first.', { variant: 'warning' });
       return;
     }
     setAiParsing(true);
@@ -1249,10 +1267,20 @@ export default function DispatchDetail() {
           toCity: parsed.toCity || undefined,
           weight: parsed.weight || undefined,
           freight: parsed.freight || undefined,
+          // GST on the transport bill + its CGST/SGST vs IGST split — inter-state
+          // transport prints IGST only, intra-state prints CGST+SGST.
+          gstAmount: parsed.gstAmount || undefined,
+          cgstAmount: parsed.cgstAmount || undefined,
+          sgstAmount: parsed.sgstAmount || undefined,
+          igstAmount: parsed.igstAmount || undefined,
+          totalAmount: parsed.totalAmount || undefined,
           packages: parsed.packages || undefined,
           estimatedDelivery: parsed.estimatedDelivery || undefined,
         }).unwrap();
-        enqueueSnackbar('AI extracted lorry receipt details and saved. Review and confirm below.', { variant: 'success' });
+        enqueueSnackbar(
+          `AI extracted lorry receipt details and saved. Review and confirm below.${Number(String(parsed.igstAmount || '').replace(/[^0-9.]/g, '')) > 0 ? ' Inter-state (IGST) transport bill.' : ''}`,
+          { variant: 'success' },
+        );
       } catch {
         enqueueSnackbar('AI extracted lorry receipt details, but auto-save failed — click "Save as Draft" so they survive a refresh.', { variant: 'warning' });
       }
@@ -1260,6 +1288,41 @@ export default function DispatchDetail() {
       enqueueSnackbar(err?.data?.message || 'AI extraction failed. You can still fill details in manually.', { variant: 'error' });
     } finally {
       setAiParsing(false);
+    }
+  };
+
+  // Camera capture → Cloudinary upload → same AI extraction as a manual upload.
+  // Receives the JPEG File from CameraCaptureModal, pushes it into the shared
+  // lrFileList (so it shows in the manual upload's list too), then runs handleAIParse
+  // against that exact file. Existing manual upload + parse flow is untouched.
+  const handleScanCapture = async (file) => {
+    setScanUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('files', file);
+      const res = await uploadFilesMutation({ formData: fd, folder: 'dispatch/lr' }).unwrap();
+      const uploaded = res?.data?.[0];
+      if (!uploaded?.url) {
+        enqueueSnackbar('Scan upload failed. Try again or use manual upload.', { variant: 'error' });
+        return;
+      }
+      const entry = {
+        uid: `scan-${Date.now()}`,
+        name: file.name,
+        status: 'done',
+        url: uploaded.url,
+        thumbUrl: uploaded.url,
+        cloudPublicId: uploaded.public_id,
+        type: file.type || 'image/jpeg',
+      };
+      setLrFileList((prev) => [...prev, entry].slice(-3));
+      setCameraOpen(false);
+      enqueueSnackbar('Scan captured — extracting lorry receipt details with AI…', { variant: 'info' });
+      await handleAIParse(entry);
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Scan upload failed. Try again or use manual upload.', { variant: 'error' });
+    } finally {
+      setScanUploading(false);
     }
   };
 
@@ -1330,6 +1393,12 @@ export default function DispatchDetail() {
         toCity: lrVals.toCity || '',
         weight: lrVals.weight || '',
         freight: lrVals.freight || '',
+        // GST on the transport bill + its CGST/SGST vs IGST split (from the LR scan).
+        gstAmount: lrVals.gstAmount || '',
+        cgstAmount: lrVals.cgstAmount || '',
+        sgstAmount: lrVals.sgstAmount || '',
+        igstAmount: lrVals.igstAmount || '',
+        totalAmount: lrVals.totalAmount || '',
         estimatedDelivery: lrVals.estimatedDelivery || '',
       };
       const res = await uploadLR(payload).unwrap();
@@ -2358,7 +2427,7 @@ export default function DispatchDetail() {
               <div style={{ background: sectionBg, border: `1px solid #B11E6A33`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                   <UploadOutlined style={{ color: '#B11E6A', fontSize: 16 }} />
-                  <Text strong style={{ color: textColor, fontSize: 13 }}>Lorry Receipt (Manual Upload)</Text>
+                  <Text strong style={{ color: textColor, fontSize: 13 }}>Lorry Receipt (Upload or Scan)</Text>
                   {lrUploaded && <Tag color="success" style={{ borderRadius: 12 }}>Uploaded</Tag>}
                 </div>
 
@@ -2380,6 +2449,23 @@ export default function DispatchDetail() {
                     {order.invoiceMismatchAwaitingReupload ? 'Re-upload Corrected Lorry Receipt (PDF / Image)' : 'Upload Lorry Receipt (PDF / Image)'}
                   </Button>
                 </Upload>
+
+                {/* Scan Lorry Receipt — opens an in-app webcam capture modal
+                    (CameraCaptureModal). The captured JPEG is uploaded to Cloudinary,
+                    dropped into the same lrFileList as the manual upload, and run through
+                    the SAME AI extraction (handleAIParse) — no separate "AI Parse" click.
+                    Existing manual upload + parse flow is untouched. */}
+                <Button
+                  icon={<CameraOutlined />}
+                  block
+                  disabled={order.invoiceMismatchStatus === 'pending'}
+                  loading={scanUploading || aiParsing}
+                  onClick={() => setCameraOpen(true)}
+                  style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginTop: 8 }}
+                >
+                  {scanUploading || aiParsing ? 'Extracting…' : 'Scan Lorry Receipt (Camera) — Auto AI Extract'}
+                </Button>
+
                 {order.invoiceMismatchStatus === 'pending' && (
                   <Text style={{ fontSize: 11, color: '#fa8c16', display: 'block', marginTop: 6 }}>
                     Upload is disabled while your reported mismatch is awaiting Sales approval.
@@ -2644,6 +2730,20 @@ export default function DispatchDetail() {
                                 },
                                 { label: 'Weight', value: aiParsed.weight, icon: <AppstoreOutlined /> },
                                 { label: 'Freight', value: aiParsed.freight, icon: <ThunderboltOutlined /> },
+                                // GST on the transport bill — IGST only when the LR was billed
+                                // inter-state, CGST+SGST when intra-state. Hidden if the LR had none.
+                                ...(Number(String(aiParsed.igstAmount || '').replace(/[^0-9.]/g, '')) > 0
+                                  ? [{ label: 'IGST (inter-state)', value: `₹${aiParsed.igstAmount}`, icon: <ThunderboltOutlined /> }]
+                                  : []),
+                                ...(Number(String(aiParsed.cgstAmount || '').replace(/[^0-9.]/g, '')) > 0
+                                  ? [{ label: 'CGST', value: `₹${aiParsed.cgstAmount}`, icon: <ThunderboltOutlined /> }]
+                                  : []),
+                                ...(Number(String(aiParsed.sgstAmount || '').replace(/[^0-9.]/g, '')) > 0
+                                  ? [{ label: 'SGST', value: `₹${aiParsed.sgstAmount}`, icon: <ThunderboltOutlined /> }]
+                                  : []),
+                                ...(Number(String(aiParsed.gstAmount || '').replace(/[^0-9.]/g, '')) > 0
+                                  ? [{ label: 'GST Total', value: `₹${aiParsed.gstAmount}`, icon: <ThunderboltOutlined /> }]
+                                  : []),
                                 { label: 'Est. Delivery', value: aiParsed.estimatedDelivery, icon: <CheckCircleOutlined /> },
                                 { label: 'Tracking URL', value: aiParsed.trackingUrl, icon: <LinkOutlined /> },
                               ].map((f) => (
@@ -2787,6 +2887,15 @@ export default function DispatchDetail() {
           </motion.div>
         </Col>
       </Row>
+
+      <CameraCaptureModal
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onCapture={handleScanCapture}
+        busy={scanUploading}
+        title="Scan Lorry Receipt"
+        fileNamePrefix="lorry-receipt"
+      />
     </div>
   );
 }

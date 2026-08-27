@@ -24,5 +24,7 @@ router.get('/performance', ctrl.getPerformance);
 router.get('/task-performance', ctrl.getTaskPerformanceReport);
 router.get('/emergency-approvals', ctrl.getEmergencyApprovalsReport);
 router.get('/switches', ctrl.getSwitchReport);
+router.get('/damaged', ctrl.getDamagedReport);
+router.get('/damaged/export', ctrl.exportDamagedReport);
 
 module.exports = router;

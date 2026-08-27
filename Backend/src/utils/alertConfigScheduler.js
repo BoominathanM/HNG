@@ -31,12 +31,12 @@ async function processConfig(config) {
   const now = new Date();
   const label = `${config.group}${config.role ? '/' + config.role : ''}`;
   if (!config.audioUrl) return { label, skipped: 'no audio uploaded' };
-  // 'task' and 'dispatch_reason' have no fixed recipientUserIds — their recipient is
-  // resolved per-record (task assignee / order's assigned sales person) in
-  // alertConfigQueries/alerts.controller.js instead. 'dispatch_status' is hybrid — it
-  // always has the order's assigned sales person as a per-record recipient even when
-  // no fixed Finance recipientUserIds have been picked yet.
-  if (!['task', 'dispatch_reason', 'dispatch_status'].includes(config.group) && !config.recipientUserIds?.length) {
+  // 'task', 'dispatch_reason' and 'sample_followup' have no fixed recipientUserIds —
+  // their recipient is resolved per-record (task assignee / order's assigned sales
+  // person) in alertConfigQueries/alerts.controller.js instead. 'dispatch_status' is
+  // hybrid — it always has the order's assigned sales person as a per-record recipient
+  // even when no fixed Finance recipientUserIds have been picked yet.
+  if (!['task', 'dispatch_reason', 'dispatch_status', 'sample_followup'].includes(config.group) && !config.recipientUserIds?.length) {
     return { label, skipped: 'no recipients' };
   }
   if (!isWithinWindow(config, now)) return { label, skipped: 'outside window', inWindow: false };

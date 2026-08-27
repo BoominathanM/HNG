@@ -18,6 +18,14 @@ const purchaseRequestSchema = new mongoose.Schema({
   }],
   amount: Number,
   gstAmount: Number,
+  // CGST/SGST/IGST split as printed on the AI-scanned supplier quotation (set alongside
+  // gstAmount by uploadQuotationFile / the Raise Request + Ask Quotation scan flows). An
+  // inter-state quotation prints IGST only; intra-state prints CGST+SGST — never both.
+  // Carried onto the PurchaseOrder at approval (purchaseOrderSync) so the GST / Purchase
+  // reports have a real Input-GST split even before the goods invoice is scanned at receiving.
+  cgstAmount: Number,
+  sgstAmount: Number,
+  igstAmount: Number,
   requestType: { type: String, enum: ['individual', 'bulk'], default: 'individual' },
   batchId: { type: String, default: null },
   status: { type: String, enum: ['Pending', 'Approved', 'Rejected', 'Modification'], default: 'Pending' },

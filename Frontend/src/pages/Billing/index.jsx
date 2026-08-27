@@ -148,7 +148,7 @@ const quotStatusColor = { 'In Process': '#7c3aed', Paid: '#6b1240', 'Partially P
 
 // "What Changed" pills for a priceEditHistory entry — changeType is a comma-joined string
 // like "Price Edited, Quantity Edited" written by billing.controller's describeChangeType.
-const changeTagColor = { 'Price Edited': '#B11E6A', 'Quantity Edited': '#3730a3', 'GST Edited': '#c2410c' };
+const changeTagColor = { 'Price Edited': '#B11E6A', 'Quantity Edited': '#3730a3', 'Quantity Reduced (Damage)': '#d46b08', 'GST Edited': '#c2410c' };
 const ChangeTypeTags = ({ changeType }) => {
   const parts = (changeType || 'Price Edited').split(',').map((p) => p.trim()).filter(Boolean);
   return (
@@ -773,6 +773,12 @@ export default function Billing() {
   const [priceEditPackagePrice, setPriceEditPackagePrice] = useState(0);
   const [priceEditPackageOrigPrice, setPriceEditPackageOrigPrice] = useState(0);
   const [priceEditReason, setPriceEditReason] = useState('');
+  // Per-line "reason for reduction" (damage) — keyed by the same row key used in the edit
+  // tables: standalone rows by `row.key`, a kit's overall-qty by `group.key`, a kit component
+  // row by `${group.key}::${component.key}`. Only rows whose qty was lowered below its original
+  // need one; the backend rejects a reduction with no reason (see billing.controller
+  // applyOrderPriceEdit).
+  const [priceEditLessReasons, setPriceEditLessReasons] = useState({});
   const [priceEditSaving, setPriceEditSaving] = useState(false);
 
   // Price Edit Logs modal — read-only audit trail (reason, edited by, date/time) for a
@@ -1163,6 +1169,7 @@ export default function Billing() {
     setPriceEditPackageOrigPrice(packagePrice);
 
     setPriceEditReason('');
+    setPriceEditLessReasons({});
     setPriceEditOpen(true);
   };
 
@@ -1182,6 +1189,30 @@ export default function Billing() {
       || g.componentRows.some(r => r.rate !== r.origRate || r.gst !== r.origGst || r.qty !== r.origQty))
     || priceEditStandaloneRows.some(r => r.rate !== r.origRate || r.gst !== r.origGst || r.qty !== r.origQty)
     || priceEditPackagePrice !== priceEditPackageOrigPrice;
+
+  // Every line whose quantity was lowered below its original ("less" / damaged goods). Each
+  // needs its own reason (priceEditLessReasons[rowKey]); the payload maps the reason back onto
+  // the flat products[]/kitOrders[] the backend expects via productIndex / kitId.
+  const priceEditReducedLines = [
+    ...priceEditStandaloneRows
+      .filter(r => Number(r.qty) < Number(r.origQty))
+      .map(r => ({ rowKey: r.key, name: r.name, kind: 'product', productIndex: r.productIndex, origQty: r.origQty, qty: r.qty, rate: r.rate, gst: r.gst })),
+    ...priceEditKitGroups.flatMap(g => [
+      ...(Number(g.qty) < Number(g.origQty)
+        ? [{ rowKey: g.key, name: `${g.name} — Kit Qty`, kind: 'kit', kitId: g.kitId, origQty: g.origQty, qty: g.qty, rate: g.kitPrice, gst: g.gst }]
+        : []),
+      ...g.componentRows
+        .filter(r => Number(r.qty) < Number(r.origQty))
+        .map(r => ({ rowKey: `${g.key}::${r.key}`, name: `${g.name} ↳ ${r.name}`, kind: 'product', productIndex: r.productIndex, origQty: r.origQty, qty: r.qty, rate: r.rate, gst: r.gst })),
+    ]),
+  ];
+  const priceEditHasReductions = priceEditReducedLines.length > 0;
+  const priceEditReductionsHaveReasons = priceEditReducedLines.every(l => (priceEditLessReasons[l.rowKey] || '').trim());
+  const priceEditReductionAmount = priceEditReducedLines.reduce((acc, l) => {
+    const q = Number(l.origQty) - Number(l.qty);
+    const excl = q * (Number(l.rate) || 0);
+    return { excl: acc.excl + excl, incl: acc.incl + excl * (1 + (Number(l.gst) || 0) / 100) };
+  }, { excl: 0, incl: 0 });
 
   // Split kit groups AND standalone rows into the same Personalized / Separate Kit / Separate
   // Product sections used everywhere else in the app (Sales' ORDER_CATEGORIES) — a product
@@ -1209,10 +1240,11 @@ export default function Billing() {
           render: (_, row) => (
             <InputNumber
               size="small"
-              min={row.origQty}
+              min={0}
               precision={0}
               value={row.qty}
               controls={false}
+              status={row.qty < row.origQty ? 'warning' : ''}
               style={{ width: '100%' }}
               onChange={(v) => updateStandaloneField(row.key, 'qty', v == null ? row.origQty : v)}
             />
@@ -1261,7 +1293,8 @@ export default function Billing() {
       <div style={{ background: isDark ? '#2a1520' : '#B11E6A10', padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <Text strong style={{ flex: '1 1 140px' }}>{g.name}</Text>
         <InputNumber
-          size="small" min={g.origQty} precision={0} value={g.qty} controls={false} style={{ width: 70 }}
+          size="small" min={0} precision={0} value={g.qty} controls={false} style={{ width: 70 }}
+          status={g.qty < g.origQty ? 'warning' : ''}
           onChange={(v) => updateKitGroupField(g.key, 'qty', v == null ? g.origQty : v)}
         />
         <InputNumber
@@ -1295,7 +1328,8 @@ export default function Billing() {
             <div key={r.key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0', marginLeft: 16, borderTop: `1px dashed ${isDark ? '#ffffff22' : '#00000014'}` }}>
               <Text style={{ flex: '1 1 120px', fontSize: 13 }}>↳ {r.name}</Text>
               <InputNumber
-                size="small" min={r.origQty} precision={0} value={r.qty} controls={false} style={{ width: 70 }}
+                size="small" min={0} precision={0} value={r.qty} controls={false} style={{ width: 70 }}
+                status={r.qty < r.origQty ? 'warning' : ''}
                 onChange={(v) => updateKitComponentField(g.key, r.key, 'qty', v == null ? r.origQty : v)}
               />
               <InputNumber
@@ -1365,13 +1399,32 @@ export default function Billing() {
     if (!priceEditInv?.key) { enqueueSnackbar('No record selected', { variant: 'error' }); return; }
     if (!priceEditHasChanges) { setPriceEditOpen(false); return; }
     if (!priceEditReason.trim()) { enqueueSnackbar('Please provide a reason for the price change', { variant: 'error' }); return; }
+    if (priceEditHasReductions && !priceEditReductionsHaveReasons) {
+      enqueueSnackbar('Please provide a reason for every reduced quantity', { variant: 'error' });
+      return;
+    }
     const isQuotation = priceEditInv.docType === 'Quotation';
+    // Map each reduced line's reason back onto the flat arrays the backend expects.
+    const reasonByProductIndex = {};
+    const reasonByKitId = {};
+    priceEditReducedLines.forEach(l => {
+      const rsn = (priceEditLessReasons[l.rowKey] || '').trim();
+      if (!rsn) return;
+      if (l.kind === 'product' && l.productIndex != null) reasonByProductIndex[l.productIndex] = rsn;
+      if (l.kind === 'kit' && l.kitId) reasonByKitId[l.kitId] = rsn;
+    });
     setPriceEditSaving(true);
     try {
       const payload = {
         id: priceEditInv.key,
-        products: priceEditPreview.flatProducts.map(p => ({ rate: p.rate, gst: p.gst, qty: p.qty })),
-        kitOrders: priceEditPreview.flatKitOrders.map(k => ({ kitId: k.kitId, kitPrice: k.kitPrice, gst: k.gst, overallQty: k.overallQty })),
+        products: priceEditPreview.flatProducts.map((p, idx) => ({
+          rate: p.rate, gst: p.gst, qty: p.qty,
+          ...(reasonByProductIndex[idx] ? { lessReason: reasonByProductIndex[idx] } : {}),
+        })),
+        kitOrders: priceEditPreview.flatKitOrders.map(k => ({
+          kitId: k.kitId, kitPrice: k.kitPrice, gst: k.gst, overallQty: k.overallQty,
+          ...(reasonByKitId[k.kitId] ? { lessReason: reasonByKitId[k.kitId] } : {}),
+        })),
         kitPackagePrice: priceEditPackagePrice,
         reason: priceEditReason.trim(),
       };
@@ -2468,7 +2521,7 @@ export default function Billing() {
         title={
           <Space>
             <EditOutlined style={{ color: '#B11E6A' }} />
-            <span style={{ fontWeight: 700 }}>Edit Invoice Pricing — {priceEditInv?.inv}</span>
+            <span style={{ fontWeight: 700 }}>Edit {priceEditInv?.docType === 'Quotation' ? 'Quotation' : 'Invoice'} Pricing — {priceEditInv?.inv}</span>
           </Space>
         }
         open={priceEditOpen}
@@ -2548,6 +2601,41 @@ export default function Billing() {
               </div>
             )}
 
+            {priceEditHasReductions && (
+              <div style={{ background: isDark ? '#2a1a0a' : '#fff7e6', border: '1px solid #fa8c1655', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <Text strong style={{ fontSize: 13, color: '#d46b08' }}>
+                    Quantity Reduction — Damage Reason <span style={{ color: '#ff4d4f' }}>*</span>
+                  </Text>
+                  <Text style={{ fontSize: 12, color: '#d46b08' }}>
+                    − ₹{r2(priceEditReductionAmount.excl).toLocaleString()} excl · ₹{r2(priceEditReductionAmount.incl).toLocaleString()} incl GST
+                  </Text>
+                </div>
+                <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>
+                  Each reduced line is logged to the Damaged Report and Profit &amp; Loss. A reason is required for every line.
+                </Text>
+                {priceEditReducedLines.map((l) => (
+                  <div key={l.rowKey} style={{ marginBottom: 8 }}>
+                    <Text style={{ fontSize: 12 }}>
+                      {l.name} — <Text delete type="secondary" style={{ fontSize: 12 }}>{l.origQty}</Text>
+                      {' → '}
+                      <Text strong style={{ fontSize: 12, color: '#d46b08' }}>{l.qty}</Text>
+                      {'  '}(−{Number(l.origQty) - Number(l.qty)})
+                    </Text>
+                    <Input.TextArea
+                      rows={1}
+                      autoSize={{ minRows: 1, maxRows: 3 }}
+                      status={(priceEditLessReasons[l.rowKey] || '').trim() ? '' : 'error'}
+                      placeholder="Why was this quantity reduced? (e.g. damaged in transit, customer rejected, short supply)"
+                      value={priceEditLessReasons[l.rowKey] || ''}
+                      onChange={(e) => setPriceEditLessReasons(prev => ({ ...prev, [l.rowKey]: e.target.value }))}
+                      style={{ marginTop: 2 }}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
+
             <div style={{ background: isDark ? '#1a0f14' : '#fdf5f9', border: '1px solid #B11E6A33', borderRadius: 10, padding: '12px 16px', marginBottom: 14 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                 <Text style={{ fontSize: 13, color: '#888' }}>Subtotal</Text>
@@ -2604,7 +2692,7 @@ export default function Billing() {
                 style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
                 onClick={handleSavePricing}
                 loading={priceEditSaving}
-                disabled={priceEditHasChanges && !priceEditReason.trim()}
+                disabled={(priceEditHasChanges && !priceEditReason.trim()) || (priceEditHasReductions && !priceEditReductionsHaveReasons)}
               >
                 Save Pricing
               </Button>

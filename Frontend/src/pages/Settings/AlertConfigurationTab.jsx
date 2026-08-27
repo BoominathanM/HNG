@@ -175,10 +175,25 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
         <div style={{ marginTop: 12 }}>
           <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>{graceLabel}</Text>
           <Space.Compact style={{ width: '100%', marginTop: 6 }}>
-            <InputNumber min={1} max={graceUnit === 'hours' ? 720 : 90} value={graceValue} onChange={setGraceValue} style={{ width: '60%', borderRadius: 8 }} />
+            <InputNumber
+              min={1}
+              max={graceUnit === 'minutes' ? 10080 : graceUnit === 'hours' ? 720 : 90}
+              value={graceValue} onChange={setGraceValue}
+              style={{ width: '60%', borderRadius: 8 }}
+            />
             <Select
-              value={graceUnit} onChange={setGraceUnit} style={{ width: '40%' }}
-              options={[{ value: 'days', label: 'Days' }, { value: 'hours', label: 'Hours' }]}
+              value={graceUnit}
+              onChange={(u) => {
+                setGraceUnit(u);
+                const cap = u === 'minutes' ? 10080 : u === 'hours' ? 720 : 90;
+                setGraceValue((v) => Math.min(Math.max(Number(v) || 1, 1), cap));
+              }}
+              style={{ width: '40%' }}
+              options={[
+                { value: 'minutes', label: 'Minutes' },
+                { value: 'hours', label: 'Hours' },
+                { value: 'days', label: 'Days' },
+              ]}
             />
           </Space.Compact>
         </div>
@@ -267,6 +282,9 @@ export default function AlertConfigurationTab() {
   const vendorUsersFor = (role) =>
     users.filter((u) => u.department === 'Vendors' && u.role === role && u.status === 'Active');
   const salesUsers = users.filter((u) => u.department === 'Sales' && u.status === 'Active');
+  const salesAdminUsers = users.filter(
+    (u) => (u.department === 'Sales' || u.department === 'Admin' || u.department === 'Management') && u.status === 'Active'
+  );
   const opsUsers = users.filter((u) => u.department === 'Operations' && u.status === 'Active');
   const financeUsers = users.filter((u) => u.department === 'Financial' && u.status === 'Active');
   const purchaseUsers = users.filter((u) => u.department === 'Purchase' && u.status === 'Active');
@@ -513,6 +531,53 @@ export default function AlertConfigurationTab() {
             recipientPool={purchaseUsers}
             deptLabel="Purchase"
             graceLabel="Alert After (if not raised)"
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Consumption Forecast — Reorder Now Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          When a hotel's product hits "Reorder Now" in the Sales → Consumption Forecast tab (estimated stock has run out), waits the grace period below, then rings selected Sales and Admin users — repeating on the schedule below, checked separately per hotel + product — until the hotel reorders it or the forecast recovers.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('consumption_forecast', null)?._id || 'consumption_forecast'}
+            title="Reorder Now Alert"
+            description="Notifies selected Sales / Admin users about hotel products that have hit Reorder Now in the Consumption Forecast."
+            group="consumption_forecast"
+            role={null}
+            config={findConfig('consumption_forecast', null)}
+            recipientPool={salesAdminUsers}
+            deptLabel="Sales / Admin"
+            graceLabel="Alert After (still Reorder Now)"
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Sample Order Follow-up Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          The set number of days after a sample order is dispatched to a hotel, rings the order's own assigned sales person to follow up — repeating on the schedule below — until the hotel places a real (non-sample) order or the follow-up window passes.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('sample_followup', null)?._id || 'sample_followup'}
+            title="Sample Order Follow-up Alert"
+            description="Notifies the sample order's assigned sales person to chase the hotel for feedback / a real order."
+            group="sample_followup"
+            role={null}
+            config={findConfig('sample_followup', null)}
+            dynamicRecipient
+            graceLabel="Follow up after (days since sample sent)"
           />
         </Col>
       </Row>

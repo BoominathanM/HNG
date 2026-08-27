@@ -72,6 +72,18 @@ async function syncOrderItemFromRequest(request) {
   if (!merged.length) return order; // nothing approved yet — leave the order untouched
   order.items = merged;
 
+  // Quotation-stage GST split carried up from the batch's Approved requests. A batch shares
+  // ONE scanned quotation whose whole-document GST is stamped onto every child request (same
+  // as gstAmount), so the representative value is the max across requests — NOT the sum, which
+  // would multiply it by the batch size. Reports read this as the Input-GST source until the
+  // goods invoice is scanned at receiving; explodePurchaseOrderItems treats the order as
+  // inter-state only when igst is the sole non-zero bucket.
+  const maxGst = (k) => approved.reduce((m, r) => Math.max(m, Number(r[k]) || 0), 0);
+  order.cgstAmount = maxGst('cgstAmount');
+  order.sgstAmount = maxGst('sgstAmount');
+  order.igstAmount = maxGst('igstAmount');
+  order.gstAmount = maxGst('gstAmount') || (order.cgstAmount + order.sgstAmount + order.igstAmount);
+
   // Single-item orders (solo requests, or the only distinct item in a batch) mirror
   // the request 1:1. Multi-item batch totals are the SUM of every merged line's
   // amount — recomputed here so the order total never sticks at a stale per-item value.

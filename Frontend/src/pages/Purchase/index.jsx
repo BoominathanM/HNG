@@ -30,6 +30,7 @@ import {
   useCreateBulkRequestMutation,
   useUploadQuotationFileMutation,
   useScanQuotationFileMutation,
+  useScanVendorDocumentMutation,
   useUpdatePurchaseRequestDetailsMutation,
   useReceiveOrderMutation,
   useScanReceivedInvoiceMutation,
@@ -192,6 +193,7 @@ export default function Purchase() {
   const [createBulkRequestMutation] = useCreateBulkRequestMutation();
   const [uploadQuotationFile] = useUploadQuotationFileMutation();
   const [scanQuotationFile] = useScanQuotationFileMutation();
+  const [scanVendorDocument] = useScanVendorDocumentMutation();
   const [updatePurchaseRequestDetails] = useUpdatePurchaseRequestDetailsMutation();
   const [addPurchaseNoteMutation] = useAddPurchaseNoteMutation();
   const { data: whatsAppMappingsData } = useGetWhatsAppEventMappingsQuery();
@@ -262,6 +264,7 @@ export default function Purchase() {
       requestType: r.requestType || 'individual', category: r.category || r.itemId?.category || 'Other',
       batchId: r.batchId || null, quotationFiles: r.quotationFiles || [],
       amount: r.amount ?? null, gstAmount: r.gstAmount ?? null,
+      cgstAmount: r.cgstAmount ?? null, sgstAmount: r.sgstAmount ?? null, igstAmount: r.igstAmount ?? null,
     }));
     if (mapped.length > 0) dispatch(setRaisedRequests(mapped));
   }, [requestsData]);
@@ -281,6 +284,8 @@ export default function Purchase() {
       expectedDeliveryDate: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
       lrPaymentStatus: o.lrPaymentStatus || null,
       billTotalAmount: o.billTotalAmount || 0,
+      lrGstAmount: o.lrGstAmount || 0, lrCgstAmount: o.lrCgstAmount || 0,
+      lrSgstAmount: o.lrSgstAmount || 0, lrIgstAmount: o.lrIgstAmount || 0,
       dispatchStatus: o.dispatchStatus || 'Pending',
     }));
     if (mapped.length > 0) dispatch(setPurchaseOrders(mapped));
@@ -293,6 +298,7 @@ export default function Purchase() {
       invoiceNo: lp.invoiceNo, invoiceFile: lp.invoiceFileUrl,
       vendorName: lp.vendorName, vendorPhone: lp.vendorPhone,
       items: lp.items || [], totalAmount: lp.totalAmount, gstAmount: lp.gstAmount || 0,
+      cgstAmount: lp.cgstAmount || 0, sgstAmount: lp.sgstAmount || 0, igstAmount: lp.igstAmount || 0,
       paymentType: lp.paymentType, paymentStatus: lp.paymentStatus,
       paymentProof: lp.paymentProofUrl, gPayNumber: lp.gPayNumber,
       paidBy: lp.paidBy, paidDate: lp.paidDate?.slice(0, 10),
@@ -341,6 +347,9 @@ export default function Purchase() {
   const [raiseRequestPaymentTerms, setRaiseRequestPaymentTerms] = useState('');
   const [raiseRequestAmount, setRaiseRequestAmount] = useState(null);
   const [raiseRequestGstAmount, setRaiseRequestGstAmount] = useState(null);
+  // CGST/SGST/IGST split off the scanned quotation — carried onto the PurchaseRequest (and
+  // then the PurchaseOrder) so an inter-state quotation's Input GST reports as IGST.
+  const [raiseRequestGstSplit, setRaiseRequestGstSplit] = useState(null);
   const [raiseRequestForm] = Form.useForm();
   const raiseReqQtyWatch = Form.useWatch('qty', raiseRequestForm);
   const raiseReqUnitWatch = Form.useWatch('unit', raiseRequestForm);
@@ -351,6 +360,7 @@ export default function Purchase() {
   const [rerequestFile, setRerequestFile] = useState(null);
   const [rerequestAmount, setRerequestAmount] = useState(null);
   const [rerequestGstAmount, setRerequestGstAmount] = useState(null);
+  const [rerequestGstSplit, setRerequestGstSplit] = useState(null);
   const [rerequestScanLoading, setRerequestScanLoading] = useState(false);
   const [rerequestSubmitting, setRerequestSubmitting] = useState(false);
 
@@ -415,6 +425,25 @@ export default function Purchase() {
   const [pendingRowGstAmount, setPendingRowGstAmount] = useState({});
   const [pendingRowSaving, setPendingRowSaving] = useState({});
   const [pendingRowScanLoading, setPendingRowScanLoading] = useState({});
+  // Per-row CGST/SGST/IGST split from the scanned quotation, keyed the same as pendingRowGstAmount.
+  const [pendingRowGstSplit, setPendingRowGstSplit] = useState({});
+
+  // Reads the CGST/SGST/IGST amounts off a scanQuotationFile result (the extractor returns
+  // them separately — inter-state quotations carry IGST only, intra-state carry CGST+SGST).
+  const readGstSplit = (scanned) => ({
+    cgstAmount: Number(scanned?.cgstAmount) || 0,
+    sgstAmount: Number(scanned?.sgstAmount) || 0,
+    igstAmount: Number(scanned?.igstAmount) || 0,
+  });
+  // Appends whichever of CGST/SGST/IGST are non-zero to an uploadQuotationFile FormData,
+  // alongside the `gstAmount` the callers already append.
+  const appendGstSplit = (fd, split) => {
+    if (!split) return;
+    if (split.cgstAmount) fd.append('cgstAmount', split.cgstAmount);
+    if (split.sgstAmount) fd.append('sgstAmount', split.sgstAmount);
+    if (split.igstAmount) fd.append('igstAmount', split.igstAmount);
+  };
+  const interStateNote = (split) => (split && split.igstAmount > 0 ? ' · Inter-state (IGST)' : '');
 
   // AI-scans the quotation picked for a Bulk Purchase Request's Pending row (single
   // item or whole batch) and auto-fills Amount/GST — same scanQuotationFile flow +
@@ -438,7 +467,11 @@ export default function Purchase() {
       const scanned = extracted?.data || {};
       const totalAmount = Number(scanned.totalAmount) || 0;
       const gstAmount = Number(scanned.gstAmount) || 0;
+      const gstSplit = readGstSplit(scanned);
       if (gstAmount) setPendingRowGstAmount(prev => ({ ...prev, [r.key]: gstAmount }));
+      if (gstSplit.cgstAmount || gstSplit.sgstAmount || gstSplit.igstAmount) {
+        setPendingRowGstSplit(prev => ({ ...prev, [r.key]: gstSplit }));
+      }
 
       if (r.isBatchGroup && (r.children || []).length) {
         if (totalAmount) setPendingRowAmount(prev => ({ ...prev, [r.key]: totalAmount }));
@@ -467,9 +500,9 @@ export default function Purchase() {
         if (isMultiProduct && !match) {
           enqueueSnackbar(`This quotation lists ${itemCount} products but "${r.item}" couldn't be matched by name — using the document total (₹${totalAmount.toLocaleString()}), please verify.`, { variant: 'warning' });
         } else if (isMultiProduct) {
-          enqueueSnackbar(`Matched "${r.item}" on a ${itemCount}-product quotation — Amount: ₹${amount.toLocaleString()} (this product's own line total), GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+          enqueueSnackbar(`Matched "${r.item}" on a ${itemCount}-product quotation — Amount: ₹${amount.toLocaleString()} (this product's own line total), GST: ₹${gstAmount.toLocaleString()}${interStateNote(gstSplit)}`, { variant: 'success' });
         } else {
-          enqueueSnackbar(`AI extracted — Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+          enqueueSnackbar(`AI extracted — Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}${interStateNote(gstSplit)}`, { variant: 'success' });
         }
       }
     } catch (err) {
@@ -491,10 +524,12 @@ export default function Purchase() {
       fd.append('quotation', file);
       fd.append('amount', amount);
       if (gstAmount != null) fd.append('gstAmount', gstAmount);
+      appendGstSplit(fd, pendingRowGstSplit[r.key]);
       await uploadQuotationFile({ id: r.key, formData: fd }).unwrap();
       setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       setPendingRowAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       setPendingRowGstAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+      setPendingRowGstSplit(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       enqueueSnackbar('Quotation & amount saved', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to save quotation', { variant: 'error' });
@@ -525,11 +560,13 @@ export default function Purchase() {
     }
     setPendingRowSaving(prev => ({ ...prev, [r.key]: true }));
     try {
+      const gstSplit = pendingRowGstSplit[r.key];
       await Promise.all(children.map((child) => {
         const fd = new FormData();
         fd.append('quotation', file);
         fd.append('amount', batchChildAmount(r, child));
         if (gstAmount != null) fd.append('gstAmount', gstAmount);
+        appendGstSplit(fd, gstSplit);
         return uploadQuotationFile({ id: child.key, formData: fd }).unwrap();
       }));
       setPendingRowFile(prev => { const n = { ...prev }; delete n[r.key]; return n; });
@@ -540,6 +577,7 @@ export default function Purchase() {
         return n;
       });
       setPendingRowGstAmount(prev => { const n = { ...prev }; delete n[r.key]; return n; });
+      setPendingRowGstSplit(prev => { const n = { ...prev }; delete n[r.key]; return n; });
       enqueueSnackbar('Quotation & amount saved for the whole batch', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to save quotation', { variant: 'error' });
@@ -1250,28 +1288,42 @@ export default function Purchase() {
     }
   };
 
-  const handleSupplierAIScan = () => {
+  const handleSupplierAIScan = async () => {
     if (!supplierScannedFile) { enqueueSnackbar('Please upload a document first', { variant: 'warning' }); return; }
     setSupplierScanLoading(true);
-    setTimeout(() => {
-      supplierForm.setFieldsValue({
-        sup_name: 'Global Chem Supplies Pvt. Ltd.',
-        sup_phone: '+91 98001 23456',
-        sup_email: 'contact@globalchem.in',
-        sup_tax: '27AABCG1234F1Z5',
-        sup_address: 'Andheri East, Mumbai, MH 400069',
-        bankDetails: {
+    try {
+      const formData = new FormData();
+      formData.append('document', supplierScannedFile);
+      const res = await scanVendorDocument(formData).unwrap();
+      const extracted = res?.data || {};
+      const fields = {};
+      if (extracted.name) fields.sup_name = extracted.name;
+      if (extracted.phone) fields.sup_phone = extracted.phone;
+      if (extracted.email) fields.sup_email = extracted.email;
+      if (extracted.taxId) fields.sup_tax = extracted.taxId;
+      if (extracted.address) fields.sup_address = extracted.address;
+      if (extracted.notes) fields.sup_notes = extracted.notes;
+      const bd = extracted.bankDetails || {};
+      if (bd.accountHolderName || bd.accountNo || bd.ifsc || bd.bankName) {
+        fields.bankDetails = {
           method: 'bank',
-          accountHolderName: 'Global Chem Supplies Pvt. Ltd.',
-          accountNo: '50100123456789',
-          ifsc: 'HDFC0001234',
-          bankName: 'HDFC Bank',
-        },
-        sup_notes: 'Preferred supplier for chemical raw materials. NET-30 payment terms.',
-      });
+          ...(bd.accountHolderName && { accountHolderName: bd.accountHolderName }),
+          ...(bd.accountNo && { accountNo: bd.accountNo }),
+          ...(bd.ifsc && { ifsc: bd.ifsc }),
+          ...(bd.bankName && { bankName: bd.bankName }),
+        };
+      }
+      if (Object.keys(fields).length === 0) {
+        enqueueSnackbar('AI could not find any usable details in this document', { variant: 'warning' });
+      } else {
+        supplierForm.setFieldsValue(fields);
+        enqueueSnackbar('AI extracted supplier details from the document!', { variant: 'success' });
+      }
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'AI scan failed — please fill the details manually', { variant: 'error' });
+    } finally {
       setSupplierScanLoading(false);
-      enqueueSnackbar('AI extracted supplier details from the document!', { variant: 'success' });
-    }, 2200);
+    }
   };
 
   const handleQuotationAI = () => {
@@ -1375,19 +1427,21 @@ export default function Purchase() {
       const extracted = await scanQuotationFile(fd).unwrap();
       const scanned = extracted?.data || {};
       const gstAmount = Number(scanned.gstAmount) || 0;
+      const gstSplit = readGstSplit(scanned);
       const { match, amount, isMultiProduct, itemCount } = resolveScannedAmount(scanned, raiseRequestProduct?.name);
       const matchedQty = match ? Number(match.qty) || 0 : 0;
 
       if (matchedQty > 0) raiseRequestForm.setFieldsValue({ qty: matchedQty });
       setRaiseRequestAmount(amount || null);
       setRaiseRequestGstAmount(gstAmount || null);
+      setRaiseRequestGstSplit((gstSplit.cgstAmount || gstSplit.sgstAmount || gstSplit.igstAmount) ? gstSplit : null);
 
       if (!match && (scanned.items || []).length) {
-        enqueueSnackbar(`Couldn't confidently match "${raiseRequestProduct?.name}" to a line item on the quotation — please verify the quantity and amount manually. ${isMultiProduct ? `Document total ₹${amount.toLocaleString()}` : `Amount ₹${amount.toLocaleString()}`} and GST ₹${gstAmount.toLocaleString()} were read from the document.`, { variant: 'warning' });
+        enqueueSnackbar(`Couldn't confidently match "${raiseRequestProduct?.name}" to a line item on the quotation — please verify the quantity and amount manually. ${isMultiProduct ? `Document total ₹${amount.toLocaleString()}` : `Amount ₹${amount.toLocaleString()}`} and GST ₹${gstAmount.toLocaleString()} were read from the document.${interStateNote(gstSplit)}`, { variant: 'warning' });
       } else if (isMultiProduct) {
-        enqueueSnackbar(`Verified "${raiseRequestProduct?.name}" among ${itemCount} products on this quotation — Qty: ${matchedQty || raiseReqQtyWatch || 0}, Amount: ₹${amount.toLocaleString()} (this product's own line total), GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+        enqueueSnackbar(`Verified "${raiseRequestProduct?.name}" among ${itemCount} products on this quotation — Qty: ${matchedQty || raiseReqQtyWatch || 0}, Amount: ₹${amount.toLocaleString()} (this product's own line total), GST: ₹${gstAmount.toLocaleString()}${interStateNote(gstSplit)}`, { variant: 'success' });
       } else {
-        enqueueSnackbar(`AI extracted — Qty: ${matchedQty || raiseReqQtyWatch || 0}, Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: 'success' });
+        enqueueSnackbar(`AI extracted — Qty: ${matchedQty || raiseReqQtyWatch || 0}, Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}${interStateNote(gstSplit)}`, { variant: 'success' });
       }
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'AI extraction failed — please enter the details manually', { variant: 'error' });
@@ -1444,6 +1498,7 @@ export default function Purchase() {
         const fileToUpload = raiseRequestFile;
         const amountToUpload = raiseRequestAmount;
         const gstAmountToUpload = raiseRequestGstAmount;
+        const gstSplitToUpload = raiseRequestGstSplit;
         setShowRaiseRequestModal(false);
         raiseRequestForm.resetFields();
         setRaiseRequestProduct(null);
@@ -1452,6 +1507,7 @@ export default function Purchase() {
         setRaiseRequestPaymentTerms('');
         setRaiseRequestAmount(null);
         setRaiseRequestGstAmount(null);
+        setRaiseRequestGstSplit(null);
 
         for (const reqDoc of created) {
           const id = reqDoc?._id;
@@ -1461,6 +1517,7 @@ export default function Purchase() {
               fd.append('quotation', fileToUpload);
               fd.append('amount', amountToUpload);
               if (gstAmountToUpload != null) fd.append('gstAmount', gstAmountToUpload);
+              appendGstSplit(fd, gstSplitToUpload);
               await uploadQuotationFile({ id, formData: fd }).unwrap();
             } catch { /* file upload is best-effort */ }
           }
@@ -1505,6 +1562,12 @@ export default function Purchase() {
         vendorGST: extracted.vendorGST || '',
         items,
         gstAmount: Number(extracted.gstAmount) || 0,
+        // CGST/SGST/IGST split as printed on the bill — an inter-state bill prints IGST only,
+        // an intra-state bill prints CGST+SGST. Persisted with the Local Purchase so the GST /
+        // Monthly GST reports use the bill's real split instead of assuming a 50/50 divide.
+        cgstAmount: Number(extracted.cgstAmount) || 0,
+        sgstAmount: Number(extracted.sgstAmount) || 0,
+        igstAmount: Number(extracted.igstAmount) || 0,
         totalAmount: extracted.totalAmount || items.reduce((s, it) => s + (Number(it.amount) || 0), 0),
         isNewVendor: !knownVendor && !!extracted.vendorName,
       };
@@ -1517,6 +1580,12 @@ export default function Purchase() {
       if (scanned.vendorPhone) fieldValues.vendorPhone = scanned.vendorPhone;
       if (scanned.totalAmount) fieldValues.totalAmount = scanned.totalAmount;
       if (scanned.gstAmount) fieldValues.gstAmount = scanned.gstAmount;
+      // Fill whichever GST components the bill actually printed — inter-state bills carry
+      // IGST only, intra-state carry CGST+SGST. A bill with no breakdown leaves all three
+      // blank (backend keeps the existing even CGST/SGST divide).
+      if (scanned.cgstAmount) fieldValues.cgstAmount = scanned.cgstAmount;
+      if (scanned.sgstAmount) fieldValues.sgstAmount = scanned.sgstAmount;
+      if (scanned.igstAmount) fieldValues.igstAmount = scanned.igstAmount;
       if (items.length) fieldValues.items = items.map(it => ({ itemName: it.name, qty: it.qty, unit: it.unit, amount: it.amount, gstPercent: it.gstPercent, itemType: 'standard' }));
       localPurchaseForm.setFieldsValue(fieldValues);
 
@@ -1546,6 +1615,12 @@ export default function Purchase() {
       items: (values.items || []).filter(it => (it?.itemName || '').trim()).map(it => ({ name: it.itemName, qty: it.qty || 1, unit: it.unit || 'Pcs', amount: it.amount || 0, gstPercent: Number(it.gstPercent) || 0, itemCode: String(it.itemCode || '').trim().toUpperCase() || undefined, itemType: it.itemType === 'bulk' ? 'bulk' : 'standard', size: it.size || undefined, hotelName: it.hotelName || undefined })),
       totalAmount: values.totalAmount || localPurchaseScannedDetails?.totalAmount || 0,
       gstAmount: Number(values.gstAmount ?? localPurchaseScannedDetails?.gstAmount) || 0,
+      // Bill's CGST/SGST/IGST split — the editable form fields (auto-filled from the scan)
+      // take priority so a manual correction is what's saved; reports use igstAmount to route
+      // an inter-state bill's GST to IGST instead of an even CGST/SGST divide.
+      cgstAmount: Number(values.cgstAmount ?? localPurchaseScannedDetails?.cgstAmount) || 0,
+      sgstAmount: Number(values.sgstAmount ?? localPurchaseScannedDetails?.sgstAmount) || 0,
+      igstAmount: Number(values.igstAmount ?? localPurchaseScannedDetails?.igstAmount) || 0,
       paymentType: values.paymentType || 'credit',
       // Instant + Finance Team = already settled → Paid immediately, just logged for tracking.
       // Instant + Purchase Person = needs reimbursement → Pending, same follow-up flow as Credit.
@@ -1622,6 +1697,9 @@ export default function Purchase() {
         })),
         totalAmount: Number(newLP.totalAmount) || 0,
         gstAmount: Number(newLP.gstAmount) || 0,
+        ...(Number(newLP.cgstAmount) ? { cgstAmount: Number(newLP.cgstAmount) } : {}),
+        ...(Number(newLP.sgstAmount) ? { sgstAmount: Number(newLP.sgstAmount) } : {}),
+        ...(Number(newLP.igstAmount) ? { igstAmount: Number(newLP.igstAmount) } : {}),
         paymentType: newLP.paymentType,
         paymentStatus: newLP.paymentStatus,
         ...(newLP.paymentStatus === 'Paid' ? { paidAmount: Number(newLP.totalAmount) || 0, paidDate: new Date().toISOString() } : {}),
@@ -1884,7 +1962,7 @@ export default function Purchase() {
 
   // Re-submit revised quotation file after Finance sends back for modification (or
   // rejects it) — amount/gstAmount/qty are optional since not every resubmit path collects them.
-  const handleResubmitQuotation = async (requestId, file, amount, gstAmount, qty) => {
+  const handleResubmitQuotation = async (requestId, file, amount, gstAmount, qty, gstSplit) => {
     setResubmitLoading(prev => ({ ...prev, [requestId]: true }));
     try {
       const fd = new FormData();
@@ -1892,6 +1970,7 @@ export default function Purchase() {
       if (amount !== undefined && amount !== null && amount !== '') fd.append('amount', amount);
       if (gstAmount !== undefined && gstAmount !== null && gstAmount !== '') fd.append('gstAmount', gstAmount);
       if (qty !== undefined && qty !== null && qty !== '') fd.append('qty', qty);
+      appendGstSplit(fd, gstSplit);
       await uploadQuotationFile({ id: requestId, formData: fd }).unwrap();
       enqueueSnackbar('Quotation re-submitted — Finance will review it again.', { variant: 'success' });
     } catch (err) {
@@ -1910,6 +1989,7 @@ export default function Purchase() {
     let amount;
     let gstAmount;
     let qty;
+    let gstSplit;
     try {
       const fd = new FormData();
       fd.append('quotation', file);
@@ -1918,15 +1998,16 @@ export default function Purchase() {
       const { match, amount: resolvedAmount, isMultiProduct, itemCount } = resolveScannedAmount(scanned, req?.item);
       amount = resolvedAmount || undefined;
       gstAmount = scanned.gstAmount !== undefined ? Number(scanned.gstAmount) || 0 : undefined;
+      gstSplit = readGstSplit(scanned);
       qty = match?.qty ? Number(match.qty) || undefined : undefined;
       const verifyNote = isMultiProduct
         ? (match ? ` (matched "${req?.item}" among ${itemCount} products, own line amount)` : ` (couldn't match "${req?.item}" among ${itemCount} products — using document total, please verify)`)
         : '';
-      enqueueSnackbar(`AI-verified quotation${verifyNote} — Qty: ${qty ?? req?.qty ?? '—'}, Amount: ₹${(amount || 0).toLocaleString()}, GST: ₹${(gstAmount || 0).toLocaleString()}`, { variant: isMultiProduct && !match ? 'warning' : 'success' });
+      enqueueSnackbar(`AI-verified quotation${verifyNote} — Qty: ${qty ?? req?.qty ?? '—'}, Amount: ₹${(amount || 0).toLocaleString()}, GST: ₹${(gstAmount || 0).toLocaleString()}${interStateNote(gstSplit)}`, { variant: isMultiProduct && !match ? 'warning' : 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'AI could not read the quotation — re-submitting without auto-filled amounts', { variant: 'warning' });
     }
-    await handleResubmitQuotation(req.key, file, amount, gstAmount, qty);
+    await handleResubmitQuotation(req.key, file, amount, gstAmount, qty, gstSplit);
   };
 
   // Re-Request Quotation modal (for Rejected requests) — collects both the revised
@@ -1940,13 +2021,15 @@ export default function Purchase() {
       const extracted = await scanQuotationFile(fd).unwrap();
       const scanned = extracted?.data || {};
       const gstAmount = Number(scanned.gstAmount) || 0;
+      const gstSplit = readGstSplit(scanned);
       const { match, amount, isMultiProduct, itemCount } = resolveScannedAmount(scanned, rerequestTarget?.item);
       setRerequestAmount(amount || null);
       setRerequestGstAmount(gstAmount || null);
+      setRerequestGstSplit((gstSplit.cgstAmount || gstSplit.sgstAmount || gstSplit.igstAmount) ? gstSplit : null);
       const verifyNote = isMultiProduct
         ? (match ? ` — matched among ${itemCount} products, using its own line amount` : ` — couldn't match among ${itemCount} products, using document total, please verify`)
         : '';
-      enqueueSnackbar(`AI extracted${verifyNote} — Qty read: ${match?.qty ?? '—'}, Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}`, { variant: isMultiProduct && !match ? 'warning' : 'success' });
+      enqueueSnackbar(`AI extracted${verifyNote} — Qty read: ${match?.qty ?? '—'}, Amount: ₹${amount.toLocaleString()}, GST: ₹${gstAmount.toLocaleString()}${interStateNote(gstSplit)}`, { variant: isMultiProduct && !match ? 'warning' : 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'AI extraction failed — please enter the amount manually', { variant: 'error' });
     } finally {
@@ -1959,11 +2042,12 @@ export default function Purchase() {
     if (rerequestAmount == null) { enqueueSnackbar('Enter the quoted amount', { variant: 'warning' }); return; }
     setRerequestSubmitting(true);
     try {
-      await handleResubmitQuotation(rerequestTarget.key, rerequestFile, rerequestAmount, rerequestGstAmount);
+      await handleResubmitQuotation(rerequestTarget.key, rerequestFile, rerequestAmount, rerequestGstAmount, undefined, rerequestGstSplit);
       setShowRerequestModal(false);
       setRerequestTarget(null);
       setRerequestFile(null);
       setRerequestGstAmount(null);
+      setRerequestGstSplit(null);
       setRerequestAmount(null);
     } finally {
       setRerequestSubmitting(false);
@@ -2331,7 +2415,7 @@ export default function Purchase() {
                                     <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
                                     <Text type="secondary" style={{ fontSize: 10 }}>Delivery: {lr.deliveryDate}</Text>
                                     <Button size="small" icon={<EditOutlined />}
-                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus, bill_total_amount: lr.billTotalAmount || linkedOrder.billTotalAmount || 0 }); setShowLRUploadModal(true); }}
+                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus, bill_total_amount: lr.billTotalAmount || linkedOrder.billTotalAmount || 0, lr_gst_amount: linkedOrder.lrGstAmount || 0, lr_cgst_amount: linkedOrder.lrCgstAmount || 0, lr_sgst_amount: linkedOrder.lrSgstAmount || 0, lr_igst_amount: linkedOrder.lrIgstAmount || 0 }); setShowLRUploadModal(true); }}
                                       style={{ fontSize: 11, height: 22, padding: '0 8px' }}>Edit</Button>
                                   </Space>
                                 );
@@ -2476,7 +2560,7 @@ export default function Purchase() {
                                     <Button
                                       size="small"
                                       icon={<UploadOutlined />}
-                                      onClick={() => { setRerequestTarget(req); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); setShowRerequestModal(true); }}
+                                      onClick={() => { setRerequestTarget(req); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); setRerequestGstSplit(null); setShowRerequestModal(true); }}
                                       style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
                                     >
                                       Re-Request Quotation
@@ -2555,6 +2639,8 @@ export default function Purchase() {
                               // child (see handleBatchRowSave), not a per-product split, so the
                               // group total is just that shared value, not a sum.
                               const totalGst = batchItems.find(b => b.gstAmount != null)?.gstAmount ?? null;
+                              // CGST/SGST/IGST split is likewise the shared whole-batch value, not a sum.
+                              const gstSplitRow = batchItems.find(b => b.igstAmount || b.cgstAmount || b.sgstAmount);
                               rows.push({
                                 key: `batch-${first.batchId}`,
                                 isBatchGroup: true,
@@ -2565,6 +2651,9 @@ export default function Purchase() {
                                 status,
                                 amount: totalAmount,
                                 gstAmount: totalGst,
+                                cgstAmount: gstSplitRow?.cgstAmount ?? null,
+                                sgstAmount: gstSplitRow?.sgstAmount ?? null,
+                                igstAmount: gstSplitRow?.igstAmount ?? null,
                                 quotationFiles: first.quotationFiles || [],
                                 batchId: first.batchId,
                                 children: batchItems.map(b => ({ ...b, isBatchChild: true })),
@@ -2615,9 +2704,18 @@ export default function Purchase() {
                               : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
                           },
                           {
-                            title: 'GST Amount', key: 'gstAmount', width: 110, align: 'right',
+                            title: 'GST Amount', key: 'gstAmount', width: 130, align: 'right',
                             render: (_, r) => r.gstAmount != null
-                              ? <Text style={{ color: '#888', fontSize: 12 }}>&#8377;{r.gstAmount.toLocaleString()}</Text>
+                              ? (
+                                <div style={{ lineHeight: 1.3 }}>
+                                  <Text style={{ color: '#888', fontSize: 12 }}>&#8377;{r.gstAmount.toLocaleString()}</Text>
+                                  {r.igstAmount > 0
+                                    ? <div><Text style={{ color: '#1890ff', fontSize: 10 }}>IGST (inter-state)</Text></div>
+                                    : (r.cgstAmount > 0 || r.sgstAmount > 0)
+                                      ? <div><Text style={{ color: '#aaa', fontSize: 10 }}>CGST &#8377;{(r.cgstAmount || 0).toLocaleString()} · SGST &#8377;{(r.sgstAmount || 0).toLocaleString()}</Text></div>
+                                      : null}
+                                </div>
+                              )
                               : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>
                           },
                           {
@@ -2742,7 +2840,7 @@ export default function Purchase() {
                                     <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
                                     <Text type="secondary" style={{ fontSize: 10 }}>Delivery: {lr.deliveryDate}</Text>
                                     <Button size="small" icon={<EditOutlined />}
-                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus, bill_total_amount: lr.billTotalAmount || linkedOrder.billTotalAmount || 0 }); setShowLRUploadModal(true); }}
+                                      onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus, bill_total_amount: lr.billTotalAmount || linkedOrder.billTotalAmount || 0, lr_gst_amount: linkedOrder.lrGstAmount || 0, lr_cgst_amount: linkedOrder.lrCgstAmount || 0, lr_sgst_amount: linkedOrder.lrSgstAmount || 0, lr_igst_amount: linkedOrder.lrIgstAmount || 0 }); setShowLRUploadModal(true); }}
                                       style={{ fontSize: 11, height: 22, padding: '0 8px' }}>Edit</Button>
                                   </Space>
                                 );
@@ -3036,7 +3134,7 @@ export default function Purchase() {
                                       <Button
                                         size="small"
                                         icon={<UploadOutlined />}
-                                        onClick={() => { setRerequestTarget(r); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); setShowRerequestModal(true); }}
+                                        onClick={() => { setRerequestTarget(r); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); setRerequestGstSplit(null); setShowRerequestModal(true); }}
                                         style={{ borderColor: '#B11E6A', color: '#B11E6A', fontWeight: 600 }}
                                       >
                                         Re-Request
@@ -3530,6 +3628,9 @@ export default function Purchase() {
                                   {localPurchaseDetailView.paidDate && <div><Text type="secondary" style={{ fontSize: 12 }}>Paid Date: </Text><Text>{localPurchaseDetailView.paidDate}</Text></div>}
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Total: </Text><Text strong style={{ color: '#B11E6A' }}>₹{localPurchaseDetailView.totalAmount?.toLocaleString()}</Text></div>
                                   {localPurchaseDetailView.gstAmount > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>GST Amount: </Text><Text strong>₹{localPurchaseDetailView.gstAmount.toLocaleString()}</Text></div>}
+                                  {localPurchaseDetailView.igstAmount > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>IGST (Inter-state): </Text><Text strong style={{ color: '#1890ff' }}>₹{localPurchaseDetailView.igstAmount.toLocaleString()}</Text></div>}
+                                  {localPurchaseDetailView.cgstAmount > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>CGST: </Text><Text strong>₹{localPurchaseDetailView.cgstAmount.toLocaleString()}</Text></div>}
+                                  {localPurchaseDetailView.sgstAmount > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>SGST: </Text><Text strong>₹{localPurchaseDetailView.sgstAmount.toLocaleString()}</Text></div>}
                                   <div><Text type="secondary" style={{ fontSize: 12 }}>Paid Amount: </Text><Text strong style={{ color: '#52c41a' }}>₹{(localPurchaseDetailView.paidAmount || 0).toLocaleString()}</Text></div>
                                   {localPurchaseDetailView.balance > 0 && <div><Text type="secondary" style={{ fontSize: 12 }}>Balance: </Text><Text strong style={{ color: '#fa8c16' }}>₹{localPurchaseDetailView.balance.toLocaleString()}</Text></div>}
                                 </div>
@@ -4342,6 +4443,17 @@ export default function Purchase() {
                   { label: 'Address', val: localPurchaseScannedDetails.vendorAddress },
                   { label: 'Total Amount', val: `₹${localPurchaseScannedDetails.totalAmount?.toLocaleString()}` },
                   { label: 'GST Amount', val: `₹${(localPurchaseScannedDetails.gstAmount || 0).toLocaleString()}` },
+                  // CGST/SGST/IGST breakdown from the bill — only the components the bill
+                  // actually printed are shown (inter-state → IGST only; intra-state → CGST+SGST).
+                  ...((localPurchaseScannedDetails.igstAmount || 0) > 0
+                    ? [{ label: 'IGST (Inter-state)', val: `₹${Number(localPurchaseScannedDetails.igstAmount).toLocaleString()}` }]
+                    : []),
+                  ...((localPurchaseScannedDetails.cgstAmount || 0) > 0
+                    ? [{ label: 'CGST', val: `₹${Number(localPurchaseScannedDetails.cgstAmount).toLocaleString()}` }]
+                    : []),
+                  ...((localPurchaseScannedDetails.sgstAmount || 0) > 0
+                    ? [{ label: 'SGST', val: `₹${Number(localPurchaseScannedDetails.sgstAmount).toLocaleString()}` }]
+                    : []),
                 ].map((d, i) => (
                   <Col xs={12} key={i} style={{ marginBottom: 4 }}>
                     <Text style={{ fontSize: 10, color: '#888', display: 'block' }}>{d.label}</Text>
@@ -4571,6 +4683,27 @@ export default function Purchase() {
             <Col span={12}>
               <Form.Item label="Invoice Date" name="invoiceDate" tooltip="Auto-filled from the scanned invoice — used as this stock's purchase date">
                 <DatePicker style={{ width: '100%', borderRadius: 8 }} format="DD-MM-YYYY" />
+              </Form.Item>
+            </Col>
+          </Row>
+          {/* CGST/SGST/IGST split — auto-filled from the scanned bill. An inter-state bill
+              prints IGST only; an intra-state bill prints CGST + SGST. Leave all three blank
+              for a bill with no breakdown — reports then fall back to an even CGST/SGST divide
+              of GST Amount, exactly as before. */}
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item label="CGST (₹)" name="cgstAmount" tooltip="Central GST — intra-state bills only. Auto-filled from the scan.">
+                <InputNumber prefix="₹" style={{ width: '100%' }} min={0} placeholder="0.00" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="SGST (₹)" name="sgstAmount" tooltip="State GST — intra-state bills only. Auto-filled from the scan.">
+                <InputNumber prefix="₹" style={{ width: '100%' }} min={0} placeholder="0.00" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item label="IGST (₹)" name="igstAmount" tooltip="Integrated GST — inter-state bills only. When set, this purchase's Input GST reports as IGST.">
+                <InputNumber prefix="₹" style={{ width: '100%' }} min={0} placeholder="0.00" />
               </Form.Item>
             </Col>
           </Row>
@@ -5218,7 +5351,7 @@ export default function Purchase() {
           </div>
         }
         open={showRerequestModal}
-        onCancel={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); }}
+        onCancel={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); setRerequestGstSplit(null); }}
         footer={null}
         width={460}
         centered
@@ -5304,7 +5437,7 @@ export default function Purchase() {
 
             <div style={{ display: 'flex', gap: 8 }}>
               <Button
-                onClick={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); }}
+                onClick={() => { setShowRerequestModal(false); setRerequestTarget(null); setRerequestFile(null); setRerequestAmount(null); setRerequestGstAmount(null); setRerequestGstSplit(null); }}
                 style={{ flex: 1, height: 44, borderRadius: 10 }}
               >
                 Cancel
@@ -6134,6 +6267,11 @@ export default function Purchase() {
                   expectedDeliveryDate: deliveryDate,
                   paymentStatus: vals.paid_status,
                   billTotalAmount: vals.bill_total_amount ?? 0,
+                  // GST portion of the LR/transport bill + its CGST/SGST vs IGST split.
+                  lrGstAmount: vals.lr_gst_amount ?? 0,
+                  lrCgstAmount: vals.lr_cgst_amount ?? 0,
+                  lrSgstAmount: vals.lr_sgst_amount ?? 0,
+                  lrIgstAmount: vals.lr_igst_amount ?? 0,
                   ...(fileUrl ? { proofUrl: fileUrl } : {}),
                 }).unwrap();
               } catch (err) {
@@ -6204,12 +6342,26 @@ export default function Purchase() {
                     originalName: scannedFile.name,
                   }).unwrap();
                   const parsed = res?.data || {};
+                  const num = (v) => Number(String(v ?? '').replace(/[^0-9.]/g, '')) || 0;
+                  const lrGst = num(parsed.gstAmount);
+                  const lrCgst = num(parsed.cgstAmount);
+                  const lrSgst = num(parsed.sgstAmount);
+                  const lrIgst = num(parsed.igstAmount);
                   lrUploadForm.setFieldsValue({
                     lr_number: parsed.lrNumber || lrUploadForm.getFieldValue('lr_number'),
                     bill_total_amount: parsed.billTotalAmount || lrUploadForm.getFieldValue('bill_total_amount'),
                     ...(parsed.estimatedDelivery ? { delivery_date: dayjs(parsed.estimatedDelivery) } : {}),
+                    // Fill whichever GST components the LR printed — inter-state transport bills
+                    // carry IGST only, intra-state carry CGST+SGST. Blank LR → fields stay 0.
+                    ...(lrGst ? { lr_gst_amount: lrGst } : {}),
+                    ...(lrCgst ? { lr_cgst_amount: lrCgst } : {}),
+                    ...(lrSgst ? { lr_sgst_amount: lrSgst } : {}),
+                    ...(lrIgst ? { lr_igst_amount: lrIgst } : {}),
                   });
-                  enqueueSnackbar('AI extracted the LR details — review the Bill Total Amount before saving.', { variant: 'success' });
+                  enqueueSnackbar(
+                    `AI extracted the LR details — review the Bill Total Amount before saving.${lrIgst > 0 ? ' Inter-state (IGST) transport bill.' : ''}`,
+                    { variant: 'success' },
+                  );
                 } catch (err) {
                   enqueueSnackbar(err?.data?.message || 'AI extraction failed. Enter the details manually.', { variant: 'error' });
                 } finally {
@@ -6228,6 +6380,33 @@ export default function Purchase() {
             >
               <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} placeholder="Scan the LR copy above or enter manually" />
             </Form.Item>
+            {/* GST portion of the transport bill — auto-filled from the scan. Inter-state
+                transport prints IGST only; intra-state prints CGST + SGST. Leave blank for an
+                LR with no GST line. Informational (freight charge, not goods Input GST). */}
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="GST Amount (₹)" name="lr_gst_amount" tooltip="Total GST on the LR/transport bill, as printed. Auto-filled from the scan.">
+                  <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} placeholder="0.00" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="IGST (₹)" name="lr_igst_amount" tooltip="Integrated GST — inter-state transport only. Auto-filled from the scan.">
+                  <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} placeholder="0.00" />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={12}>
+              <Col span={12}>
+                <Form.Item label="CGST (₹)" name="lr_cgst_amount" tooltip="Central GST — intra-state transport only. Auto-filled from the scan.">
+                  <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} placeholder="0.00" />
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="SGST (₹)" name="lr_sgst_amount" tooltip="State GST — intra-state transport only. Auto-filled from the scan.">
+                  <InputNumber prefix="₹" style={{ width: '100%', borderRadius: 8 }} min={0} placeholder="0.00" />
+                </Form.Item>
+              </Col>
+            </Row>
             <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
               <Button style={{ flex: 1, height: 40, borderRadius: 8 }} onClick={() => { setShowLRUploadModal(false); lrUploadForm.resetFields(); }}>Cancel</Button>
               <Button type="primary" htmlType="submit" icon={<UploadOutlined />}

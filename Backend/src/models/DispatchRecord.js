@@ -19,6 +19,14 @@ const dispatchRecordSchema = new mongoose.Schema({
   toCity: String,
   weight: String,
   freight: String,
+  // GST on the LR/transport bill (AI-scanned or manual). gstAmount is the combined total;
+  // the CGST/SGST/IGST split records whether the transport was billed intra-state
+  // (CGST+SGST) or inter-state (IGST). Informational — freight charge, not goods Input GST.
+  gstAmount: String,
+  cgstAmount: String,
+  sgstAmount: String,
+  igstAmount: String,
+  totalAmount: String,
   packages: String,
   estimatedDelivery: String,
   boxes: { type: Number, default: 0 },

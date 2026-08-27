@@ -435,6 +435,11 @@ const fmtDateTime = (v) =>
 const fmtDateTimeShort = (v) =>
   v ? dayjs(v).toDate().toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 
+// Escape a value for safe interpolation into a raw HTML string (used by the
+// party-info PDF export which renders an html2pdf container).
+const escapeHtml = (v) =>
+  String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
 
 
 // ─── Helpers ──────────────────────────────────────────────────────────
@@ -4075,8 +4080,17 @@ export default function Sales() {
         const k = (o.hotelName || o.clientName || '').toLowerCase().trim();
         if (k && !orderByHotel.has(k)) orderByHotel.set(k, o);
       });
+    // Earliest lead per hotel — its createdAt is the "lead created date" the
+    // Parties tab filters/sorts on (Party.createdAt is only the auto-upsert time).
+    const leadByHotel = new Map();
+    [...leadsData].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+      .forEach(l => {
+        const k = (l.hotelName || '').toLowerCase().trim();
+        if (k && !leadByHotel.has(k)) leadByHotel.set(k, l);
+      });
     setCustomersData(parties.map((p) => {
       const o = orderByHotel.get((p.name || '').toLowerCase().trim());
+      const l = leadByHotel.get((p.name || '').toLowerCase().trim());
       return {
         ...p,
         key: p._id,
@@ -4086,9 +4100,10 @@ export default function Sales() {
         phone: p.phone || o?.phone || o?.clientPhone || '—',
         salesPerson: o?.salesPerson || '—',
         createdAt: p.createdAt,
+        leadCreatedAt: l?.createdAt || p.createdAt,
       };
     }));
-  }, [partiesRaw, ordersData]);
+  }, [partiesRaw, ordersData, leadsData]);
 
   useEffect(() => {
     const gstin = selectedRecord?.gstNumber;
@@ -5798,9 +5813,216 @@ export default function Sales() {
   // on the originating Lead. Join by hotel name (same matching pattern used elsewhere in this
   // file, e.g. ExpandedPartyOrders) so the eye-view shows the same "Hotel / Company Information"
   // richness as the Lead/Order detail cards, without needing a backend change.
-  const openPartyInfo = (record) => {
+  const mergePartyWithLead = (record) => {
     const lead = leadsData.find(l => (l.hotelName || '').toLowerCase().trim() === (record.hotelName || '').toLowerCase().trim());
-    setViewPartyInfo({ ...lead, ...record });
+    return { ...lead, ...record };
+  };
+
+  const openPartyInfo = (record) => setViewPartyInfo(mergePartyWithLead(record));
+
+  // Single source of truth for the "Hotel / Company Information" card — the same
+  // rows the Descriptions block renders, as [label, value] pairs. Empty/optional
+  // fields are dropped (core fields keep an em-dash so they always show).
+  const buildPartyInfoRows = (info) => {
+    if (!info) return [];
+    const cat = info.category || 'Hotel';
+    const pairs = [
+      ['Category', cat],
+      [`${cat} / Company`, info.hotelName || '—'],
+      ['Billing Name', info.billingName],
+      [`${cat} Type`, info.hotelType ? (info.hotelType === 'OLD' ? `Old ${cat}` : `New ${cat}`) : ''],
+      ['Branch', info.branch],
+      ['No. of Rooms', info.rooms || info.numRooms || info.rowsInHotel],
+      ['Occupancy (%)', info.generalOccupancy ? `${info.generalOccupancy}%` : ''],
+      ['Contact Person', info.contactPerson || '—'],
+      ['POC Designation', info.pocDesignation],
+      ['Phone', info.phone || '—'],
+      ['Email', info.email || '—'],
+      ['Alt. Name', info.alternativeName || info.altName],
+      ['Alt. Role', info.alternativeRole || info.altRole],
+      ['Alt. Number', info.alternativePhone || info.altNumber],
+      ['Location / City', info.location || info.city || '—'],
+      ['Destination', info.destination],
+      ['Assigned To', info.salesPerson || '—'],
+      ['GSTIN', info.gstNumber],
+      ['PAN', info.panNumber],
+      ['State', info.state],
+      ['Pincode', info.pincode],
+      ['Address', info.street || info.detailedAddress],
+      ['Credit Period', info.creditPeriod > 0 ? `${info.creditPeriod} days` : ''],
+      ['Credit Limit', info.creditLimit > 0 ? `₹${Number(info.creditLimit).toLocaleString()}` : ''],
+      ['Lead Created Date', info.leadCreatedAt ? fmtDateTimeShort(info.leadCreatedAt) : ''],
+      ['Party Since', info.createdAt ? fmtDateTimeShort(info.createdAt) : ''],
+    ];
+    return pairs.filter(([, v]) => v != null && v !== '');
+  };
+
+  const partyInfoFileBase = (info) => `Party_${String(info?.hotelName || 'info').replace(/[^\w\-]+/g, '_')}_Info`;
+
+  // Excel download — CSV with a UTF-8 BOM (Excel opens it natively), matching the
+  // export approach used across Reports / PartiesLedger.
+  const exportPartyInfoExcel = (info) => {
+    const rows = buildPartyInfoRows(info);
+    if (!rows.length) { enqueueSnackbar('Nothing to export', { variant: 'warning' }); return; }
+    const csv = ['Field,Value', ...rows.map(([k, v]) => `"${String(k).replace(/"/g, '""')}","${String(v).replace(/"/g, '""')}"`)].join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `${partyInfoFileBase(info)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // PDF download — render the card as a plain HTML table and rasterize with the
+  // same html2pdf pipeline used for invoice/quotation downloads in this file.
+  const exportPartyInfoPDF = async (info) => {
+    const rows = buildPartyInfoRows(info);
+    if (!rows.length) { enqueueSnackbar('Nothing to export', { variant: 'warning' }); return; }
+    const cat = info.category || 'Hotel';
+    const container = document.createElement('div');
+    container.style.cssText = 'padding:16px;font-family:Arial,Helvetica,sans-serif;color:#222;background:#fff;width:760px;';
+    container.innerHTML = `
+      <h2 style="color:#B11E6A;margin:0 0 2px;font-size:18px;">${escapeHtml(cat)} / Company Information</h2>
+      <div style="font-size:14px;font-weight:700;margin-bottom:12px;">${escapeHtml(info.hotelName || '—')}</div>
+      <table style="border-collapse:collapse;width:100%;font-size:12px;">
+        ${rows.map(([k, v]) => `
+          <tr>
+            <td style="border:1px solid #e0d3dc;padding:6px 9px;background:#faf0f6;font-weight:600;width:34%;">${escapeHtml(k)}</td>
+            <td style="border:1px solid #e0d3dc;padding:6px 9px;">${escapeHtml(v)}</td>
+          </tr>`).join('')}
+      </table>
+      <div style="margin-top:16px;font-size:10px;color:#999;">Generated ${escapeHtml(new Date().toLocaleString('en-IN'))}</div>`;
+    document.body.appendChild(container);
+    try {
+      await html2pdf()
+        .from(container)
+        .set({
+          margin: 10,
+          filename: `${partyInfoFileBase(info)}.pdf`,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+        })
+        .save();
+    } catch {
+      enqueueSnackbar('Failed to generate PDF', { variant: 'error' });
+    } finally {
+      document.body.removeChild(container);
+    }
+  };
+
+  // ── Parties tab: list-level export (respects the Category + Lead-Created-Date filters) ──
+  // Both downloads carry the FULL "Hotel / Company Information" card for every party
+  // (same field set as the single-party eye-view), not just the on-screen table columns.
+  const getFilteredParties = () =>
+    filtered(customersData).filter((r) => {
+      if (customerCategoryFilter && (r.category || 'Hotel') !== customerCategoryFilter) return false;
+      if (customerDateRange) {
+        const raw = r.leadCreatedAt || r.createdAt;
+        const d = raw ? dayjs(raw).format('YYYY-MM-DD') : '';
+        if (!d || d < customerDateRange[0] || d > customerDateRange[1]) return false;
+      }
+      return true;
+    });
+
+  // Fixed, stable column set for the wide (one-row-per-hotel) Excel export — mirrors
+  // the eye-view card fields. 3rd tuple entry = force-as-text (stops Excel turning
+  // long phone/pincode strings into scientific notation).
+  const PARTY_EXPORT_FIELDS = [
+    ['Category', (i) => i.category || 'Hotel'],
+    ['Hotel / Company', (i) => i.hotelName],
+    ['Billing Name', (i) => i.billingName],
+    ['Hotel Type', (i) => (i.hotelType ? (i.hotelType === 'OLD' ? 'Old' : 'New') : '')],
+    ['Branch', (i) => i.branch],
+    ['No. of Rooms', (i) => i.rooms || i.numRooms || i.rowsInHotel],
+    ['Occupancy (%)', (i) => (i.generalOccupancy ? `${i.generalOccupancy}%` : '')],
+    ['Contact Person', (i) => i.contactPerson],
+    ['POC Designation', (i) => i.pocDesignation],
+    ['Phone', (i) => i.phone, true],
+    ['Email', (i) => i.email],
+    ['Alt. Name', (i) => i.alternativeName || i.altName],
+    ['Alt. Role', (i) => i.alternativeRole || i.altRole],
+    ['Alt. Number', (i) => i.alternativePhone || i.altNumber, true],
+    ['Location / City', (i) => i.location || i.city],
+    ['Destination', (i) => i.destination],
+    ['Assigned To', (i) => i.salesPerson],
+    ['GSTIN', (i) => i.gstNumber, true],
+    ['PAN', (i) => i.panNumber, true],
+    ['State', (i) => i.state],
+    ['Pincode', (i) => i.pincode, true],
+    ['Address', (i) => i.street || i.detailedAddress],
+    ['Credit Period', (i) => (i.creditPeriod > 0 ? `${i.creditPeriod} days` : '')],
+    ['Credit Limit', (i) => (i.creditLimit > 0 ? `₹${Number(i.creditLimit).toLocaleString()}` : '')],
+    ['Lead Created Date', (i) => (i.leadCreatedAt ? fmtDateTimeShort(i.leadCreatedAt) : '')],
+    ['Party Since', (i) => (i.createdAt ? fmtDateTimeShort(i.createdAt) : '')],
+  ];
+
+  const exportPartiesListExcel = () => {
+    const parties = getFilteredParties();
+    if (!parties.length) { enqueueSnackbar('No parties to export', { variant: 'warning' }); return; }
+    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const qText = (v) => {
+      const s = String(v ?? '');
+      return s ? `"=""${s.replace(/"/g, '""')}"""` : '""';
+    };
+    const header = ['Customer ID', ...PARTY_EXPORT_FIELDS.map(([h]) => h)].map(q).join(',');
+    const lines = parties.map((p) => {
+      const info = mergePartyWithLead(p);
+      return [q(p.customerId), ...PARTY_EXPORT_FIELDS.map(([, f, asText]) => (asText ? qText(f(info)) : q(f(info))))].join(',');
+    });
+    const csv = [header, ...lines].join('\n');
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Parties_${dayjs().format('YYYY-MM-DD')}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportPartiesListPDF = async () => {
+    const parties = getFilteredParties();
+    if (!parties.length) { enqueueSnackbar('No parties to export', { variant: 'warning' }); return; }
+    const cards = parties.map((p, idx) => {
+      const info = mergePartyWithLead(p);
+      const rows = buildPartyInfoRows(info);
+      return `
+        <div style="${idx > 0 ? 'page-break-before:always;' : ''}margin-bottom:22px;">
+          <div style="font-size:14px;font-weight:700;margin-bottom:8px;">${escapeHtml(info.hotelName || '—')}</div>
+          <table style="border-collapse:collapse;width:100%;font-size:11px;">
+            ${rows.map(([k, v]) => `
+              <tr>
+                <td style="border:1px solid #e0d3dc;padding:5px 9px;background:#faf0f6;font-weight:600;width:34%;">${escapeHtml(k)}</td>
+                <td style="border:1px solid #e0d3dc;padding:5px 9px;">${escapeHtml(v)}</td>
+              </tr>`).join('')}
+          </table>
+        </div>`;
+    }).join('');
+    const container = document.createElement('div');
+    container.style.cssText = 'padding:16px;font-family:Arial,Helvetica,sans-serif;color:#222;background:#fff;width:760px;';
+    container.innerHTML = `
+      <h2 style="color:#B11E6A;margin:0 0 2px;font-size:18px;">Parties — Hotel / Company Information</h2>
+      <div style="font-size:11px;color:#999;margin-bottom:14px;">${parties.length} record(s) · generated ${escapeHtml(new Date().toLocaleString('en-IN'))}</div>
+      ${cards}`;
+    document.body.appendChild(container);
+    try {
+      await html2pdf()
+        .from(container)
+        .set({
+          margin: 10,
+          filename: `Parties_${dayjs().format('YYYY-MM-DD')}.pdf`,
+          image: { type: 'jpeg', quality: 0.95 },
+          html2canvas: { scale: 2, useCORS: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
+          pagebreak: { mode: ['css', 'legacy'] },
+        })
+        .save();
+    } catch {
+      enqueueSnackbar('Failed to generate PDF', { variant: 'error' });
+    } finally {
+      document.body.removeChild(container);
+    }
   };
 
   const editExistingQuotation = (q) => {
@@ -6112,7 +6334,7 @@ export default function Sales() {
     { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Phone', dataIndex: 'phone', width: 130, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
-    { title: 'Created At', dataIndex: 'createdAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
+    { title: 'Lead Created Date', dataIndex: 'leadCreatedAt', width: 155, sorter: (a, b) => new Date(a.leadCreatedAt || a.createdAt || 0) - new Date(b.leadCreatedAt || b.createdAt || 0), render: (v, r) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v || r.createdAt)}</Text> },
     {
       title: 'Action', key: 'action', width: 70, fixed: 'right',
       render: (_, r) => (
@@ -15517,18 +15739,18 @@ export default function Sales() {
                       options={categoryFilterOptions}
                       style={{ width: 160, borderRadius: 8 }}
                     />
+                    <Text type="secondary" style={{ fontSize: 12 }}>Lead Created Date:</Text>
                     <DatePicker.RangePicker
                       style={{ borderRadius: 8 }}
+                      placeholder={['Lead Created From', 'Lead Created To']}
                       onChange={(dates) => setCustomerDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
                       allowClear
                     />
+                    <Button size="small" icon={<DownloadOutlined />} onClick={exportPartiesListExcel} style={{ borderRadius: 8 }}>Excel</Button>
+                    <Button size="small" icon={<DownloadOutlined />} onClick={exportPartiesListPDF} style={{ borderRadius: 8 }}>PDF</Button>
                   </div>
                   <Table
-                    dataSource={filtered(customersData).filter(r => {
-                      if (customerCategoryFilter && (r.category || 'Hotel') !== customerCategoryFilter) return false;
-                      if (customerDateRange) { const d = r.createdAt ? r.createdAt.slice(0, 10) : ''; if (d < customerDateRange[0] || d > customerDateRange[1]) return false; }
-                      return true;
-                    })}
+                    dataSource={getFilteredParties()}
                     columns={customerColumns}
                     pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
                     size="small"
@@ -15650,7 +15872,11 @@ export default function Sales() {
         }
         open={!!viewPartyInfo}
         onCancel={() => setViewPartyInfo(null)}
-        footer={<Button onClick={() => setViewPartyInfo(null)}>Close</Button>}
+        footer={[
+          <Button key="xlsx" icon={<DownloadOutlined />} onClick={() => exportPartyInfoExcel(viewPartyInfo)}>Excel</Button>,
+          <Button key="pdf" icon={<DownloadOutlined />} onClick={() => exportPartyInfoPDF(viewPartyInfo)}>PDF</Button>,
+          <Button key="close" onClick={() => setViewPartyInfo(null)}>Close</Button>,
+        ]}
         width={Math.min(1000, window.innerWidth - 32)}
         styles={{ body: { maxHeight: '75vh', overflowY: 'auto' } }}
       >
@@ -15687,6 +15913,8 @@ export default function Sales() {
             {(viewPartyInfo.street || viewPartyInfo.detailedAddress) && <Descriptions.Item label="Address" span={2}>{viewPartyInfo.street || viewPartyInfo.detailedAddress}</Descriptions.Item>}
             {viewPartyInfo.creditPeriod > 0 && <Descriptions.Item label="Credit Period">{`${viewPartyInfo.creditPeriod} days`}</Descriptions.Item>}
             {viewPartyInfo.creditLimit > 0 && <Descriptions.Item label="Credit Limit">{`₹${Number(viewPartyInfo.creditLimit).toLocaleString()}`}</Descriptions.Item>}
+            <Descriptions.Item label="Lead Created Date">{fmtDateTimeShort(viewPartyInfo.leadCreatedAt || viewPartyInfo.createdAt)}</Descriptions.Item>
+            <Descriptions.Item label="Party Since">{fmtDateTimeShort(viewPartyInfo.createdAt)}</Descriptions.Item>
           </Descriptions>
           </div>
         )}
@@ -15711,7 +15939,7 @@ export default function Sales() {
                     <div>
                       <Tag color="purple" style={{ borderRadius: 20, fontSize: 12, marginBottom: 4 }}>{h.field}</Tag>
                       <div style={{ fontSize: 12 }}>
-                        <Text type="secondary" style={{ textDecoration: 'line-through' }}>{h.oldValue}</Text>
+                        <Text type="secondary">{h.oldValue}</Text>
                         {' → '}
                         <Text strong style={{ color: '#52c41a' }}>{h.newValue}</Text>
                       </div>

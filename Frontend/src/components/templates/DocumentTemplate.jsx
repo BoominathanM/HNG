@@ -755,7 +755,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
         <div style="font-size:22px;font-weight:900;color:${ACCENT};letter-spacing:0.5px;">${cfg.company.name}</div>
       </div>
       <div style="text-align:right;font-size:11px;color:#333;line-height:1.8;">
-        <div>${cfg.company.address}</div>
+        <div style="white-space:pre-wrap;">${cfg.company.address}</div>
         <div>Mobile: ${cfg.company.mobile}</div>
         ${cfg.show.gstin ? `<div>GSTIN: ${cfg.company.gstin}</div>` : ''}
         <div>PAN Number: ${cfg.company.pan}</div>
@@ -1077,7 +1077,7 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
           <div style={{ fontSize: 22, fontWeight: 900, color: ACCENT, letterSpacing: 0.5 }}>{cfg.company.name}</div>
         </div>
         <div style={{ textAlign: 'right', fontSize: 11, color: '#333', lineHeight: 1.8 }}>
-          <div>{cfg.company.address}</div>
+          <div style={{ whiteSpace: 'pre-wrap' }}>{cfg.company.address}</div>
           <div>Mobile: {cfg.company.mobile}</div>
           {cfg.show.gstin && <div>GSTIN: {cfg.company.gstin}</div>}
           <div>PAN Number: {cfg.company.pan}</div>

@@ -35,10 +35,10 @@ const isAdminOrManagement = (user) =>
 // cron tick has evaluated it — same latency as the scheduler's own cadence.
 exports.getActiveAlerts = asyncHandler(async (req, res) => {
   const now = new Date();
-  // 'task' and 'dispatch_reason' configs apply ONLY to whichever record's dynamic
-  // recipient (task assignee / order's assigned sales person) matches this user (checked
-  // per-item below), not to a fixed recipientUserIds list.
-  const DYNAMIC_ONLY_GROUPS = ['task', 'dispatch_reason'];
+  // 'task', 'dispatch_reason' and 'sample_followup' configs apply ONLY to whichever
+  // record's dynamic recipient (task assignee / order's assigned sales person) matches
+  // this user (checked per-item below), not to a fixed recipientUserIds list.
+  const DYNAMIC_ONLY_GROUPS = ['task', 'dispatch_reason', 'sample_followup'];
   // 'dispatch_status' is hybrid — a record's dynamic recipient (order's assigned sales
   // person) is notified, AND separately any user in config.recipientUserIds (Finance,
   // picked by an admin) is notified too. Both checks run per-item below.

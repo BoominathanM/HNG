@@ -13,6 +13,8 @@ const { computeRecordBuckets, computeCompositionGrandTotal, r2 } = require('../.
 const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
 const { syncDispatchRecordQuantities, deductInventoryDeltaForOrder, deductMaterialStockDeltaForOrder } = require('../sales/sales.controller');
 const Kit = require('../../models/Kit');
+const InventoryItem = require('../../models/InventoryItem');
+const DamageLog = require('../../models/DamageLog');
 
 // ─── Price/GST edit helpers (updateInvoicePricing) ────────────────────────────
 // Identity key for matching "the same product/kit line" across the order's products[]/
@@ -63,9 +65,14 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
 
   const editedByKey = new Map();
   let qtyChanged = false;
+  let qtyReduced = false;
   let priceChanged = false;
   let gstChanged = false;
   const itemChanges = [];
+  // Per-line quantity REDUCTIONS ("less" / damage), each with its own reason — consumed by the
+  // caller to write DamageLog rows + a party-ledger credit. Kept separate from itemChanges
+  // (which is the generic price/qty/gst audit).
+  const reductions = [];
   for (let i = 0; i < existingRows.length; i++) {
     const oldRow = existingRows[i];
     const newRow = reqProducts[i] || {};
@@ -80,16 +87,29 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     if (newRate < oldRate) throw new AppError(`Price for "${label}" cannot be reduced below ₹${oldRate}`, 400);
     if (newGst < oldGst) throw new AppError(`GST% for "${label}" cannot be reduced below ${oldGst}%`, 400);
 
-    // Quantity is optional per row (existing price-only callers never send it) and, once
-    // present, can only be raised — never lowered — mirroring sales.controller.js's own
-    // findOrderQuantityDecreases philosophy ("once placed, values only increase"). A row not
-    // touching qty simply keeps its current value.
+    // Quantity is optional per row (existing price-only callers never send it). It may be
+    // raised freely; it may also be REDUCED down to 0 (damaged/short/rejected goods), but every
+    // reduction must carry its own `lessReason`. A row not touching qty keeps its value.
     let newQty = oldQty;
     if (newRow.qty !== undefined) {
       newQty = Number(newRow.qty);
       if (!Number.isFinite(newQty) || newQty < 0) throw new AppError(`Invalid quantity for "${label}"`, 400);
-      if (newQty < oldQty) throw new AppError(`Quantity for "${label}" cannot be reduced below ${oldQty}`, 400);
       if (newQty !== oldQty) qtyChanged = true;
+      if (newQty < oldQty) {
+        const lessReason = String(newRow.lessReason || '').trim();
+        if (!lessReason) throw new AppError(`A reason is required for reducing the quantity of "${label}"`, 400);
+        qtyReduced = true;
+        reductions.push({
+          itemName: label,
+          isKit: !!(oldRow.isKit || oldRow.kitType),
+          kitId: oldRow.kitId || '',
+          kitName: oldRow.kitName || oldRow.kitType || '',
+          category: oldRow.category || '',
+          oldQty, newQty, qtyReduced: oldQty - newQty,
+          rate: newRate, gstPct: newGst,
+          reason: lessReason,
+        });
+      }
     }
     if (newRate !== oldRate) priceChanged = true;
     if (newGst !== oldGst) gstChanged = true;
@@ -132,8 +152,22 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     if (newKit.overallQty !== undefined) {
       newKitQty = Number(newKit.overallQty);
       if (!Number.isFinite(newKitQty) || newKitQty < 0) throw new AppError(`Invalid quantity for kit "${label}"`, 400);
-      if (newKitQty < oldKitQty) throw new AppError(`Quantity for kit "${label}" cannot be reduced below ${oldKitQty}`, 400);
       if (newKitQty !== oldKitQty) qtyChanged = true;
+      if (newKitQty < oldKitQty) {
+        const lessReason = String(newKit.lessReason || '').trim();
+        if (!lessReason) throw new AppError(`A reason is required for reducing the quantity of kit "${label}"`, 400);
+        qtyReduced = true;
+        reductions.push({
+          itemName: `${label} (Kit)`,
+          isKit: true,
+          kitId: newKit.kitId,
+          kitName: oldKit.kitName || oldKit.kitType || label,
+          category: oldKit.category || 'separate_kit',
+          oldQty: oldKitQty, newQty: newKitQty, qtyReduced: oldKitQty - newKitQty,
+          rate: newKitPrice, gstPct: newKitGst,
+          reason: lessReason,
+        });
+      }
     }
     if (newKitPrice !== oldKitPrice) priceChanged = true;
     if (newKitGst !== oldKitGst) gstChanged = true;
@@ -240,7 +274,7 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     });
   }
 
-  return { buckets, grandTotal, editedByKey, itemChanges, priceChanged, qtyChanged, gstChanged };
+  return { buckets, grandTotal, editedByKey, itemChanges, priceChanged, qtyChanged, gstChanged, qtyReduced, reductions };
 }
 
 // Applies the same floor-checked price/GST edit directly to a document's own items[] — used
@@ -254,8 +288,10 @@ function applyOrphanItemsPriceEdit(items, reqProducts, label404 = 'record') {
   }
   let priceChanged = false;
   let qtyChanged = false;
+  let qtyReduced = false;
   let gstChanged = false;
   const itemChanges = [];
+  const reductions = [];
   for (let i = 0; i < existingItems.length; i++) {
     const oldRow = existingItems[i];
     const newRow = reqProducts[i] || {};
@@ -275,15 +311,30 @@ function applyOrphanItemsPriceEdit(items, reqProducts, label404 = 'record') {
     if (newGst !== oldGst) gstChanged = true;
 
     // No linked Order to sync here (that's what makes this the orphan branch), so there's no
-    // Dispatch/Operations/Tasks concern — quantity is still increase-only for consistency.
+    // Dispatch/Operations/Tasks concern. Quantity may be raised, or REDUCED down to 0 (damaged/
+    // short/rejected goods) — every reduction must carry its own `lessReason`.
     let newQty = oldQty;
     if (newRow.qty !== undefined) {
       newQty = Number(newRow.qty);
       if (!Number.isFinite(newQty) || newQty < 0) throw new AppError(`Invalid quantity for "${label}"`, 400);
-      if (newQty < oldQty) throw new AppError(`Quantity for "${label}" cannot be reduced below ${oldQty}`, 400);
+      if (newQty !== oldQty) qtyChanged = true;
+      if (newQty < oldQty) {
+        const lessReason = String(newRow.lessReason || '').trim();
+        if (!lessReason) throw new AppError(`A reason is required for reducing the quantity of "${label}"`, 400);
+        qtyReduced = true;
+        reductions.push({
+          itemName: label,
+          isKit: !!(oldRow.isKit || oldRow.kitType),
+          kitId: oldRow.kitId || '',
+          kitName: oldRow.kitName || oldRow.kitType || '',
+          category: oldRow.category || '',
+          oldQty, newQty, qtyReduced: oldQty - newQty,
+          rate: newRate, gstPct: newGst,
+          reason: lessReason,
+        });
+      }
       items[i].qty = newQty;
       items[i].lineTotal = newQty * newRate;
-      if (newQty !== oldQty) qtyChanged = true;
     }
     if (newRate !== oldRate || newGst !== oldGst || newQty !== oldQty) {
       itemChanges.push({ name: label, oldRate, newRate, oldQty, newQty, oldGst, newGst });
@@ -291,13 +342,17 @@ function applyOrphanItemsPriceEdit(items, reqProducts, label404 = 'record') {
   }
   const newSubtotal = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0), 0);
   const newGstAmount = items.reduce((s, it) => s + (Number(it.price) || 0) * (Number(it.qty) || 0) * ((Number(it.gst) || 0) / 100), 0);
-  return { newSubtotal, newGstAmount, itemChanges, priceChanged, qtyChanged, gstChanged };
+  return { newSubtotal, newGstAmount, itemChanges, priceChanged, qtyChanged, gstChanged, qtyReduced, reductions };
 }
 
-// Best-effort mirror of an edited price/gst onto a document's own items[] (print/PDF line
+// Best-effort mirror of an edited price/gst/qty onto a document's own items[] (print/PDF line
 // items) — keyed by product identity (itemMatchKey), not by which array supplied the edit, so
 // it's safe to call uniformly regardless of whether the edit landed on a linked Order or on
 // the document's own items[] directly (in the latter case every key simply misses, a no-op).
+// Quantity is carried too: reports (Product-wise / Bill-wise P&L, Sales Report) read
+// invoice.items[].qty / lineTotal directly, so a qty reduction ("less"/damage) that only
+// updated the linked Order + the invoice's summary totals would otherwise leave the per-line
+// COGS/soldQty basis stale and inflate Gross Profit.
 function mirrorPriceOntoItems(items, editedByKey) {
   if (!Array.isArray(items)) return;
   items.forEach((item) => {
@@ -305,6 +360,10 @@ function mirrorPriceOntoItems(items, editedByKey) {
     if (!edit) return;
     item.price = edit.rate;
     item.gst = edit.gst;
+    if (Number.isFinite(Number(edit.qty))) {
+      item.qty = Number(edit.qty);
+      item.lineTotal = Number(edit.qty) * Number(edit.rate);
+    }
   });
 }
 
@@ -312,12 +371,104 @@ function mirrorPriceOntoItems(items, editedByKey) {
 // "Price Edit Logs" modal and the "Edited Invoice & Quotation Report" — from the same
 // priceChanged/qtyChanged/gstChanged flags applyOrderPriceEdit/applyOrphanItemsPriceEdit
 // already compute while validating the edit.
-function describeChangeType(priceChanged, qtyChanged, gstChanged) {
+function describeChangeType(priceChanged, qtyChanged, gstChanged, qtyReduced) {
   const parts = [];
   if (priceChanged) parts.push('Price Edited');
-  if (qtyChanged) parts.push('Quantity Edited');
+  if (qtyReduced) parts.push('Quantity Reduced (Damage)');
+  else if (qtyChanged) parts.push('Quantity Edited');
   if (gstChanged) parts.push('GST Edited');
   return parts.join(', ') || 'Price Edited';
+}
+
+// Shared writer for Billing's quantity-reduction ("less"/damage) flow. For each reduced line
+// it snapshots the per-unit purchase cost (InventoryItem.purchasePrice — same primary source
+// reports.controller's buildItemCostIndex prefers) and writes one DamageLog row, then — for a
+// real Invoice only — posts a party-ledger CREDIT for the whole reduced amount so the ledger
+// balance tracks the new (lower) invoice total whether or not the invoice was already paid.
+// No-op when `reductions` is empty. Best-effort: a failure here is logged but never unwinds
+// the price edit that already saved.
+async function writeDamageLogsAndCredit({ reductions, docType, invoice, quotation, order, user }) {
+  if (!Array.isArray(reductions) || reductions.length === 0) return;
+  try {
+    const names = [...new Set(reductions.map((r) => r.itemName).filter(Boolean))];
+    const costRows = names.length
+      ? await InventoryItem.find({ deletedAt: null, itemName: { $in: names } }, 'itemName purchasePrice')
+      : [];
+    const costByName = {};
+    costRows.forEach((it) => { costByName[String(it.itemName || '').trim().toLowerCase()] = Number(it.purchasePrice) || 0; });
+
+    let clientName = quotation?.clientName || '';
+    let partyId = invoice?.partyId || undefined;
+    if (invoice?.partyId) {
+      const party = await Party.findById(invoice.partyId).select('name');
+      if (party) clientName = party.name;
+    }
+
+    const changedByName = user.fullName || user.name || user.email || 'System';
+    const rows = reductions.map((r) => {
+      const qty = Number(r.qtyReduced) || 0;
+      const rate = Number(r.rate) || 0;
+      const gstPct = Number(r.gstPct) || 0;
+      const unitCost = costByName[String(r.itemName || '').trim().toLowerCase()] || 0;
+      const amountReducedExclGst = r2(qty * rate);
+      const amountReducedInclGst = r2(qty * rate * (1 + gstPct / 100));
+      return {
+        docType,
+        invoiceId: invoice?._id,
+        invoiceNumber: invoice?.invoiceNumber,
+        quotationId: quotation?._id,
+        quotCode: quotation?.quotCode,
+        orderId: order?._id,
+        orderCode: order?.orderCode,
+        partyId,
+        clientName,
+        itemName: r.itemName,
+        isKit: !!r.isKit,
+        kitId: r.kitId || '',
+        kitName: r.kitName || '',
+        category: r.category || '',
+        oldQty: Number(r.oldQty) || 0,
+        newQty: Number(r.newQty) || 0,
+        qtyReduced: qty,
+        rate,
+        gstPct,
+        amountReducedExclGst,
+        amountReducedInclGst,
+        unitCost,
+        costBasisLoss: r2(qty * unitCost),
+        revenueBasisLoss: amountReducedExclGst,
+        reason: r.reason,
+        damageDate: new Date(),
+        createdBy: user._id,
+        createdByName: changedByName,
+      };
+    });
+    await DamageLog.insertMany(rows);
+
+    // Party-ledger credit — Invoice only (a Quotation "in process" has no ledger entry yet;
+    // its debit is posted at convert-to-invoice time off the then-current total).
+    if (invoice?.partyId) {
+      const creditAmt = r2(rows.reduce((s, x) => s + x.amountReducedInclGst, 0));
+      if (creditAmt > 0) {
+        const lastEntry = await LedgerEntry.findOne({ partyId: invoice.partyId }).sort('-createdAt');
+        const prevBal = lastEntry ? Number(lastEntry.balance) || 0 : 0;
+        const newBalance = r2(prevBal - creditAmt);
+        await LedgerEntry.create({
+          partyId: invoice.partyId,
+          type: 'Credit Note',
+          docRef: invoice.invoiceNumber,
+          debit: 0,
+          credit: creditAmt,
+          balance: newBalance,
+          note: `Qty reduction (damage) on ${invoice.invoiceNumber}`,
+          createdBy: user._id,
+        });
+        await Party.findByIdAndUpdate(invoice.partyId, { runningBalance: newBalance });
+      }
+    }
+  } catch (err) {
+    console.error('writeDamageLogsAndCredit failed:', err.message);
+  }
 }
 
 // ─── PARTIES ─────────────────────────────────────────────────────────────────
@@ -496,16 +647,19 @@ exports.updateInvoicePricing = asyncHandler(async (req, res, next) => {
   const oldTotal = invoice.total;
   let editedByKey = new Map();
   let itemChanges = [];
-  let priceChanged = false, qtyChanged = false, gstChanged = false;
+  let priceChanged = false, qtyChanged = false, gstChanged = false, qtyReduced = false;
+  let reductions = [];
+  let linkedOrder = null;
 
   if (invoice.orderId) {
     const order = await Order.findOne({ _id: invoice.orderId, deletedAt: null });
     if (!order) return next(new AppError('Linked order not found', 404));
+    linkedOrder = order;
     const result = await applyOrderPriceEdit(order, {
       products: reqProducts, kitOrders: reqKitOrders, kitPackagePrice: req.body.kitPackagePrice, reason, user: req.user,
     });
     editedByKey = result.editedByKey;
-    ({ itemChanges, priceChanged, qtyChanged, gstChanged } = result);
+    ({ itemChanges, priceChanged, qtyChanged, gstChanged, qtyReduced, reductions } = result);
 
     // Resync Invoice from the SAME buckets/grandTotal just computed for the order, rather
     // than recomputing independently — keeps the two documents mathematically identical.
@@ -517,7 +671,7 @@ exports.updateInvoicePricing = asyncHandler(async (req, res, next) => {
     // Orphan invoice — no linked order to sync. Apply the same floor rule directly to the
     // invoice's own items[].
     const result = applyOrphanItemsPriceEdit(invoice.items, reqProducts, 'invoice');
-    ({ itemChanges, priceChanged, qtyChanged, gstChanged } = result);
+    ({ itemChanges, priceChanged, qtyChanged, gstChanged, qtyReduced, reductions } = result);
     invoice.subtotal = r2(result.newSubtotal);
     invoice.gstAmount = r2(result.newGstAmount);
     invoice.total = r2(result.newSubtotal + result.newGstAmount);
@@ -531,7 +685,7 @@ exports.updateInvoicePricing = asyncHandler(async (req, res, next) => {
     oldSubtotal, newSubtotal: invoice.subtotal,
     oldGstAmount, newGstAmount: invoice.gstAmount,
     oldTotal, newTotal: invoice.total,
-    changeType: describeChangeType(priceChanged, qtyChanged, gstChanged),
+    changeType: describeChangeType(priceChanged, qtyChanged, gstChanged, qtyReduced),
     priceChanged, qtyChanged, gstChanged,
     itemChanges,
     changedAt: new Date(),
@@ -540,7 +694,12 @@ exports.updateInvoicePricing = asyncHandler(async (req, res, next) => {
   });
   await invoice.save({ validateBeforeSave: false });
 
-  notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: 'Invoice Pricing Updated', message: `Invoice ${invoice.invoiceNumber} pricing revised — ${reason}`, link: '/billing' }).catch(() => {});
+  // Quantity reductions ("less"/damage): one DamageLog row per reduced line (feeds the
+  // Reports > Damaged Report + Profit & Loss damage-loss line) + a party-ledger credit for
+  // the reduced amount. Best-effort — never unwinds the price edit that already saved.
+  await writeDamageLogsAndCredit({ reductions, docType: 'Invoice', invoice, order: linkedOrder, user: req.user });
+
+  notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: qtyReduced ? 'Invoice Qty Reduced (Damage)' : 'Invoice Pricing Updated', message: `Invoice ${invoice.invoiceNumber} ${qtyReduced ? 'quantity reduced' : 'pricing revised'} — ${reason}`, link: '/billing' }).catch(() => {});
 
   res.status(200).json({ success: true, data: invoice });
 });
@@ -570,7 +729,8 @@ exports.updateQuotationPricing = asyncHandler(async (req, res, next) => {
   const oldTotal = quotation.total;
   let editedByKey = new Map();
   let itemChanges = [];
-  let priceChanged = false, qtyChanged = false, gstChanged = false;
+  let priceChanged = false, qtyChanged = false, gstChanged = false, qtyReduced = false;
+  let reductions = [];
 
   const linkedOrder = await Order.findOne({
     $or: [{ quotationId: quotation._id }, ...(quotation.leadId ? [{ leadId: quotation.leadId }] : [])],
@@ -582,7 +742,7 @@ exports.updateQuotationPricing = asyncHandler(async (req, res, next) => {
       products: reqProducts, kitOrders: reqKitOrders, kitPackagePrice: req.body.kitPackagePrice, reason, user: req.user,
     });
     editedByKey = result.editedByKey;
-    ({ itemChanges, priceChanged, qtyChanged, gstChanged } = result);
+    ({ itemChanges, priceChanged, qtyChanged, gstChanged, qtyReduced, reductions } = result);
 
     // Resync the Quotation's own summary fields from the SAME buckets/grandTotal, same
     // reasoning as the Invoice branch above — keeps both documents mathematically identical.
@@ -594,7 +754,7 @@ exports.updateQuotationPricing = asyncHandler(async (req, res, next) => {
     // Orphan quotation — no linked order yet. Apply the same floor rule directly to the
     // quotation's own items[].
     const result = applyOrphanItemsPriceEdit(quotation.items, reqProducts, 'quotation');
-    ({ itemChanges, priceChanged, qtyChanged, gstChanged } = result);
+    ({ itemChanges, priceChanged, qtyChanged, gstChanged, qtyReduced, reductions } = result);
     quotation.amount = r2(result.newSubtotal);
     quotation.gstAmount = r2(result.newGstAmount);
     quotation.total = r2(result.newSubtotal + result.newGstAmount);
@@ -608,7 +768,7 @@ exports.updateQuotationPricing = asyncHandler(async (req, res, next) => {
     oldSubtotal, newSubtotal: quotation.amount,
     oldGstAmount, newGstAmount: quotation.gstAmount,
     oldTotal, newTotal: quotation.total,
-    changeType: describeChangeType(priceChanged, qtyChanged, gstChanged),
+    changeType: describeChangeType(priceChanged, qtyChanged, gstChanged, qtyReduced),
     priceChanged, qtyChanged, gstChanged,
     itemChanges,
     changedAt: new Date(),
@@ -617,7 +777,12 @@ exports.updateQuotationPricing = asyncHandler(async (req, res, next) => {
   });
   await quotation.save({ validateBeforeSave: false });
 
-  notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: 'Quotation Pricing Updated', message: `Quotation ${quotation.quotCode} pricing revised — ${reason}`, link: '/billing' }).catch(() => {});
+  // Quantity reductions ("less"/damage) — DamageLog rows for the Reports > Damaged Report +
+  // Profit & Loss. No party-ledger credit here: a quotation "in process" has no ledger entry
+  // yet (that's posted at convert-to-invoice time off the then-current total).
+  await writeDamageLogsAndCredit({ reductions, docType: 'Quotation', quotation, order: linkedOrder, user: req.user });
+
+  notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: qtyReduced ? 'Quotation Qty Reduced (Damage)' : 'Quotation Pricing Updated', message: `Quotation ${quotation.quotCode} ${qtyReduced ? 'quantity reduced' : 'pricing revised'} — ${reason}`, link: '/billing' }).catch(() => {});
 
   res.status(200).json({ success: true, data: quotation });
 });

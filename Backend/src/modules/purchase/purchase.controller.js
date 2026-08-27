@@ -196,6 +196,14 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
     const gst = Number(req.body.gstAmount);
     if (!Number.isNaN(gst) && gst >= 0) request.gstAmount = gst;
   }
+  // CGST/SGST/IGST split off the same scanned quotation — an inter-state quotation sends
+  // igstAmount only, intra-state sends cgst+sgst. Same best-effort pattern as gstAmount.
+  ['cgstAmount', 'sgstAmount', 'igstAmount'].forEach((k) => {
+    if (req.body[k] !== undefined && req.body[k] !== '') {
+      const v = Number(req.body[k]);
+      if (!Number.isNaN(v) && v >= 0) request[k] = v;
+    }
+  });
   if (req.body.qty !== undefined && req.body.qty !== '') {
     const qty = Number(req.body.qty);
     if (!Number.isNaN(qty) && qty > 0) request.qty = qty;
@@ -893,6 +901,11 @@ exports.scanLR = asyncHandler(async (req, res, next) => {
 
 exports.uploadLR = asyncHandler(async (req, res, next) => {
   const { lrNumber, trackingUrl, expectedDeliveryDate, paymentStatus, proofUrl, billTotalAmount } = req.body;
+  const numOrUndef = (v) => (v !== undefined && v !== '' ? (Number(v) || 0) : undefined);
+  const lrGstAmount = numOrUndef(req.body.lrGstAmount ?? req.body.gstAmount);
+  const lrCgstAmount = numOrUndef(req.body.lrCgstAmount ?? req.body.cgstAmount);
+  const lrSgstAmount = numOrUndef(req.body.lrSgstAmount ?? req.body.sgstAmount);
+  const lrIgstAmount = numOrUndef(req.body.lrIgstAmount ?? req.body.igstAmount);
   const order = await PurchaseOrder.findByIdAndUpdate(
     req.params.id,
     {
@@ -905,6 +918,11 @@ exports.uploadLR = asyncHandler(async (req, res, next) => {
       // Bill Total Amount from the LR copy — this, not the vendor's goods `amount`, is
       // what's payable to the transporter (see PurchaseOrder.billTotalAmount).
       ...(billTotalAmount !== undefined && billTotalAmount !== '' && { billTotalAmount: Number(billTotalAmount) || 0 }),
+      // GST portion of the LR bill + its CGST/SGST vs IGST split (AI-scanned or manual).
+      ...(lrGstAmount !== undefined && { lrGstAmount }),
+      ...(lrCgstAmount !== undefined && { lrCgstAmount }),
+      ...(lrSgstAmount !== undefined && { lrSgstAmount }),
+      ...(lrIgstAmount !== undefined && { lrIgstAmount }),
       dispatchStatus: 'In Transit',
     },
     { new: true }

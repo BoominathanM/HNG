@@ -8,9 +8,29 @@ const StickerRequest = require('../../models/StickerRequest');
 const InventoryItem = require('../../models/InventoryItem');
 const User = require('../../models/User');
 const Complaint = require('../../models/Complaint');
+const DamageLog = require('../../models/DamageLog');
+const CompanySettings = require('../../models/CompanySettings');
 const asyncHandler = require('../../utils/asyncHandler');
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+
+// ─── Sales-side GST split (CGST+SGST vs IGST) ─────────────────────────────────
+// A generated sales invoice carries no per-invoice place-of-supply, so there's nothing to
+// derive intra-vs-inter-state from per document. CompanySettings.gstComponent is the single
+// switch: 'igst' means every GST sale is treated as inter-state and the whole tax lands on
+// IGST; any other value ('cgst_sgst' default, 'cgst', 'sgst', 'all', unset) keeps the
+// intra-state CGST+SGST 50/50 divide every sales report has always used. Purchases are
+// unaffected — those get their real split straight off the scanned bill.
+const resolveSalesGstComponent = async () => {
+  const s = await CompanySettings.findOne().select('gstComponent').lean();
+  return (s && s.gstComponent) || 'cgst_sgst';
+};
+const splitSalesGst = (gstAmt, gstComponent) => {
+  const g = r2(gstAmt);
+  if (String(gstComponent || '').toLowerCase() === 'igst') return { cgst: 0, sgst: 0, igst: g };
+  const half = r2(g / 2);
+  return { cgst: half, sgst: half, igst: 0 };
+};
 
 // Invoice.subtotal/gstAmount can go stale relative to Invoice.total for kit-priced orders
 // (the quotation the invoice was created from stores a non-kit-aware subtotal/gstAmount —
@@ -163,6 +183,14 @@ const explodePurchaseOrderItems = (po) => {
   const invGstTotal = Number(po.receivedInvoiceGstAmount) || (invCgst + invSgst + invIgst);
   const hasInvoiceBreakdown = invGstTotal > 0 && amount > 0;
 
+  // No received-invoice breakdown yet: if the scanned SUPPLIER QUOTATION for this order was
+  // inter-state (carried through as po.igstAmount by purchaseOrderSync, with no CGST/SGST),
+  // route the per-line GST entirely to IGST instead of the even CGST/SGST divide. Only the
+  // split direction is taken from the quotation — the taxable/tax amounts still come from the
+  // per-line gstRate math below, exactly as before.
+  const quoteInterState = (Number(po.igstAmount) || 0) > 0
+    && (Number(po.cgstAmount) || 0) <= 0 && (Number(po.sgstAmount) || 0) <= 0;
+
   const splitTax = (itemAmount, gstRate) => {
     if (hasInvoiceBreakdown) {
       const share = itemAmount / amount;
@@ -175,6 +203,7 @@ const explodePurchaseOrderItems = (po) => {
     }
     const taxable = gstRate > 0 ? itemAmount / (1 + gstRate / 100) : itemAmount;
     const totalTax = itemAmount - taxable;
+    if (quoteInterState) return { taxable: r2(taxable), cgst: 0, sgst: 0, igst: r2(totalTax) };
     return { taxable: r2(taxable), cgst: r2(totalTax / 2), sgst: r2(totalTax / 2), igst: 0 };
   };
 
@@ -187,8 +216,10 @@ const explodePurchaseOrderItems = (po) => {
   // deliberately not folded into the invoice-level CGST/SGST/IGST proportional split above
   // (that split's denominator is `amount`, which never included these lines' value, so
   // reusing it here would misallocate tax); a flat 50/50 CGST/SGST off their own gstPercent
-  // is used instead, same fallback convention explodeLocalPurchaseItems uses below for bills
-  // with no separate CGST/SGST/IGST breakdown.
+  // is used instead — but routed entirely to IGST when the received invoice itself was
+  // inter-state (IGST-only), so an extra line on an IGST bill doesn't get mis-split, same
+  // convention explodeLocalPurchaseItems uses below.
+  const invoiceInterState = invIgst > 0 && invCgst <= 0 && invSgst <= 0;
   const extraRows = (po.receivedItems || [])
     .filter((ri) => ri.extra && (Number(ri.receivedQty) || 0) > 0)
     .map((ri) => {
@@ -196,6 +227,7 @@ const explodePurchaseOrderItems = (po) => {
       const taxable = r2((Number(ri.purchasePrice) || 0) * qty);
       const gstRate = Number(ri.gstPercent) || 0;
       const gstAmt = r2(taxable * gstRate / 100);
+      const interState = invoiceInterState || quoteInterState;
       return {
         itemName: ri.itemName || '',
         hsnCode: ri.hsn || '',
@@ -203,9 +235,9 @@ const explodePurchaseOrderItems = (po) => {
         qty,
         amount: r2(taxable + gstAmt),
         taxable,
-        cgst: r2(gstAmt / 2),
-        sgst: r2(gstAmt / 2),
-        igst: 0,
+        cgst: interState ? 0 : r2(gstAmt / 2),
+        sgst: interState ? 0 : r2(gstAmt / 2),
+        igst: interState ? gstAmt : 0,
       };
     });
 
@@ -244,11 +276,15 @@ const explodePurchaseOrderItems = (po) => {
 // items[].gstPercent, set on the Add Local Purchase form) — each line's own gstPercent is
 // preferred when set; otherwise the invoice's single combined gstAmount is allocated across
 // lines by their share of the line total (same convention explodePurchaseOrderItems uses for
-// a PurchaseOrder's own header-level breakdown). No CGST/SGST/IGST split is captured
-// separately on these informal bills, so the resulting GST is divided evenly CGST/SGST.
+// a PurchaseOrder's own header-level breakdown). When the scanned bill printed an IGST-only
+// (inter-state) breakdown — persisted on lp.igstAmount at scan time — each line's GST is
+// routed entirely to IGST; otherwise (intra-state bill, or a manual entry with no breakdown)
+// it stays an even CGST/SGST divide, exactly as before.
 const explodeLocalPurchaseItems = (lp) => {
   const totalAmount = Number(lp.totalAmount) || 0;
   const totalGst = Number(lp.gstAmount) || 0;
+  const lpInterState = (Number(lp.igstAmount) || 0) > 0
+    && (Number(lp.cgstAmount) || 0) <= 0 && (Number(lp.sgstAmount) || 0) <= 0;
   const rows = lp.items?.length ? lp.items : [{ itemName: 'Local Purchase', qty: 0, amount: totalAmount, gstPercent: 0 }];
   const itemsTotal = rows.reduce((s, it) => s + (Number(it.amount) || 0), 0) || totalAmount;
   return rows.map((it) => {
@@ -274,9 +310,9 @@ const explodeLocalPurchaseItems = (lp) => {
       qty: Number(it.qty) || 0,
       amount: r2(amount),
       taxable: r2(taxable),
-      cgst: r2(gstAmt / 2),
-      sgst: r2(gstAmt / 2),
-      igst: 0,
+      cgst: lpInterState ? 0 : r2(gstAmt / 2),
+      sgst: lpInterState ? 0 : r2(gstAmt / 2),
+      igst: lpInterState ? r2(gstAmt) : 0,
     };
   });
 };
@@ -415,6 +451,7 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
     filter.partyId = { $in: partyIds };
   }
 
+  const gstComponent = await resolveSalesGstComponent();
   const invoices = await Invoice.find(filter)
     .populate('partyId', 'name gstNumber state')
     .populate({
@@ -453,9 +490,7 @@ exports.getSalesReport = asyncHandler(async (req, res) => {
       inv_value: invValue,
       total_tax: gstAmt,
       taxable,
-      cgst: r2(gstAmt / 2),
-      sgst: r2(gstAmt / 2),
-      igst: 0,
+      ...splitSalesGst(gstAmt, gstComponent),
       invoiceType: inv.invoiceType || 'GST',
     };
   });
@@ -582,7 +617,7 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   // directly, which double-counted un-invoiced orders as revenue and could disagree with
   // every other report tab whenever an invoice's amount was manually adjusted during
   // quotation→invoice conversion (billing.controller convertQuotationToInvoice).
-  const [invoices, expenses, itemIndexes, stockIndex] = await Promise.all([
+  const [invoices, expenses, itemIndexes, stockIndex, damageLogs] = await Promise.all([
     Invoice.find(buildDateFilterOn(req, 'invoiceDate'))
       .populate('orderId', `kitOrders kitOverallQty orderCategory ${ORDER_MONEY_FIELDS}`)
       .populate('quotationId', 'kitOrders kitOverallQty'),
@@ -591,8 +626,16 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     Expense.find(buildDateFilterOn(req, 'expenseDate')),
     buildItemCostIndex(poDateFilter),
     buildStockIndex(),
+    // Billing quantity-reductions ("less"/damage) in this window. Sales & COGS above already
+    // drop when a line is lessed (both derive from Invoice.items[].qty), so the damaged units'
+    // COST has fallen OUT of COGS — it's re-added here as an explicit loss line (cost basis),
+    // which is what actually reduces Net Profit. `revenueBasisLoss` (lost billing value) is a
+    // memo figure only and does NOT hit Net Profit a second time.
+    DamageLog.find(buildDateFilterOn(req, 'damageDate')),
   ]);
   const { index: itemCostIndex, gstIndex: itemGstIndex } = itemIndexes;
+  const damagedGoodsCostLoss = r2((damageLogs || []).reduce((s, l) => s + (Number(l.costBasisLoss) || 0), 0));
+  const damagedGoodsRevenueLoss = r2((damageLogs || []).reduce((s, l) => s + (Number(l.revenueBasisLoss) || 0), 0));
 
   // Excl-GST taxable value and GST split per invoice, reconciled the same way as every
   // other Invoice-sourced report tab (see reconcileTaxable above).
@@ -695,7 +738,9 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   const totalCogs = r2(Object.values(productMap).reduce((s, p) => s + p.cogs, 0));
   const totalCogsGst = r2(Object.values(productMap).reduce((s, p) => s + p.cogsGst, 0));
   const grossProfit = totalSales - totalCogs;
-  const netProfit = grossProfit - totalExpenses;
+  // Damaged-goods COST loss is a real cash hit not otherwise captured (the lessed units'
+  // revenue AND their COGS both already dropped from totalSales/totalCogs) — subtract it here.
+  const netProfit = grossProfit - totalExpenses - damagedGoodsCostLoss;
 
   // Per-product monthly breakdown
   const productMonthlyData = {};
@@ -732,12 +777,25 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
       monthlyMap[m.month].cogsGst += m.cogsGst;
     });
   });
-  Object.values(monthlyMap).forEach((m) => { m.grossProfit = m.sales - m.cogs; });
+  // Bucket each damage loss by its own month so the P&L chart can show a "Damage Loss" series.
+  (damageLogs || []).forEach((l) => {
+    const key = l.damageDate?.toLocaleString('default', { month: 'short' }) || '';
+    if (!key) return;
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
+    monthlyMap[key].damageLoss = (monthlyMap[key].damageLoss || 0) + (Number(l.costBasisLoss) || 0);
+    monthlyMap[key].damageRevenueLoss = (monthlyMap[key].damageRevenueLoss || 0) + (Number(l.revenueBasisLoss) || 0);
+  });
+  Object.values(monthlyMap).forEach((m) => {
+    m.grossProfit = m.sales - m.cogs;
+    m.damageLoss = r2(m.damageLoss || 0);
+    m.damageRevenueLoss = r2(m.damageRevenueLoss || 0);
+    m.netProfit = r2(m.grossProfit - m.damageLoss);
+  });
 
   res.status(200).json({
     success: true,
     data: {
-      summary: { totalSales, totalSalesGst, totalCogs, grossProfit, totalExpenses, netProfit, netGstPayable, totalPaid, totalPending },
+      summary: { totalSales, totalSalesGst, totalCogs, grossProfit, totalExpenses, netProfit, netGstPayable, totalPaid, totalPending, damagedGoodsCostLoss, damagedGoodsRevenueLoss },
       expenseBreakdown,
       monthlyData: Object.values(monthlyMap),
       productData: Object.values(productMap),
@@ -754,6 +812,7 @@ exports.getBillPL = asyncHandler(async (req, res) => {
     .populate('quotationId', 'kitOrders kitOverallQty')
     .sort('-invoiceDate');
   const { index: itemCostIndex } = await buildItemCostIndex();
+  const gstComponent = await resolveSalesGstComponent();
 
   const billPL = invoices.map((inv) => {
     // Kit rows on the invoice store qty PER KIT — the linked order (or quotation, when the
@@ -805,8 +864,7 @@ exports.getBillPL = asyncHandler(async (req, res) => {
       breakdown,
       sell_taxable: taxable,
       gst_collected: gstAmt,
-      cgst: r2(gstAmt / 2),
-      sgst: r2(gstAmt / 2),
+      ...splitSalesGst(gstAmt, gstComponent),
       sell_total: invValue,
       cogs: r2(cogs),
       input_gst: r2(inputGst),
@@ -829,6 +887,7 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
     .populate('itemId', 'gstPercent')
     .populate('items.itemId', 'gstPercent');
   const localPurchases = await LocalPurchase.find(poDateFilter);
+  const gstComponent = await resolveSalesGstComponent();
 
   const monthlyMap = {};
   const ensureRow = (date) => {
@@ -849,9 +908,11 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
     const row = ensureRow(inv.invoiceDate);
     const order = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
     const { taxable, gstAmt } = resolveInvoiceMoney(inv, order);
+    const salesSplit = splitSalesGst(gstAmt, gstComponent);
     row.sales_taxable += taxable;
-    row.sales_cgst += gstAmt / 2;
-    row.sales_sgst += gstAmt / 2;
+    row.sales_cgst += salesSplit.cgst;
+    row.sales_sgst += salesSplit.sgst;
+    row.sales_igst += salesSplit.igst;
     row.sales_total_gst += gstAmt;
   });
 
@@ -899,6 +960,7 @@ exports.getMonthlyGst = asyncHandler(async (req, res) => {
 exports.getAuditorTax = asyncHandler(async (req, res) => {
   const type = req.query.type || 'sales';
   if (type === 'sales') {
+    const gstComponent = await resolveSalesGstComponent();
     const invoices = await Invoice.find({ invoiceType: 'GST', ...buildDateFilterOn(req, 'invoiceDate') })
       .populate('partyId', 'name gstNumber state')
       .populate('orderId', ORDER_MONEY_FIELDS)
@@ -914,9 +976,7 @@ exports.getAuditorTax = asyncHandler(async (req, res) => {
         invoiceValue: invValue,
         taxableValue: taxable,
         totalTax: gstAmt,
-        cgst: r2(gstAmt / 2),
-        sgst: r2(gstAmt / 2),
-        igst: 0,
+        ...splitSalesGst(gstAmt, gstComponent),
       };
     });
     return res.status(200).json({ success: true, data: rows });
@@ -1777,6 +1837,80 @@ exports.getSwitchReport = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data, summary });
 });
 
+// ─── DAMAGED REPORT ───────────────────────────────────────────────────────────
+// Every line-item quantity reduction ("less"/damage) made through Billing's Edit Pricing
+// modal, one row per reduced line, sourced from DamageLog (written by billing.controller's
+// applyOrderPriceEdit / applyOrphanItemsPriceEdit). Dated by damageDate.
+const buildDamagedRows = async (dateFilter) => {
+  const logs = await DamageLog.find(dateFilter).populate('partyId', 'name').sort('-damageDate');
+  const data = logs.map((l) => ({
+    key: String(l._id),
+    date: l.damageDate ? l.damageDate.toISOString().slice(0, 10) : '',
+    docType: l.docType,
+    docNo: l.invoiceNumber || l.quotCode || '',
+    orderNo: l.orderCode || '',
+    client: l.partyId?.name || l.clientName || '',
+    product: l.itemName || '',
+    isKit: !!l.isKit,
+    kitName: l.kitName || '',
+    category: l.category || '',
+    oldQty: Number(l.oldQty) || 0,
+    newQty: Number(l.newQty) || 0,
+    qtyReduced: Number(l.qtyReduced) || 0,
+    rate: r2(l.rate),
+    gstPct: Number(l.gstPct) || 0,
+    amountExclGst: r2(l.amountReducedExclGst),
+    amountInclGst: r2(l.amountReducedInclGst),
+    unitCost: r2(l.unitCost),
+    costLoss: r2(l.costBasisLoss),
+    revenueLoss: r2(l.revenueBasisLoss),
+    reason: l.reason || '',
+    doneBy: l.createdByName || '',
+  }));
+  return { logs, data };
+};
+
+exports.getDamagedReport = asyncHandler(async (req, res) => {
+  const { logs, data } = await buildDamagedRows(buildDateFilterOn(req, 'damageDate'));
+
+  const summary = {
+    count: data.length,
+    totalQtyReduced: data.reduce((s, r) => s + r.qtyReduced, 0),
+    totalAmountExclGst: r2(data.reduce((s, r) => s + r.amountExclGst, 0)),
+    totalAmountInclGst: r2(data.reduce((s, r) => s + r.amountInclGst, 0)),
+    totalCostLoss: r2(data.reduce((s, r) => s + r.costLoss, 0)),
+    totalRevenueLoss: r2(data.reduce((s, r) => s + r.revenueLoss, 0)),
+  };
+
+  const monthlyMap = {};
+  logs.forEach((l) => {
+    const key = l.damageDate?.toLocaleString('default', { month: 'short', year: '2-digit' }) || '';
+    if (!monthlyMap[key]) monthlyMap[key] = { month: key, qty: 0, costLoss: 0, revenueLoss: 0, amount: 0 };
+    monthlyMap[key].qty += Number(l.qtyReduced) || 0;
+    monthlyMap[key].costLoss = r2(monthlyMap[key].costLoss + (Number(l.costBasisLoss) || 0));
+    monthlyMap[key].revenueLoss = r2(monthlyMap[key].revenueLoss + (Number(l.revenueBasisLoss) || 0));
+    monthlyMap[key].amount = r2(monthlyMap[key].amount + (Number(l.amountReducedInclGst) || 0));
+  });
+
+  res.status(200).json({ success: true, data, summary, chartData: Object.values(monthlyMap) });
+});
+
+exports.exportDamagedReport = asyncHandler(async (req, res) => {
+  const { data } = await buildDamagedRows(buildDateFilterOn(req, 'damageDate'));
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const csv = ['Date,Type,Doc No,Order No,Client,Product,Old Qty,New Qty,Qty Reduced,Rate,GST %,Amount (Excl GST),Amount (Incl GST),Unit Cost,Cost Loss,Revenue Loss,Reason,Done By']
+    .concat(data.map((r) => [
+      r.date, r.docType, esc(r.docNo), esc(r.orderNo), esc(r.client), esc(r.product),
+      r.oldQty, r.newQty, r.qtyReduced, r.rate, r.gstPct,
+      r.amountExclGst, r.amountInclGst, r.unitCost, r.costLoss, r.revenueLoss,
+      esc(r.reason), esc(r.doneBy),
+    ].join(',')))
+    .join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename=damaged-report.csv');
+  res.send(csv);
+});
+
 // ─── EXPORT HELPERS ───────────────────────────────────────────────────────────
 exports.exportSalesReport = asyncHandler(async (req, res) => {
   const invoices = await Invoice.find().populate('partyId', 'name gstNumber').sort('-invoiceDate');
@@ -1824,11 +1958,13 @@ exports.exportLocalPurchaseReport = asyncHandler(async (req, res) => {
 });
 
 exports.exportGstReport = asyncHandler(async (req, res) => {
+  const gstComponent = await resolveSalesGstComponent();
   const invoices = await Invoice.find({ invoiceType: 'GST' }).populate('partyId', 'name gstNumber state').sort('-invoiceDate');
   const csv = ['GST No,Customer,State,Invoice No,Invoice Date,Invoice Value,Taxable Value,CGST,SGST,IGST,Total Tax']
     .concat(invoices.map((i) => {
       const { taxable, gstAmt } = reconcileTaxable(i.subtotal, i.gstAmount, i.total);
-      return `${i.partyId?.gstNumber || ''},${i.partyId?.name || ''},${i.partyId?.state || ''},${i.invoiceNumber},${i.invoiceDate?.toISOString().slice(0,10)},${i.total},${taxable},${r2(gstAmt/2)},${r2(gstAmt/2)},0,${gstAmt}`;
+      const { cgst, sgst, igst } = splitSalesGst(gstAmt, gstComponent);
+      return `${i.partyId?.gstNumber || ''},${i.partyId?.name || ''},${i.partyId?.state || ''},${i.invoiceNumber},${i.invoiceDate?.toISOString().slice(0,10)},${i.total},${taxable},${cgst},${sgst},${igst},${gstAmt}`;
     }))
     .join('\n');
   res.setHeader('Content-Type', 'text/csv');

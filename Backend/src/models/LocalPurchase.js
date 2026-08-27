@@ -44,6 +44,14 @@ const localPurchaseSchema = new mongoose.Schema({
   }],
   totalAmount: { type: Number, required: true },
   gstAmount: { type: Number, default: 0 },
+  // CGST/SGST/IGST split as printed on the scanned bill (AI-extracted at
+  // scanLocalPurchaseInvoice, editable on the Add Local Purchase form). An inter-state bill
+  // prints IGST only; an intra-state bill prints CGST+SGST — never both. Left at 0 for
+  // manually-entered purchases with no breakdown, in which case reports fall back to an even
+  // CGST/SGST divide of gstAmount (see explodeLocalPurchaseItems in reports.controller).
+  cgstAmount: { type: Number, default: 0 },
+  sgstAmount: { type: Number, default: 0 },
+  igstAmount: { type: Number, default: 0 },
   paidAmount: { type: Number, default: 0 },
   paymentType: { type: String, enum: ['instant', 'credit'], default: 'credit' },
   paymentStatus: { type: String, enum: ['Pending', 'Partially Paid', 'Paid'], default: 'Pending' },

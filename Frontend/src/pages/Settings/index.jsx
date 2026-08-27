@@ -113,6 +113,10 @@ const GST_OPTIONS = [
   { value: 'cgst',      label: 'CGST Only',      desc: 'Central GST — intra-state (half rate)' },
   { value: 'sgst',      label: 'SGST Only',      desc: 'State GST — intra-state (half rate)' },
   { value: 'cgst_sgst', label: 'CGST + SGST',    desc: 'Both components for intra-state' },
+  // IGST Only routes the whole tax to IGST on invoices AND treats every GST sale as
+  // inter-state across the Sales / Monthly GST / GST reports (see reports.controller
+  // splitSalesGst). Use when the business bills primarily out-of-state customers.
+  { value: 'igst',      label: 'IGST Only',      desc: 'Integrated GST — inter-state (full rate)' },
 ];
 
 const buildPerms = (mods, overrides = {}) =>
@@ -1003,8 +1007,8 @@ export default function Settings() {
                         <Input.TextArea
                           value={invoiceCompanyDetails.address}
                           onChange={e => setInvoiceCompanyDetails(p => ({ ...p, address: e.target.value }))}
-                          rows={2}
-                          placeholder="Business address"
+                          autoSize={{ minRows: 2, maxRows: 6 }}
+                          placeholder="Business address (each line break shows as a new line on the invoice)"
                           style={{ borderRadius: 8 }}
                         />
                       </Form.Item>

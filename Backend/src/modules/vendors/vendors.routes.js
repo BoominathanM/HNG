@@ -9,6 +9,7 @@ router.use(protect);
 router.get('/', ctrl.getVendors);
 router.post('/', ctrl.createVendor);
 router.post('/scan-document', upload.single('document'), ctrl.scanDocument);
+router.post('/scan-bill', upload.single('bill'), ctrl.scanBill);
 router.get('/:id', ctrl.getVendor);
 router.put('/:id', ctrl.updateVendor);
 router.delete('/:id', ctrl.deleteVendor);

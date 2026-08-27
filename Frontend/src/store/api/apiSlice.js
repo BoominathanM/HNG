@@ -218,6 +218,12 @@ export const apiSlice = createApi({
       // killed client-side first.
       query: (formData) => ({ url: '/vendors/scan-document', method: 'post', data: formData, timeout: 200000 }),
     }),
+    scanVendorBill: builder.mutation({
+      // AI-scan a vendor bill/invoice → invoice header + line items (reuses the
+      // local-purchase invoice extractor). 180s backend budget, so override
+      // axios's 30s default the same way as the other AI scan endpoints.
+      query: (formData) => ({ url: '/vendors/scan-bill', method: 'post', data: formData, timeout: 200000 }),
+    }),
 
     // ── Purchase ────────────────────────────────────────────────────────────
     getRequests: builder.query({
@@ -240,7 +246,11 @@ export const apiSlice = createApi({
       invalidatesTags: ['Purchase', 'Financial'],
     }),
     scanQuotationFile: builder.mutation({
-      query: (formData) => ({ url: '/purchase/scan-quotation', method: 'post', data: formData }),
+      // Backend gives the OpenAI call up to 180s for large scanned documents —
+      // override axios's 30s default so a slow-but-successful scan (e.g. a phone
+      // photo of a multi-line quotation) doesn't get killed client-side first.
+      // Same treatment as scanReceivedInvoice / scanLocalPurchaseInvoice.
+      query: (formData) => ({ url: '/purchase/scan-quotation', method: 'post', data: formData, timeout: 200000 }),
     }),
     updatePurchaseRequestDetails: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/purchase/requests/${id}/update-details`, method: 'patch', data }),
@@ -353,7 +363,11 @@ export const apiSlice = createApi({
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     scanDispatchLR: builder.mutation({
-      query: ({ id, ...data }) => ({ url: `/dispatch/${id}/scan-lr`, method: 'post', data }),
+      // Backend gives the OpenAI call up to 180s for large scanned documents —
+      // override axios's 30s default so a slow-but-successful scan (common for
+      // phone-camera captures of a lorry receipt) doesn't get killed client-side
+      // first. Same treatment as scanPurchaseLR / scanReceivedInvoice.
+      query: ({ id, ...data }) => ({ url: `/dispatch/${id}/scan-lr`, method: 'post', data, timeout: 200000 }),
     }),
     reportTransportMismatch: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/dispatch/${id}/transport-mismatch`, method: 'patch', data }),
@@ -1321,6 +1335,10 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/switches', params }),
       providesTags: ['Reports'],
     }),
+    getDamagedReport: builder.query({
+      query: (params) => ({ url: '/reports/damaged', params }),
+      providesTags: ['Reports'],
+    }),
 
     // ── WhatsApp ────────────────────────────────────────────────────────────
     getWhatsAppConfig: builder.query({
@@ -1515,6 +1533,7 @@ export const {
   useUpdateVendorStatusMutation,
   useGenerateAiSummaryMutation,
   useScanVendorDocumentMutation,
+  useScanVendorBillMutation,
   // Purchase
   useGetRequestsQuery,
   useCreateBulkRequestMutation,
@@ -1772,6 +1791,7 @@ export const {
   useGetTaskPerformanceReportQuery,
   useGetEmergencyApprovalsReportQuery,
   useGetSwitchReportQuery,
+  useGetDamagedReportQuery,
   useUploadFilesMutation,
   useDeleteFileMutation,
   // WhatsApp

@@ -32,6 +32,7 @@ import {
   useUpdateVendorStatusMutation,
   useGenerateAiSummaryMutation,
   useScanVendorDocumentMutation,
+  useScanVendorBillMutation,
   useCreateExpenseMutation,
   useGetUsersQuery,
   useCreateUserMutation,
@@ -117,6 +118,7 @@ export default function VendorsSuppliers() {
   const [updateVendorStatus] = useUpdateVendorStatusMutation();
   const [generateAiSummary] = useGenerateAiSummaryMutation();
   const [scanVendorDocument] = useScanVendorDocumentMutation();
+  const [scanVendorBill] = useScanVendorBillMutation();
   const [createExpense] = useCreateExpenseMutation();
 
   const [viewVendor, setViewVendor] = useState(null);
@@ -185,6 +187,10 @@ export default function VendorsSuppliers() {
   const [showVendorBillScanModal, setShowVendorBillScanModal] = useState(false);
   const [vendorBillFile, setVendorBillFile] = useState(null);
   const [vendorBillScanLoading, setVendorBillScanLoading] = useState(false);
+  // CGST/SGST/IGST + total GST read off the scanned bill — shown read-only under the form so
+  // an inter-state (IGST) bill's tax is visible even though the expense record itself only
+  // stores the grand total.
+  const [vendorBillScanTax, setVendorBillScanTax] = useState(null);
   const [vendorBillForm] = Form.useForm();
   const [purchaseExpenses, setPurchaseExpenses] = useState([]);  /* ── Vendor users (from Settings > Users with dept = Vendors) ── */
   const vendorUsers = useMemo(() => {
@@ -363,6 +369,46 @@ export default function VendorsSuppliers() {
       enqueueSnackbar(err?.data?.message || err?.data || 'AI scan failed — please fill the details manually', { variant: 'error' });
     } finally {
       setVendorScanLoading(false);
+    }
+  };
+
+  // "Scan & Record Vendor Bill" — AI-extract invoice no / date / vendor / total /
+  // line items off the uploaded (or camera-captured) bill and prefill the form.
+  // Paid Status is left for the user — the AI can't read a payment state off a bill.
+  const handleVendorBillScan = async () => {
+    if (!vendorBillFile) { enqueueSnackbar('Please upload or capture a bill first', { variant: 'warning' }); return; }
+    setVendorBillScanLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('bill', vendorBillFile);
+      const res = await scanVendorBill(formData).unwrap();
+      const x = res?.data || {};
+      const fields = {};
+      if (x.invoiceNo) fields.invoice_no = x.invoiceNo;
+      if (x.invoiceDate && dayjs(x.invoiceDate).isValid()) fields.date = dayjs(x.invoiceDate);
+      if (x.vendorName) fields.supplier = x.vendorName;
+      if (x.totalAmount) fields.total_amount = Number(x.totalAmount) || undefined;
+      const cgst = Number(x.cgstAmount) || 0;
+      const sgst = Number(x.sgstAmount) || 0;
+      const igst = Number(x.igstAmount) || 0;
+      const gstTotal = Number(x.gstAmount) || (cgst + sgst + igst);
+      setVendorBillScanTax(gstTotal > 0 || igst > 0 ? { cgst, sgst, igst, gstTotal } : null);
+      const items = Array.isArray(x.items) ? x.items.filter((it) => it.name) : [];
+      if (items.length === 1) {
+        fields.qty = `${items[0].qty || ''}${items[0].unit ? ` ${items[0].unit}` : ''}`.trim();
+      } else if (items.length > 1) {
+        fields.qty = items.map((it) => `${it.qty || ''} ${it.unit || ''}`.trim()).join(', ');
+      }
+      if (Object.keys(fields).length === 0) {
+        enqueueSnackbar('AI could not read any usable details from this bill', { variant: 'warning' });
+      } else {
+        vendorBillForm.setFieldsValue(fields);
+        enqueueSnackbar('AI extracted the bill details — review, set Paid Status, then create.', { variant: 'success' });
+      }
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'AI scan failed — please fill the details manually', { variant: 'error' });
+    } finally {
+      setVendorBillScanLoading(false);
     }
   };
 
@@ -1155,7 +1201,7 @@ export default function VendorsSuppliers() {
           </Space>
         }
         open={showVendorBillScanModal}
-        onCancel={() => { setShowVendorBillScanModal(false); vendorBillForm.resetFields(); setVendorBillFile(null); }}
+        onCancel={() => { setShowVendorBillScanModal(false); vendorBillForm.resetFields(); setVendorBillFile(null); setVendorBillScanTax(null); }}
         footer={null}
         width={560}
         centered
@@ -1175,13 +1221,11 @@ export default function VendorsSuppliers() {
               <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setVendorBillFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A' }}>Capture</Button>
               <Button
                 icon={<ThunderboltOutlined />}
+                loading={vendorBillScanLoading}
                 style={{ borderRadius: 8, background: vendorBillFile ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : '#f0f0f0', border: 'none', color: vendorBillFile ? '#fff' : '#bbb', fontWeight: 700 }}
-                onClick={() => {
-                  if (!vendorBillFile) { enqueueSnackbar('Please upload or capture a bill first', { variant: 'warning' }); return; }
-                  enqueueSnackbar('AI bill scanning will be available once the backend endpoint is ready', { variant: 'info' });
-                }}
+                onClick={handleVendorBillScan}
               >
-                Scan with AI
+                {vendorBillScanLoading ? 'Scanning...' : 'Scan with AI'}
               </Button>
             </div>
             {vendorBillFile && (
@@ -1234,8 +1278,20 @@ export default function VendorsSuppliers() {
             </Row>
           </Form>
 
+          {vendorBillScanTax && (
+            <div style={{ marginTop: 4, padding: '8px 12px', borderRadius: 8, background: '#B11E6A0a', border: '1px solid #B11E6A22' }}>
+              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 2 }}>Tax read from bill</Text>
+              <Space size={14} wrap>
+                {vendorBillScanTax.igst > 0 && <Text strong style={{ fontSize: 12, color: '#1890ff' }}>IGST ₹{vendorBillScanTax.igst.toLocaleString()}</Text>}
+                {vendorBillScanTax.cgst > 0 && <Text strong style={{ fontSize: 12 }}>CGST ₹{vendorBillScanTax.cgst.toLocaleString()}</Text>}
+                {vendorBillScanTax.sgst > 0 && <Text strong style={{ fontSize: 12 }}>SGST ₹{vendorBillScanTax.sgst.toLocaleString()}</Text>}
+                {vendorBillScanTax.gstTotal > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Total GST ₹{vendorBillScanTax.gstTotal.toLocaleString()}</Text>}
+              </Space>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <Button style={{ flex: 1 }} onClick={() => { setShowVendorBillScanModal(false); vendorBillForm.resetFields(); setVendorBillFile(null); }}>Cancel</Button>
+            <Button style={{ flex: 1 }} onClick={() => { setShowVendorBillScanModal(false); vendorBillForm.resetFields(); setVendorBillFile(null); setVendorBillScanTax(null); }}>Cancel</Button>
             <Button
               type="primary"
               style={{ flex: 2, background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', fontWeight: 700 }}
@@ -1255,6 +1311,7 @@ export default function VendorsSuppliers() {
                   setShowVendorBillScanModal(false);
                   vendorBillForm.resetFields();
                   setVendorBillFile(null);
+                  setVendorBillScanTax(null);
                 } catch {
                   enqueueSnackbar('Failed to record expense', { variant: 'error' });
                 }

@@ -417,14 +417,17 @@ const LORRY_RECEIPT_EXTRACTION_PROMPT = `You are a data-entry assistant extracti
 - weight: the total weight as printed (include unit, e.g. "45.5 Kg")
 - freight: ONLY the freight/carriage line item, as printed (include currency symbol if shown) — do NOT include loading, unloading, hamali, GST, or any other charge line, and do NOT use the grand total for this field
 - otherCharges: any charges printed separately from freight — loading, unloading, hamali, handling, etc. — summed together as a plain number (e.g. "78"), or "" if none are printed
-- gstAmount: the GST/tax amount printed, as a plain number (e.g. "43"), or "" if none is printed
+- cgstAmount: the CGST amount printed on the LR as a plain number (e.g. "21.5"), or "" if not printed — an LR prints either CGST+SGST (intra-state transport) or IGST (inter-state transport), never both
+- sgstAmount: the SGST amount printed on the LR as a plain number, or "" if not printed
+- igstAmount: the IGST amount printed on the LR as a plain number, or "" if not printed
+- gstAmount: the total GST/tax amount printed, as a plain number (e.g. "43") — this should equal cgstAmount+sgstAmount+igstAmount; if the LR only prints a single combined GST/tax line with no CGST/SGST/IGST breakdown, put that value here and leave cgstAmount/sgstAmount/igstAmount as ""; "" if no GST is printed at all
 - totalAmount: the FINAL total/grand-total amount payable for this LR, as a plain number (e.g. "901"). Look for the bottom-most summary row on the charges block, usually labeled "Total", "Grand Total", "Net Amount", "To Pay", "Topay", or "Amount Payable" — this is normally freight + otherCharges + gstAmount added together, and is almost always a larger number than freight alone. If no such total row is printed anywhere on the document, compute it yourself as freight + otherCharges + gstAmount. Never leave this blank if freight is present — at minimum it should equal the freight amount.
 - packages: the number of packages/boxes as printed (plain number as a string, e.g. "30")
 - estimatedDelivery: the estimated delivery date, formatted YYYY-MM-DD if present, else ""
 - trackingUrl: a web tracking URL/link printed on the document (e.g. next to a QR code or as "Track your shipment at ..."), else ""
 
 Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
-{ "lrNumber": "", "lrDate": "", "transportName": "", "fromCity": "", "toCity": "", "weight": "", "freight": "", "otherCharges": "", "gstAmount": "", "totalAmount": "", "packages": "", "estimatedDelivery": "", "trackingUrl": "" }
+{ "lrNumber": "", "lrDate": "", "transportName": "", "fromCity": "", "toCity": "", "weight": "", "freight": "", "otherCharges": "", "cgstAmount": "", "sgstAmount": "", "igstAmount": "", "gstAmount": "", "totalAmount": "", "packages": "", "estimatedDelivery": "", "trackingUrl": "" }
 If a field cannot be determined from the document, use an empty string for it — do not guess or invent data (totalAmount is the one exception: compute it from the other charge fields if it isn't printed directly).`;
 
 // file: { url, originalName, mimetype } — Cloudinary-hosted, already uploaded by multer.
@@ -469,6 +472,17 @@ async function extractLorryReceiptFields({ apiKey, model, file }) {
     throw new Error('Failed to parse the AI response as JSON');
   }
 
+  // Prefer the CGST+SGST/IGST breakdown when the LR printed one — same rule as
+  // extractInvoiceFields — over trusting the AI's own addition on a single combined line.
+  const toNum = (v) => Number(String(v ?? '').replace(/[^0-9.]/g, '')) || 0;
+  const cgstAmount = toNum(parsed.cgstAmount);
+  const sgstAmount = toNum(parsed.sgstAmount);
+  const igstAmount = toNum(parsed.igstAmount);
+  const breakdownTotal = Math.round((cgstAmount + sgstAmount + igstAmount) * 100) / 100;
+  const gstAmount = breakdownTotal > 0
+    ? String(breakdownTotal)
+    : (parsed.gstAmount || '');
+
   return {
     lrNumber: parsed.lrNumber || '',
     lrDate: parsed.lrDate || '',
@@ -478,7 +492,13 @@ async function extractLorryReceiptFields({ apiKey, model, file }) {
     weight: parsed.weight || '',
     freight: parsed.freight || '',
     otherCharges: parsed.otherCharges || '',
-    gstAmount: parsed.gstAmount || '',
+    // CGST/SGST/IGST split off the LR — inter-state transport prints IGST only, intra-state
+    // prints CGST+SGST. Kept as plain numbers ('' when the LR printed no such line) so the
+    // frontend can auto-fill a dedicated IGST field, same as the invoice/local-purchase scans.
+    cgstAmount: cgstAmount ? String(cgstAmount) : '',
+    sgstAmount: sgstAmount ? String(sgstAmount) : '',
+    igstAmount: igstAmount ? String(igstAmount) : '',
+    gstAmount,
     totalAmount: parsed.totalAmount || '',
     packages: parsed.packages || '',
     estimatedDelivery: parsed.estimatedDelivery || '',
