@@ -41,6 +41,13 @@ connectDB()
       console.log(`✅  HNG CRM API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
     });
 
+    // Node's default requestTimeout (5 min) caps how long it'll wait to receive a
+    // full request body — large multi-file quotation/invoice uploads on a slow
+    // connection can exceed that before our own AI-call timeouts even start.
+    // Disable it here; per-route/per-request timeouts (multer file-size limits,
+    // aiService's own OpenAI timeouts) already bound the request otherwise.
+    server.requestTimeout = 0;
+
     server.on('error', (err) => {
       if (err.code === 'EADDRINUSE') {
         console.error(`\n❌  Port ${PORT} is already in use.`);

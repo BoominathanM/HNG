@@ -146,11 +146,35 @@ export default function Purchase() {
   // item drops low again, it shows stale Supplier/Payment/LR data from the PREVIOUS cycle
   // instead of a fresh request state. Walk requests newest-first (backend already sorts
   // -createdAt) and skip over any whose linked order is fully received.
-  const findActiveRequestForItem = (name) => raisedRequests.find(req => {
-    if (req.item !== name) return false;
-    const linkedOrder = findLinkedOrder(req);
-    return !linkedOrder || linkedOrder.dispatchStatus !== 'Received';
-  });
+  //
+  // Matched by itemId (not just the display name) whenever both sides have one — two
+  // different InventoryItem records can share the same name (e.g. two "Loofahs" or
+  // "W/C Band" entries), and matching by name alone let a low-stock row pick up a
+  // stale/unrelated request for the OTHER same-named item, showing "Pending"/"Modify"
+  // instead of the correct "Ask Quotation" action for an item with no active request yet.
+  // Falls back to name-only matching for legacy/free-text requests with no itemId.
+  const findActiveRequestForItem = (item) => {
+    const itemObj = typeof item === 'string' ? { name: item, key: null } : (item || {});
+    return raisedRequests.find(req => {
+      const matches = itemObj.key && req.itemId
+        ? req.itemId === itemObj.key
+        : req.item === itemObj.name;
+      if (!matches) return false;
+      // "Bulk Purchase Request" creates a PurchaseRequest per selected item the instant
+      // it's added to the batch (createBulkRequestMutation) — status 'Pending' with NO
+      // quotationFiles/amount yet. Those only get attached afterwards, as a separate
+      // follow-up step, from that batch's own Pending row (handlePendingRowSave /
+      // handleBatchRowSave). If that follow-up is never done, the stub is really just an
+      // abandoned draft — nobody ever actually asked a supplier for a quotation — not a
+      // genuine outstanding request. Without this check it sits here as "active" forever,
+      // permanently blocking this item's own Ask Quotation action even after a completely
+      // separate, later, fully-received purchase cycle for the same item.
+      const isAbandonedBulkStub = req.requestType === 'bulk' && !(req.quotationFiles || []).length && req.amount == null;
+      if (isAbandonedBulkStub) return false;
+      const linkedOrder = findLinkedOrder(req);
+      return !linkedOrder || linkedOrder.dispatchStatus !== 'Received';
+    });
+  };
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
@@ -226,12 +250,6 @@ export default function Purchase() {
     () => inventoryItems.filter((i) => (i.status === 'Low' || i.status === 'Out') && i.itemType !== 'filled'),
     [inventoryItems]
   );
-
-  const dupeItemNames = useMemo(() => {
-    const nameCount = {};
-    inventoryItems.forEach(i => { nameCount[i.name] = (nameCount[i.name] || 0) + 1; });
-    return new Set(Object.keys(nameCount).filter(n => nameCount[n] > 1));
-  }, [inventoryItems]);
 
   // Sync RTK Query data into Redux slices
   useEffect(() => {
@@ -425,9 +443,11 @@ export default function Purchase() {
       if (r.isBatchGroup && (r.children || []).length) {
         if (totalAmount) setPendingRowAmount(prev => ({ ...prev, [r.key]: totalAmount }));
         let matchedCount = 0;
+        const usedItems = new Set();
         r.children.forEach((child) => {
-          const match = matchScannedItem(scanned.items, child.item);
+          const match = matchScannedItem(scanned.items, child.item, usedItems);
           if (match && Number(match.amount) > 0) {
+            usedItems.add(match);
             matchedCount += 1;
             setPendingRowAmount(prev => ({ ...prev, [child.key]: Number(match.amount) }));
           }
@@ -888,12 +908,14 @@ export default function Purchase() {
       if (scannedInvoiceDetails?.totalAmount) fd.append('totalAmount', scannedInvoiceDetails.totalAmount);
       if (scannedInvoiceDetails?.vendorGST) fd.append('vendorGST', scannedInvoiceDetails.vendorGST);
       if (scannedInvoiceDetails?.vendorAddress) fd.append('vendorAddress', scannedInvoiceDetails.vendorAddress);
-      // CGST/SGST/IGST breakdown as printed on the invoice — shown to the user above but
-      // previously never sent, so the GST Report had no real Input GST to read for this order.
-      if (scannedInvoiceDetails?.cgstAmount) fd.append('cgstAmount', scannedInvoiceDetails.cgstAmount);
-      if (scannedInvoiceDetails?.sgstAmount) fd.append('sgstAmount', scannedInvoiceDetails.sgstAmount);
-      if (scannedInvoiceDetails?.igstAmount) fd.append('igstAmount', scannedInvoiceDetails.igstAmount);
-      if (scannedInvoiceDetails?.gstAmount) fd.append('gstAmount', scannedInvoiceDetails.gstAmount);
+      // CGST/SGST/IGST breakdown as shown (and now editable) above — the value the user
+      // confirmed, AI-read or hand-corrected, is what feeds this order's Input GST in the
+      // GST Report. Sent whenever it's a real number so an explicit 0 correction also sticks
+      // (only a blank/cleared field is skipped).
+      if (Number.isFinite(scannedInvoiceDetails?.cgstAmount)) fd.append('cgstAmount', scannedInvoiceDetails.cgstAmount);
+      if (Number.isFinite(scannedInvoiceDetails?.sgstAmount)) fd.append('sgstAmount', scannedInvoiceDetails.sgstAmount);
+      if (Number.isFinite(scannedInvoiceDetails?.igstAmount)) fd.append('igstAmount', scannedInvoiceDetails.igstAmount);
+      if (Number.isFinite(scannedInvoiceDetails?.gstAmount)) fd.append('gstAmount', scannedInvoiceDetails.gstAmount);
       await receiveOrderMutation({ id: receivedTarget.key, formData: fd }).unwrap();
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record receipt', { variant: 'error' });
@@ -1302,15 +1324,30 @@ export default function Purchase() {
     setShowRaiseRequestModal(true);
   };
 
-  // Matches the AI's scanned line items against the product this request is for —
-  // same normalize+substring approach as scanReceivedInvoice's `norm()` on the backend.
-  const matchScannedItem = (items, productName) => {
+  // Matches the AI's scanned line items against the product this request is for.
+  // An exact normalized name match is trusted outright. Otherwise we fall back to
+  // substring containment, but ONLY when exactly one scanned line qualifies — with
+  // short/generic product names (e.g. "Soap") a plain "does this contain that"
+  // check can be satisfied by several different line items ("Liquid Soap", "Bar
+  // Soap 100g", ...), and picking the first hit via .find() silently stamps the
+  // wrong line's amount onto the product. Reporting "no match" in that ambiguous
+  // case is safer — the caller falls back to the document total / manual entry
+  // instead of a confidently-wrong number.
+  // `usedItems`, when passed, excludes scanned lines already claimed by another
+  // product in the same batch scan so two products can't both be assigned the
+  // same line's amount.
+  const matchScannedItem = (items, productName, usedItems = null) => {
     const norm = (s) => (s || '').toLowerCase().trim();
     const target = norm(productName);
-    return (items || []).find((it) => {
+    if (!target) return null;
+    const candidates = (items || []).filter((it) => !usedItems || !usedItems.has(it));
+    const exact = candidates.find((it) => norm(it.name) === target);
+    if (exact) return exact;
+    const substringMatches = candidates.filter((it) => {
       const name = norm(it.name);
-      return name && target && (name.includes(target) || target.includes(name));
+      return name && (name.includes(target) || target.includes(name));
     });
+    return substringMatches.length === 1 ? substringMatches[0] : null;
   };
 
   // Resolves what amount a single/separate purchase request should trust from a scanned
@@ -2123,7 +2160,7 @@ export default function Purchase() {
                         dataSource={lowStockInventoryItems.filter((inv) => {
                           const q = stockSearch.toLowerCase();
                           const matchSearch = !q || (inv.name || '').toLowerCase().includes(q) || (inv.category || '').toLowerCase().includes(q) || (inv.code || '').toLowerCase().includes(q);
-                          const linkedReq = findActiveRequestForItem(inv.name);
+                          const linkedReq = findActiveRequestForItem(inv);
                           const matchStatus = !stockReqStatusFilter || (linkedReq?.status || '') === stockReqStatusFilter;
                           return matchSearch && matchStatus;
                         })}
@@ -2135,7 +2172,7 @@ export default function Purchase() {
                           onExpand: () => {},
                           showExpandColumn: false,
                           expandedRowRender: (r) => {
-                            const linkedReq = findActiveRequestForItem(r.name);
+                            const linkedReq = findActiveRequestForItem(r);
                             if (linkedReq) {
                               // 2-way shared notes with Financial page (stored in Redux)
                               const reqNotes = linkedReq.notes || [];
@@ -2209,7 +2246,7 @@ export default function Purchase() {
                           {
                             title: 'Supplier', key: 'supplier',
                             render: (_, r) => {
-                              const req = findActiveRequestForItem(r.name);
+                              const req = findActiveRequestForItem(r);
                               if (!req?.supplier) return <Text type="secondary">—</Text>;
                               return <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 13 }}>{req.supplier}</Text>;
                             }
@@ -2217,7 +2254,7 @@ export default function Purchase() {
                           {
                             title: 'Payment Terms', key: 'payment_terms',
                             render: (_, r) => {
-                              const req = findActiveRequestForItem(r.name);
+                              const req = findActiveRequestForItem(r);
                               if (!req?.payment_terms) return <Text type="secondary">—</Text>;
                               return <Text style={{ fontSize: 13 }}>{req.payment_terms}</Text>;
                             }
@@ -2225,7 +2262,7 @@ export default function Purchase() {
                           {
                             title: 'Payment Doc', key: 'payment_doc',
                             render: (_, r) => {
-                              const req = findActiveRequestForItem(r.name);
+                              const req = findActiveRequestForItem(r);
                               const linkedOrder = req ? findLinkedOrder(req) : null;
                               const paymentHistory = linkedOrder?.paymentHistory || [];
                               const quotationFiles = req?.quotationFiles || [];
@@ -2244,7 +2281,7 @@ export default function Purchase() {
                             title: 'Quotation Status',
                             key: 'req_status',
                             render: (_, r) => {
-                              const req = findActiveRequestForItem(r.name);
+                              const req = findActiveRequestForItem(r);
                               if (!req) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
                               const colorMap = { Approved: 'success', Rejected: 'error', Pending: 'processing', Modification: 'warning' };
                               return <Tag color={colorMap[req.status]} style={{ borderRadius: 12 }}>{req.status}</Tag>;
@@ -2254,7 +2291,7 @@ export default function Purchase() {
                             title: 'Finance Status',
                             key: 'finance_status',
                             render: (_, r) => {
-                              const req = findActiveRequestForItem(r.name);
+                              const req = findActiveRequestForItem(r);
                               if (!req) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
                               if (req.status === 'Approved') return <Tag color="success" style={{ borderRadius: 12 }}>Approved</Tag>;
                               if (req.status === 'Rejected') return (
@@ -2274,7 +2311,7 @@ export default function Purchase() {
                             title: 'Upload LR Copies',
                             key: 'lr_copies',
                             render: (_, r) => {
-                              const req = findActiveRequestForItem(r.name);
+                              const req = findActiveRequestForItem(r);
                               const linkedOrder = req ? findLinkedOrder(req) : null;
                               if (!linkedOrder) return <Text type="secondary">—</Text>;
                               // Local lrData is session-only; fall back to the persisted PurchaseOrder
@@ -2312,7 +2349,7 @@ export default function Purchase() {
                             title: 'Action',
                             key: 'action',
                             render: (_, r) => {
-                              const req = findActiveRequestForItem(r.name);
+                              const req = findActiveRequestForItem(r);
                               const orderAlreadyRaised = !!findLinkedOrder(req);
                               const noteCount = req ? (req.notes || []).length : (invItemNotes[r.key] || []).length;
                               const noteBtn = (
@@ -6564,25 +6601,32 @@ export default function Purchase() {
                     { label: 'GST Number', val: scannedInvoiceDetails.vendorGST || '-' },
                     { label: 'Vendor Phone', val: scannedInvoiceDetails.vendorPhone || '-' },
                     { label: 'Vendor Address', val: scannedInvoiceDetails.vendorAddress || '-', xs: 24 },
-                    { label: 'Amount (Taxable)', val: scannedInvoiceDetails.amount != null ? `₹${Number(scannedInvoiceDetails.amount).toLocaleString()}` : '-' },
-                    // CGST/SGST only shown when the invoice actually printed that breakdown
-                    // (same-state); IGST only when printed (inter-state) — otherwise skipped so a
-                    // single-line "GST Amount" invoice doesn't show two misleading zero rows.
-                    ...(scannedInvoiceDetails.cgstAmount > 0 || scannedInvoiceDetails.sgstAmount > 0
-                      ? [
-                          { label: 'CGST', val: `₹${Number(scannedInvoiceDetails.cgstAmount || 0).toLocaleString()}` },
-                          { label: 'SGST', val: `₹${Number(scannedInvoiceDetails.sgstAmount || 0).toLocaleString()}` },
-                        ]
-                      : []),
-                    ...(scannedInvoiceDetails.igstAmount > 0
-                      ? [{ label: 'IGST', val: `₹${Number(scannedInvoiceDetails.igstAmount).toLocaleString()}` }]
-                      : []),
-                    { label: 'GST Amount (Total)', val: scannedInvoiceDetails.gstAmount != null ? `₹${Number(scannedInvoiceDetails.gstAmount).toLocaleString()}` : '-' },
-                    { label: 'Total Amount', val: scannedInvoiceDetails.totalAmount != null ? `₹${Number(scannedInvoiceDetails.totalAmount).toLocaleString()}` : '-' },
+                    // Amount fields are editable — the AI's read is only a starting point. A manual
+                    // correction here is exactly what gets saved: handleConfirmReceived posts these
+                    // straight from scannedInvoiceDetails, and the CGST/SGST/IGST breakdown feeds
+                    // this order's Input GST in the GST Report. Shown as inputs (not hidden zero
+                    // rows) so a breakdown the AI missed can still be filled in.
+                    { label: 'Amount (Taxable)', editKey: 'amount' },
+                    { label: 'CGST', editKey: 'cgstAmount' },
+                    { label: 'SGST', editKey: 'sgstAmount' },
+                    { label: 'IGST', editKey: 'igstAmount' },
+                    { label: 'GST Amount (Total)', editKey: 'gstAmount' },
+                    { label: 'Total Amount', editKey: 'totalAmount' },
                   ].map((d, i) => (
                     <Col xs={d.xs || 12} sm={d.xs || 8} key={i}>
                       <Text style={{ fontSize: 10, color: '#888', display: 'block' }}>{d.label}</Text>
-                      <Text strong style={{ fontSize: 12 }}>{d.val}</Text>
+                      {d.editKey ? (
+                        <InputNumber
+                          size="small"
+                          min={0}
+                          prefix="₹"
+                          value={scannedInvoiceDetails[d.editKey] ?? null}
+                          onChange={(v) => setScannedInvoiceDetails((prev) => ({ ...prev, [d.editKey]: v }))}
+                          style={{ width: '100%' }}
+                        />
+                      ) : (
+                        <Text strong style={{ fontSize: 12 }}>{d.val}</Text>
+                      )}
                     </Col>
                   ))}
                 </Row>

@@ -48,7 +48,7 @@ const storage = new CloudinaryStorage({
 
 const uploadCloud = multer({
   storage,
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50 MB — scanned multi-page supplier quotations/invoices can be large
   fileFilter: (req, file, cb) => {
     const allowed = /jpeg|jpg|png|pdf|svg|gif|webp/;
     if (allowed.test(file.mimetype.split('/')[1])) return cb(null, true);

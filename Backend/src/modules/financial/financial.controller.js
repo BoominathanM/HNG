@@ -7,79 +7,9 @@ const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
+const { syncOrderItemFromRequest, upsertOrderForApprovedRequest } = require('../../utils/purchaseOrderSync');
 
 // ─── QUOTATION REQUESTS ────────────────────────────────────────────────────────
-
-// A batch's PurchaseOrder is consolidated into ONE document keyed by batchId.
-// Legacy/lone requests (no batchId) get a synthesized, globally-unique
-// `SOLO-<requestId>` key backfilled onto the request — never match on a bare
-// null/absent batchId, since that would match every legacy order at once and
-// silently fold unrelated approvals together.
-async function resolveBatchKey(request) {
-  if (request.batchId) return request.batchId;
-  const soloKey = `SOLO-${request._id}`;
-  request.batchId = soloKey;
-  await request.save({ validateBeforeSave: false });
-  return soloKey;
-}
-
-async function upsertOrderForApprovedRequest(request, userId) {
-  const batchKey = await resolveBatchKey(request);
-  let order = await PurchaseOrder.findOne({ batchId: batchKey });
-
-  const itemEntry = {
-    requestId: request._id,
-    itemId: request.itemId,
-    itemName: request.itemName,
-    qty: request.qty,
-    unit: request.unit,
-    amount: request.amount,
-  };
-
-  if (!order) {
-    const poCode = await generateCode('PO');
-    order = await PurchaseOrder.create({
-      poCode,
-      requestId: request._id,
-      vendorId: request.vendorId,
-      itemId: request.itemId,
-      itemName: request.itemName,
-      qty: request.qty,
-      unit: request.unit,
-      paymentTerms: request.paymentTerms,
-      batchId: batchKey,
-      amount: request.amount,
-      items: [itemEntry],
-      createdBy: userId,
-    });
-  } else {
-    const existingItem = (order.items || []).find((it) => String(it.requestId) === String(request._id));
-    if (existingItem) {
-      // Re-approval after Purchase edited & resent the request (see updateRequestDetails)
-      // — sync the item's latest qty/unit/amount instead of leaving the order stale.
-      existingItem.qty = request.qty;
-      existingItem.unit = request.unit;
-      existingItem.itemName = request.itemName;
-      if (request.amount != null) existingItem.amount = request.amount;
-    } else {
-      order.items.push(itemEntry);
-    }
-    // Single-item orders (solo requests, or the only item in a batch) mirror the
-    // request 1:1 — safe to re-sync on every (re-)approval. Multi-item batch totals
-    // are the SUM of every item's own amount — recomputed on every (re-)approval so
-    // the order total isn't stuck at whichever item was approved first.
-    if (order.items.length === 1) {
-      order.qty = request.qty;
-      order.unit = request.unit;
-      order.paymentTerms = request.paymentTerms;
-      if (request.amount != null) order.amount = request.amount;
-    } else {
-      order.amount = order.items.reduce((s, it) => s + (it.amount || 0), 0);
-    }
-    await order.save({ validateBeforeSave: false });
-  }
-  return order;
-}
 
 exports.getPendingRequests = asyncHandler(async (req, res) => {
   const filter = {};
@@ -169,13 +99,24 @@ exports.batchApproveRequests = asyncHandler(async (req, res, next) => {
 });
 
 exports.updateQuotationDetails = asyncHandler(async (req, res, next) => {
-  const update = { qty: req.body.qty, paymentTerms: req.body.paymentTerms };
+  const request = await PurchaseRequest.findById(req.params.id);
+  if (!request) return next(new AppError('Request not found', 404));
+
+  if (req.body.qty !== undefined && req.body.qty !== '') request.qty = req.body.qty;
+  if (req.body.paymentTerms !== undefined && req.body.paymentTerms !== '') request.paymentTerms = req.body.paymentTerms;
   if (req.body.amount !== undefined && req.body.amount !== '') {
     const amt = Number(req.body.amount);
-    if (!Number.isNaN(amt) && amt >= 0) update.amount = amt;
+    if (!Number.isNaN(amt) && amt >= 0) request.amount = amt;
   }
-  const request = await PurchaseRequest.findByIdAndUpdate(req.params.id, update, { new: true });
-  if (!request) return next(new AppError('Request not found', 404));
+  await request.save({ validateBeforeSave: false });
+
+  // This edits a request directly, at ANY status — including one that's already
+  // Approved and has a live PurchaseOrder. Without re-syncing here, a correction
+  // made through this screen (e.g. fixing a wrong AI-scanned amount) never reaches
+  // the order: its cached item amount/total stays on the old wrong value forever,
+  // since approval is otherwise the only thing that ever writes it.
+  if (request.status === 'Approved') await syncOrderItemFromRequest(request);
+
   res.status(200).json({ success: true, data: request });
 });
 

@@ -17,6 +17,7 @@ const { notifyRoles } = require('../../utils/notify');
 const aiService = require('../../services/aiService');
 const { backfillPendingDeductionsForItem } = require('../sales/sales.controller');
 const { normalizeSize } = require('../../utils/materialStockMatch');
+const { syncOrderItemFromRequest } = require('../../utils/purchaseOrderSync');
 
 // ─── PURCHASE REQUESTS ────────────────────────────────────────────────────────
 exports.getRequests = asyncHandler(async (req, res) => {
@@ -52,11 +53,35 @@ async function resolveQuotationRequests(itemIds, vendorId, purchaseRequestId) {
   await QuotationRequest.updateMany(filter, { status: 'raised', purchaseRequestId, raisedAt: new Date() });
 }
 
+// Collapses duplicate line rows for the same item — by itemId, falling back to a
+// normalized itemName — into one, summing qty. Used by both the Bulk and the
+// Separate ("Raise Request") creation flows so a batch never carries two
+// PurchaseRequests for the same InventoryItem, which would later become two lines
+// on the consolidated PO and double-credit that item's stock when the order is
+// received.
+function mergeRequestItems(items) {
+  const byKey = new Map();
+  const merged = [];
+  for (const it of Array.isArray(items) ? items : []) {
+    const key = it.itemId ? String(it.itemId) : `name:${(it.itemName || '').trim().toLowerCase()}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.qty = (Number(existing.qty) || 0) + (Number(it.qty) || 0);
+      continue;
+    }
+    const entry = { ...it, qty: Number(it.qty) || 0 };
+    byKey.set(key, entry);
+    merged.push(entry);
+  }
+  return merged;
+}
+
 exports.createBulkRequest = asyncHandler(async (req, res) => {
   const { vendorId, items, paymentTerms, firstReminderDate } = req.body;
   const batchId = 'BATCH-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+  const mergedItems = mergeRequestItems(items);
   const created = [];
-  for (const it of items) {
+  for (const it of mergedItems) {
     const code = await generateCode('PR');
     const req_ = await PurchaseRequest.create({
       requestCode: code,
@@ -76,7 +101,7 @@ exports.createBulkRequest = asyncHandler(async (req, res) => {
     });
     created.push(req_);
   }
-  resolveQuotationRequests(items.map((it) => it.itemId).filter(Boolean), vendorId, null).catch(() => {});
+  resolveQuotationRequests(mergedItems.map((it) => it.itemId).filter(Boolean), vendorId, null).catch(() => {});
   notifyRoles({ modules: ['Purchase', 'Financial'], type: 'purchase', title: 'Bulk Purchase Request', message: `${created.length} item(s) requested in batch — pending Finance approval`, link: '/purchase' }).catch(() => {});
   res.status(201).json({ success: true, data: created });
 });
@@ -90,8 +115,9 @@ exports.raiseRequest = asyncHandler(async (req, res) => {
   // the Bulk and the Separate ("Raise Request") flows with no special-casing.
   if (Array.isArray(items) && items.length) {
     const batchId = 'BATCH-' + Date.now() + '-' + Math.random().toString(36).substr(2, 6).toUpperCase();
+    const mergedItems = mergeRequestItems(items);
     const created = [];
-    for (const it of items) {
+    for (const it of mergedItems) {
       const code = await generateCode('PR');
       const doc = await PurchaseRequest.create({
         requestCode: code,
@@ -110,7 +136,7 @@ exports.raiseRequest = asyncHandler(async (req, res) => {
       });
       created.push(doc);
     }
-    resolveQuotationRequests(items.map((it) => it.itemId).filter(Boolean), vendorId, created[0]?._id || null).catch(() => {});
+    resolveQuotationRequests(mergedItems.map((it) => it.itemId).filter(Boolean), vendorId, created[0]?._id || null).catch(() => {});
     notifyRoles({ modules: ['Purchase', 'Financial'], type: 'purchase', title: 'Purchase Request Raised', message: `${created.length} item(s) requested — pending Finance approval`, link: '/purchase' }).catch(() => {});
     return res.status(201).json({ success: true, data: created });
   }
@@ -178,6 +204,10 @@ exports.uploadQuotationFile = asyncHandler(async (req, res, next) => {
   // rejection, sends it back to Pending for review
   if (request.status === 'Modification' || request.status === 'Rejected') request.status = 'Pending';
   await request.save({ validateBeforeSave: false });
+  // Safety net: this endpoint has no status guard, so if it's ever called again on a
+  // request that's already Approved (a linked PurchaseOrder already exists), keep that
+  // order's cached item amount/total in sync instead of letting it silently go stale.
+  if (request.status === 'Approved') await syncOrderItemFromRequest(request);
   // Resolves whatever QuotationRequest the "Re-Ask Quotation" action started for this
   // item+vendor while it sat in Modification — this upload is what fulfills it.
   if (request.itemId) resolveQuotationRequests([request.itemId], request.vendorId, request._id).catch(() => {});
@@ -307,12 +337,33 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
     return next(new AppError(`AI extraction failed: ${err.message}`, err.statusCode || 502));
   }
 
+  const norm = (s) => (s || '').toLowerCase().trim();
+
   // Ordered lines: multi-item PO uses `items[]`, single-item PO uses the top-level fields.
-  const orderedLines = (order.items && order.items.length)
+  const rawOrderedLines = (order.items && order.items.length)
     ? order.items.map((it) => ({ itemId: it.itemId, itemName: it.itemName, orderedQty: it.qty, unit: it.unit }))
     : [{ itemId: order.itemId, itemName: order.itemName, orderedQty: order.qty, unit: order.unit }];
 
-  const norm = (s) => (s || '').toLowerCase().trim();
+  // A consolidated batch PO can carry more than one line for the SAME InventoryItem
+  // (two batched PurchaseRequests for it, or the same item picked twice on a Bulk
+  // Request). Collapse them into one receivable line — summing the ordered qty — so
+  // the Received Order modal shows one row per physical item and the
+  // ordered-vs-invoice qty check below isn't double-counted (the same duplication
+  // otherwise credited that item's stock twice on receipt — see receiveOrder).
+  const orderedLineByKey = new Map();
+  const orderedLines = [];
+  for (const line of rawOrderedLines) {
+    const key = line.itemId ? String(line.itemId) : `name:${norm(line.itemName)}`;
+    const existing = orderedLineByKey.get(key);
+    if (existing) {
+      existing.orderedQty = (Number(existing.orderedQty) || 0) + (Number(line.orderedQty) || 0);
+      continue;
+    }
+    const entry = { ...line, orderedQty: Number(line.orderedQty) || 0 };
+    orderedLineByKey.set(key, entry);
+    orderedLines.push(entry);
+  }
+
   const scannedItems = extracted.items || [];
   // `invoiceQty` is the raw, untouched quantity the AI read off the invoice for this line —
   // kept separate from `receivedQty` (which the frontend pre-fills from it, but the user can
@@ -573,7 +624,7 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
     return priceType === 'inclusive' && gst > 0 ? price / (1 + gst / 100) : price;
   };
 
-  order.receivedItems = lines.map((li) => {
+  const receivedLineObjs = lines.map((li) => {
     const priceType = li.priceType === 'inclusive' ? 'inclusive' : 'exclusive';
     const gstPercent = Number(li.gstPercent) || 0;
     const purchasePrice = toBasePrice(li.purchasePrice, gstPercent, priceType);
@@ -592,6 +643,41 @@ exports.receiveOrder = asyncHandler(async (req, res, next) => {
       extra: !!li.extra,
     };
   });
+
+  // A consolidated batch PO can list the SAME InventoryItem on more than one line
+  // (two batched requests for it, the same item picked twice on a Bulk Request, or
+  // an extra invoice line that resolves to an already-ordered item). The stock
+  // loop below credits per line, so without collapsing these first the goods get
+  // added once per line — inflating currentStock and writing a duplicate-looking
+  // Stock History row (StockMovement). Merge lines that resolve to the same item
+  // into one, summing ordered/received qty, so the receipt credits each physical
+  // item exactly once.
+  const receivedByItemId = new Map();
+  const mergedReceivedItems = [];
+  for (const li of receivedLineObjs) {
+    const key = li.itemId ? String(li.itemId) : null;
+    const existing = key ? receivedByItemId.get(key) : null;
+    if (existing) {
+      existing.orderedQty += li.orderedQty;
+      existing.receivedQty += li.receivedQty;
+      existing.missingQty = Math.max(0, existing.orderedQty - existing.receivedQty);
+      // Keep the first line's cost/GST; fill from a later line only if the first had none.
+      if (!existing.purchasePrice && li.purchasePrice) {
+        existing.purchasePrice = li.purchasePrice;
+        existing.gstPercent = li.gstPercent;
+        existing.priceType = li.priceType;
+      }
+      if (!existing.hsn && li.hsn) existing.hsn = li.hsn;
+      if (!existing.gst && li.gst) existing.gst = li.gst;
+      if (!existing.reason && li.reason) existing.reason = li.reason;
+      // Stays flagged "extra" only if EVERY merged line was extra.
+      existing.extra = existing.extra && li.extra;
+      continue;
+    }
+    if (key) receivedByItemId.set(key, li);
+    mergedReceivedItems.push(li);
+  }
+  order.receivedItems = mergedReceivedItems;
   const isPartial = order.receivedItems.some((li) => li.missingQty > 0);
 
   order.dispatchStatus = isPartial ? 'Partially Received' : 'Received';

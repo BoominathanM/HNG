@@ -2,9 +2,12 @@ import { createApi } from '@reduxjs/toolkit/query/react';
 import api, { scheduleTokenRefresh, clearScheduledRefresh } from '../../api/axios';
 import { setUser, refreshUser, logout as logoutAction } from '../slices/authSlice';
 
-const axiosBaseQuery = () => async ({ url, method = 'get', data, params }) => {
+// `timeout` lets an individual endpoint override axios's default 30s client-side
+// timeout — needed for AI endpoints (quotation comparison, invoice/LR scanning) whose
+// own backend-side OpenAI call is deliberately given far longer than 30s to finish.
+const axiosBaseQuery = () => async ({ url, method = 'get', data, params, timeout }) => {
   try {
-    const result = await api({ url, method, data, params });
+    const result = await api({ url, method, data, params, ...(timeout ? { timeout } : {}) });
     return { data: result.data };
   } catch (err) {
     return {
@@ -210,7 +213,10 @@ export const apiSlice = createApi({
       invalidatesTags: (result, error, id) => [{ type: 'Vendors', id }],
     }),
     scanVendorDocument: builder.mutation({
-      query: (formData) => ({ url: '/vendors/scan-document', method: 'post', data: formData }),
+      // Backend gives the OpenAI call up to 180s for large scanned documents —
+      // override axios's 30s default so a slow-but-successful scan doesn't get
+      // killed client-side first.
+      query: (formData) => ({ url: '/vendors/scan-document', method: 'post', data: formData, timeout: 200000 }),
     }),
 
     // ── Purchase ────────────────────────────────────────────────────────────
@@ -256,7 +262,10 @@ export const apiSlice = createApi({
       invalidatesTags: ['PurchaseOrders', 'Inventory', 'Reports', 'Orders', 'Tasks'],
     }),
     scanReceivedInvoice: builder.mutation({
-      query: ({ id, formData }) => ({ url: `/purchase/orders/${id}/scan-invoice`, method: 'post', data: formData }),
+      // Backend gives the OpenAI call up to 180s for large scanned documents —
+      // override axios's 30s default so a slow-but-successful scan doesn't get
+      // killed client-side first.
+      query: ({ id, formData }) => ({ url: `/purchase/orders/${id}/scan-invoice`, method: 'post', data: formData, timeout: 200000 }),
     }),
     resolveMissingOrder: builder.mutation({
       query: (id) => ({ url: `/purchase/orders/${id}/resolve-missing`, method: 'patch' }),
@@ -273,14 +282,20 @@ export const apiSlice = createApi({
       invalidatesTags: ['PurchaseOrders', 'Reports'],
     }),
     scanPurchaseLR: builder.mutation({
-      query: ({ id, ...data }) => ({ url: `/purchase/orders/${id}/scan-lr`, method: 'post', data }),
+      // Backend gives the OpenAI call up to 180s for large scanned documents —
+      // override axios's 30s default so a slow-but-successful scan doesn't get
+      // killed client-side first.
+      query: ({ id, ...data }) => ({ url: `/purchase/orders/${id}/scan-lr`, method: 'post', data, timeout: 200000 }),
     }),
     getLocalPurchases: builder.query({
       query: () => ({ url: '/purchase/local' }),
       providesTags: ['LocalPurchases'],
     }),
     scanLocalPurchaseInvoice: builder.mutation({
-      query: (formData) => ({ url: '/purchase/local/scan-invoice', method: 'post', data: formData }),
+      // Backend gives the OpenAI call up to 180s for large scanned documents —
+      // override axios's 30s default so a slow-but-successful scan doesn't get
+      // killed client-side first.
+      query: (formData) => ({ url: '/purchase/local/scan-invoice', method: 'post', data: formData, timeout: 200000 }),
     }),
     createLocalPurchase: builder.mutation({
       query: (formData) => ({ url: '/purchase/local', method: 'post', data: formData }),
@@ -552,7 +567,7 @@ export const apiSlice = createApi({
     }),
     updateFinancialQuotation: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/financial/requests/${id}/quotation`, method: 'put', data }),
-      invalidatesTags: ['Financial'],
+      invalidatesTags: ['Financial', 'Purchase', 'PurchaseOrders', 'Reports'],
     }),
     requestQuotationModification: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/financial/requests/${id}/request-modification`, method: 'patch', data }),
@@ -873,7 +888,9 @@ export const apiSlice = createApi({
     // only fires on demand, not on every poll/refetch of getSuggestedTasks. Persisted
     // server-side, so it invalidates 'TaskInsight' for getLatestTaskInsight below.
     getSuggestedTasksInsight: builder.query({
-      query: () => ({ url: '/tasks/suggested/insight' }),
+      // Backend gives the OpenAI call up to 120s — override axios's 30s default
+      // so a slow-but-successful insight run doesn't get killed client-side first.
+      query: () => ({ url: '/tasks/suggested/insight', timeout: 140000 }),
       invalidatesTags: ['TaskInsight'],
     }),
     // Restores the last persisted AI insight run on page load/refresh — no AI call.
@@ -1439,7 +1456,11 @@ export const apiSlice = createApi({
 
     // ── Purchase: AI Quotation Comparison ────────────────────────────────────
     compareQuotations: builder.mutation({
-      query: (formData) => ({ url: '/purchase/quotation-comparison', method: 'post', data: formData }),
+      // Backend gives the OpenAI call up to 300s — up to 5 large/multi-page
+      // documents go into one vision request. Override axios's 30s default,
+      // which is what was tripping "timeout of 30000ms exceeded" here even on a
+      // comparison the backend would otherwise have finished successfully.
+      query: (formData) => ({ url: '/purchase/quotation-comparison', method: 'post', data: formData, timeout: 320000 }),
       invalidatesTags: ['QuotationComparisons'],
     }),
     getQuotationComparisons: builder.query({

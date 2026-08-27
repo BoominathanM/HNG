@@ -11,6 +11,13 @@ const purchaseOrderSchema = new mongoose.Schema({
   batchId: { type: String, default: null },
   items: [{
     requestId: { type: mongoose.Schema.Types.ObjectId, ref: 'PurchaseRequest' },
+    // Every PurchaseRequest that feeds this (merged) line. A consolidated batch PO
+    // carries at most ONE line per InventoryItem, so two requests for the same item
+    // (batched together, or the same item added twice to a Bulk Request) are summed
+    // into a single line and both ids recorded here — otherwise the order got two
+    // lines for one physical item and receiveOrder credited its stock twice.
+    // `requestId` stays as the first/primary contributor for backward compatibility.
+    requestIds: [{ type: mongoose.Schema.Types.ObjectId, ref: 'PurchaseRequest' }],
     itemId: { type: mongoose.Schema.Types.ObjectId, ref: 'InventoryItem' },
     itemName: String,
     qty: Number,

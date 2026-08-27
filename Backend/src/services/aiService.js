@@ -189,7 +189,10 @@ async function compareQuotationFiles({ apiKey, model, files }) {
   const result = await openAiRequest('/chat/completions', {
     apiKey,
     method: 'POST',
-    timeoutMs: 120000,
+    // Up to 5 large/multi-page quotation documents go into one vision request —
+    // give OpenAI generous headroom rather than risk killing a call that was
+    // still going to succeed.
+    timeoutMs: 300000,
     body: {
       model: model || DEFAULT_MODEL,
       messages: [
@@ -253,7 +256,9 @@ async function extractVendorFields({ apiKey, model, file }) {
   const result = await openAiRequest('/chat/completions', {
     apiKey,
     method: 'POST',
-    timeoutMs: 60000,
+    // Scanned vendor documents can be large multi-page PDFs — generous headroom
+    // so a slow-but-successful extraction isn't killed mid-flight.
+    timeoutMs: 180000,
     body: {
       model: model || DEFAULT_MODEL,
       messages: [
@@ -329,7 +334,9 @@ async function extractInvoiceFields({ apiKey, model, file }) {
   const result = await openAiRequest('/chat/completions', {
     apiKey,
     method: 'POST',
-    timeoutMs: 60000,
+    // Scanned invoices can be large multi-page PDFs — generous headroom so a
+    // slow-but-successful extraction isn't killed mid-flight.
+    timeoutMs: 180000,
     body: {
       model: model || DEFAULT_MODEL,
       messages: [
@@ -434,7 +441,9 @@ async function extractLorryReceiptFields({ apiKey, model, file }) {
   const result = await openAiRequest('/chat/completions', {
     apiKey,
     method: 'POST',
-    timeoutMs: 60000,
+    // Scanned LR documents can be large multi-page PDFs — generous headroom so a
+    // slow-but-successful extraction isn't killed mid-flight.
+    timeoutMs: 180000,
     body: {
       model: model || DEFAULT_MODEL,
       messages: [
@@ -527,7 +536,7 @@ async function generateTaskInsight({ apiKey, model, suggestions, taskNames }) {
   const result = await openAiRequest('/chat/completions', {
     apiKey,
     method: 'POST',
-    timeoutMs: 60000,
+    timeoutMs: 120000,
     body: {
       model: model || DEFAULT_MODEL,
       messages: [
