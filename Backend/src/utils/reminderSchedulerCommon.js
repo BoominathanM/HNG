@@ -1,30 +1,34 @@
 // Shared helpers for the WhatsApp date-driven reminder schedulers
-// (follow-up-reminder, payment-due). Both poll their event mapping's
-// `sendTime` fresh from the DB every minute via node-cron.
+// (follow-up-reminder, payment-due, order-delivery, purchase-payment, …). Both
+// poll their event mapping's `sendTime` fresh from the DB every minute via
+// node-cron.
+const { businessParts, businessTodayKey } = require('./businessTime');
 
-// Local calendar date (not UTC) — must match the local-time day boundaries
-// (`setHours(0,0,0,0)`/`setHours(23,59,59,999)`) each scheduler uses to build its
-// today/todayEnd query range. Using toISOString() here would drift a day off from
-// those local boundaries for part of every day (the gap = the server's UTC offset),
-// causing guard keys to point at the wrong day and reminders to double-send or
-// silently skip right around local midnight.
+// Business-local calendar date ("YYYY-MM-DD"). MUST match the day boundaries
+// each scheduler builds its today/todayEnd query range from (now via
+// businessDayRange() in businessTime.js) — if this and those boundaries were
+// keyed on different timezones, guard keys would point at the wrong day for part
+// of every day (the gap = the offset between them), causing reminders to
+// double-send or silently skip right around midnight.
 function todayKey() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  return businessTodayKey();
 }
 
+// Formats a stored date value (submitted from the UI as 'YYYY-MM-DD', stored as
+// UTC midnight) for display inside the WhatsApp message body. Read in the
+// business timezone so the day never slips for values that carry a stray time
+// component; identical to the old local read for plain date-only values.
 function formatDate(d) {
   if (!d) return '';
-  const date = new Date(d);
-  return `${String(date.getDate()).padStart(2, '0')}-${String(date.getMonth() + 1).padStart(2, '0')}-${date.getFullYear()}`;
+  const { day, month, year } = businessParts(new Date(d));
+  return `${String(day).padStart(2, '0')}-${String(month + 1).padStart(2, '0')}-${year}`;
 }
 
 function isSameLocalDay(d, ref) {
   if (!d) return false;
-  const date = new Date(d);
-  return date.getFullYear() === ref.getFullYear()
-    && date.getMonth() === ref.getMonth()
-    && date.getDate() === ref.getDate();
+  const a = businessParts(new Date(d));
+  const b = businessParts(new Date(ref));
+  return a.year === b.year && a.month === b.month && a.day === b.day;
 }
 
 // Builds a "did we already send this key today" guard backed by an in-memory Set.

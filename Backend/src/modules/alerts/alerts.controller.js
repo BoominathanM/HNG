@@ -5,6 +5,12 @@ const AlertLog = require('../../models/AlertLog');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const { getPendingRecordsForConfig } = require('../../utils/alertConfigQueries');
+// Business-timezone-aware day/time gate — must NOT use the server's local clock,
+// or every window breaks on a UTC production host. See utils/businessTime.js.
+const { isWithinWindow } = require('../../utils/businessTime');
+const { slog, serror } = require('../../utils/schedulerLog');
+
+const TAG = 'alerts';
 
 // Best-effort audit write, same fire-and-forget contract as the scheduler's own
 // logAlertEvent (utils/alertConfigScheduler.js) — a logging failure must never
@@ -13,7 +19,7 @@ const logAlertEvent = async (event, fields) => {
   try {
     await AlertLog.create({ event, ...fields });
   } catch (err) {
-    console.error('[alerts] failed to write AlertLog:', err.message);
+    serror(TAG, `failed to write AlertLog: ${err.message}`);
   }
 };
 
@@ -22,24 +28,6 @@ const logAlertEvent = async (event, fields) => {
 // middleware is unused everywhere, so admin-only endpoints check inline instead.
 const isAdminOrManagement = (user) =>
   !!user && (user.role === 'Super Admin' || user.department === 'Admin' || user.department === 'Management');
-
-const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function minutesSinceMidnight(hh, mm) {
-  return Number(hh) * 60 + Number(mm);
-}
-
-function isWithinWindow(config, now) {
-  const todayAbbr = DAY_ABBR[now.getDay()];
-  if (Array.isArray(config.days) && config.days.length && !config.days.includes(todayAbbr)) return false;
-
-  const [startHH, startMM] = (config.startTime || '00:00').split(':');
-  const [endHH, endMM] = (config.endTime || '23:59').split(':');
-  const nowMinutes = minutesSinceMidnight(now.getHours(), now.getMinutes());
-  const startMinutes = minutesSinceMidnight(startHH, startMM);
-  const endMinutes = minutesSinceMidnight(endHH, endMM);
-  return nowMinutes >= startMinutes && nowMinutes <= endMinutes;
-}
 
 // GET /api/alerts/active — polled every ~20s by the logged-in user's browser.
 // Returns only alerts that have already been "fired" by the scheduler (i.e. an
@@ -110,6 +98,7 @@ exports.getActiveAlerts = asyncHandler(async (req, res) => {
             configId: config._id, recordType: item.recordType, recordId: item.recordId,
             group: config.group, role: config.role, title: item.title, userId: req.user._id,
           });
+          slog(TAG, `⏰ snooze expired → re-ringing ${config.group}${config.role ? '/' + config.role : ''} for ${req.user.fullName || req.user._id} — ${item.title}`);
         }
       }
 
@@ -159,6 +148,7 @@ exports.snoozeAlert = asyncHandler(async (req, res, next) => {
     configId, recordType, recordId, group: config.group, role: config.role,
     title: title || snooze.title, userId: req.user._id, minutes: mins,
   });
+  slog(TAG, `😴 snoozed ${config.group}${config.role ? '/' + config.role : ''} for ${mins}m by ${req.user.fullName || req.user._id} — ${title || snooze.title || alertKey}`);
   res.status(200).json({ success: true, data: snooze });
 });
 
@@ -189,6 +179,7 @@ exports.stopAlert = asyncHandler(async (req, res, next) => {
     configId, recordType, recordId, group: config.group, role: config.role,
     title: title || snooze.title, userId: req.user._id,
   });
+  slog(TAG, `🛑 stopped ${config.group}${config.role ? '/' + config.role : ''} by ${req.user.fullName || req.user._id} — ${title || snooze.title || alertKey}`);
   res.status(200).json({ success: true, data: snooze });
 });
 
@@ -223,6 +214,7 @@ exports.clearSnoozedAlert = asyncHandler(async (req, res, next) => {
     group: row.group, role: row.role, title: row.title,
     userId: req.user._id, targetUserId: row.userId,
   });
+  slog(TAG, `🧹 cleared ${row.action} on ${row.group}${row.role ? '/' + row.role : ''} by admin ${req.user.fullName || req.user._id} — ${row.title || ''}`);
   res.status(200).json({ success: true, message: 'Cleared' });
 });
 

@@ -4,13 +4,18 @@ const WhatsAppEvent = require('../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../models/WhatsAppEventMapping');
 const { sendMessage } = require('../services/whatsAppService');
 const { todayKey, formatDate, createDailyGuard } = require('./reminderSchedulerCommon');
+// Business-timezone clock — send times / day ranges are configured in IST and
+// must not be read off the server's local clock. See utils/businessTime.js.
+const { businessParts, businessDayRange } = require('./businessTime');
+const { slog, swarn, serror, sbeat } = require('./schedulerLog');
+
+const TAG = 'separate-purchase-payment-reminder';
 
 // Tracks "purchaseRequestId:today:userId" triples already sent today.
 const guard = createDailyGuard();
 
 async function sendRemindersForMapping(mapping) {
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  const todayEnd = new Date(); todayEnd.setHours(23, 59, 59, 999);
+  const { todayStart, todayEnd } = businessDayRange();
 
   // secondReminderDate is set from the individual ("Raise Request" / Separate) modal for
   // payment terms other than "100% Payment". This is the Separate-flow counterpart to
@@ -22,10 +27,17 @@ async function sendRemindersForMapping(mapping) {
     requestType: 'individual',
   }).populate('vendorId', 'name').lean();
 
-  if (!requests.length) return;
+  if (!requests.length) {
+    slog(TAG, 'sendTime matched — 0 individual requests with a payment reminder due today');
+    return;
+  }
 
   const recipients = (mapping.recipientUserIds || []).filter((u) => u?.mobile);
-  if (!recipients.length) return;
+  if (!recipients.length) {
+    swarn(TAG, `sendTime matched, ${requests.length} request(s) due — but this mapping has no recipients with a mobile number`);
+    return;
+  }
+  slog(TAG, `sendTime matched — ${requests.length} individual request(s) due, ${recipients.length} recipient(s)`);
 
   const { name: templateName, language = 'en' } = mapping.templateId;
   const variables = mapping.variables || [];
@@ -54,9 +66,9 @@ async function sendRemindersForMapping(mapping) {
 
       const result = await sendMessage({ to: user.mobile, templateName, language, parameters });
       if (result.success) {
-        console.log(`[separate-purchase-payment-reminder] ✅ Sent to ${user.fullName} (${user.mobile}) re: ${pr.requestCode}`);
+        slog(TAG, `✅ sent to ${user.fullName} (${user.mobile}) — request: ${pr.requestCode}`);
       } else {
-        console.warn(`[separate-purchase-payment-reminder] ⚠️  Failed for ${user.fullName} (${user.mobile}): ${result.error}`);
+        swarn(TAG, `send failed for ${user.fullName} (${user.mobile}) — request: ${pr.requestCode}: ${result.error}`);
       }
     }
   }
@@ -64,13 +76,11 @@ async function sendRemindersForMapping(mapping) {
 
 async function checkAndSend() {
   try {
-    const now = new Date();
-    const currentHH = String(now.getHours()).padStart(2, '0');
-    const currentMM = String(now.getMinutes()).padStart(2, '0');
+    const { hh: currentHH, mm: currentMM } = businessParts();
     guard.purgeStale(todayKey());
 
     const event = await WhatsAppEvent.findOne({ key: 'separate-purchase-payment-reminder' }).lean();
-    if (!event) return;
+    if (!event) { sbeat(TAG, `tick ${currentHH}:${currentMM} IST — event 'separate-purchase-payment-reminder' not configured`); return; }
 
     const mappings = await WhatsAppEventMapping
       .find({ eventId: event._id, isEnabled: true })
@@ -78,18 +88,21 @@ async function checkAndSend() {
       .populate('recipientUserIds', 'fullName mobile')
       .lean();
 
+    const sendTimes = mappings.map((m) => m.sendTime || '08:00');
+    sbeat(TAG, `tick ${currentHH}:${currentMM} IST — ${mappings.length} enabled mapping(s), sendTime(s): ${sendTimes.join(', ') || 'none'}`);
+
     for (const mapping of mappings) {
       const [hh, mm] = (mapping.sendTime || '08:00').split(':');
       if (hh !== currentHH || mm !== currentMM) continue;
       await sendRemindersForMapping(mapping);
     }
   } catch (err) {
-    console.error('[separate-purchase-payment-reminder] check error:', err.message);
+    serror(TAG, `check error: ${err.message}`);
   }
 }
 
 function startSeparatePurchasePaymentReminderScheduler() {
-  console.log('[separate-purchase-payment-reminder] Scheduler started — every minute checks DB sendTime from event mapping');
+  slog(TAG, 'scheduler started — checks DB sendTime every minute');
   checkAndSend();
   cron.schedule('* * * * *', checkAndSend);
 }

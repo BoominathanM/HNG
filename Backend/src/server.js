@@ -29,6 +29,7 @@ connectDB()
     // Auto-create admin when the database has no users (fresh DB or wiped DB).
     await seedAdminIfEmpty();
     await seedAlertConfigsIfMissing();
+    console.log(`⏰  Starting 7 cron schedulers (every minute) — set SCHEDULER_VERBOSE=0 to mute idle-tick heartbeats`);
     startFollowUpReminderScheduler();
     startPaymentDueScheduler();
     startOrderDeliveryReminderScheduler();

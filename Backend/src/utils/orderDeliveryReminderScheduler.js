@@ -4,13 +4,18 @@ const WhatsAppEvent = require('../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../models/WhatsAppEventMapping');
 const { sendMessage } = require('../services/whatsAppService');
 const { todayKey, formatDate, createDailyGuard } = require('./reminderSchedulerCommon');
+// Business-timezone clock — send times / day ranges are configured in IST and
+// must not be read off the server's local clock. See utils/businessTime.js.
+const { businessParts, businessDayRange } = require('./businessTime');
+const { slog, swarn, serror, sbeat } = require('./schedulerLog');
+
+const TAG = 'order-delivery-reminder';
 
 // Tracks "leadId:YYYY-MM-DD" pairs already sent today — prevents double-sends per lead.
 const guard = createDailyGuard();
 
 async function sendRemindersForMapping(mapping) {
-  const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
-  const todayEnd   = new Date(); todayEnd.setHours(23, 59, 59, 999);
+  const { todayStart, todayEnd } = businessDayRange();
 
   // Fetch leads whose tentative order delivery date is today, with the creator's mobile from User collection
   const leads = await Lead.find({
@@ -20,9 +25,10 @@ async function sendRemindersForMapping(mapping) {
   }).populate('createdBy', 'name mobile').lean();
 
   if (!leads.length) {
-    console.log('[order-delivery-reminder] No leads with tentative delivery today.');
+    slog(TAG, 'sendTime matched — 0 leads with a tentative delivery today');
     return;
   }
+  slog(TAG, `sendTime matched — ${leads.length} lead(s) with a tentative delivery today`);
 
   const { name: templateName, language = 'en' } = mapping.templateId;
   const variables = mapping.variables || [];
@@ -57,24 +63,22 @@ async function sendRemindersForMapping(mapping) {
 
     const result = await sendMessage({ to: salesperson.mobile, templateName, language, parameters });
     if (result.success) {
-      console.log(`[order-delivery-reminder] ✅ Sent to ${salesperson.name} (${salesperson.mobile}) for lead: ${lead.hotelName}`);
+      slog(TAG, `✅ sent to ${salesperson.name} (${salesperson.mobile}) — lead: ${lead.hotelName}`);
     } else {
-      console.warn(`[order-delivery-reminder] ⚠️  Failed for ${salesperson.name} (${salesperson.mobile}): ${result.error}`);
+      swarn(TAG, `send failed for ${salesperson.name} (${salesperson.mobile}) — lead: ${lead.hotelName}: ${result.error}`);
     }
   }
 }
 
 async function checkAndSend() {
   try {
-    const now = new Date();
-    const currentHH = String(now.getHours()).padStart(2, '0');
-    const currentMM = String(now.getMinutes()).padStart(2, '0');
+    const { hh: currentHH, mm: currentMM } = businessParts();
     const today = todayKey();
 
     guard.purgeStale(today);
 
     const event = await WhatsAppEvent.findOne({ key: 'order-delivery-reminder' }).lean();
-    if (!event) return;
+    if (!event) { sbeat(TAG, `tick ${currentHH}:${currentMM} IST — event 'order-delivery-reminder' not configured`); return; }
 
     // Always read sendTime fresh from DB — no static value anywhere
     const mappings = await WhatsAppEventMapping
@@ -82,21 +86,23 @@ async function checkAndSend() {
       .populate('templateId', 'name language')
       .lean();
 
+    const sendTimes = mappings.map((m) => m.sendTime || '08:00');
+    sbeat(TAG, `tick ${currentHH}:${currentMM} IST — ${mappings.length} enabled mapping(s), sendTime(s): ${sendTimes.join(', ') || 'none'}`);
+
     for (const mapping of mappings) {
       const [hh, mm] = (mapping.sendTime || '08:00').split(':');
       const mappingTimeMatches = hh === currentHH && mm === currentMM;
       if (!mappingTimeMatches) continue;
 
-      console.log(`[order-delivery-reminder] ⏰ sendTime ${hh}:${mm} matched — running reminders`);
       await sendRemindersForMapping(mapping);
     }
   } catch (err) {
-    console.error('[order-delivery-reminder] check error:', err.message);
+    serror(TAG, `check error: ${err.message}`);
   }
 }
 
 function startOrderDeliveryReminderScheduler() {
-  console.log('[order-delivery-reminder] Scheduler started — every minute checks DB sendTime from event mapping');
+  slog(TAG, 'scheduler started — checks DB sendTime every minute');
   checkAndSend();
   cron.schedule('* * * * *', checkAndSend);
 }
