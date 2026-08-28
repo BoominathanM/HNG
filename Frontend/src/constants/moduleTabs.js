@@ -107,7 +107,6 @@ export const MODULE_TAB_DEFS = {
     { key: 'invoice_settings', label: 'Invoice Settings' },
     { key: 'alert_configuration', label: 'Alert Configuration' },
     { key: 'snoozed_alerts', label: 'Snoozed Alerts' },
-    { key: 'alert_logs', label: 'Alert Logs' },
     { key: 'deleted_records', label: 'Deleted Records' },
   ],
 };

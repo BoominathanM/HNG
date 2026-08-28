@@ -43,7 +43,7 @@ export const apiSlice = createApi({
     'WhatsApp', 'WhatsAppTemplates', 'WhatsAppEvents', 'WhatsAppMappings',
     'GstConfig', 'TaskTimeConfig',
     'MaterialStocks', 'PackagingInvoices',
-    'AlertConfigs', 'ActiveAlerts', 'SnoozedAlerts', 'AlertLogs', 'NotificationSoundConfig',
+    'AlertConfigs', 'ActiveAlerts', 'SnoozedAlerts', 'NotificationSoundConfig',
     'AiConfig', 'QuotationComparisons',
     'HiddenQueueRows',
   ],
@@ -1407,11 +1407,11 @@ export const apiSlice = createApi({
     }),
     snoozeAlert: builder.mutation({
       query: (data) => ({ url: '/alerts/snooze', method: 'post', data }),
-      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts', 'AlertLogs'],
+      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts'],
     }),
     stopAlert: builder.mutation({
       query: (data) => ({ url: '/alerts/stop', method: 'post', data }),
-      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts', 'AlertLogs'],
+      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts'],
     }),
     getSnoozedAlerts: builder.query({
       query: () => ({ url: '/alerts/snoozed' }),
@@ -1419,11 +1419,7 @@ export const apiSlice = createApi({
     }),
     clearSnoozedAlert: builder.mutation({
       query: (id) => ({ url: `/alerts/snoozed/${id}/clear`, method: 'post' }),
-      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts', 'AlertLogs'],
-    }),
-    getAlertLogs: builder.query({
-      query: () => ({ url: '/alerts/logs' }),
-      providesTags: ['AlertLogs'],
+      invalidatesTags: ['ActiveAlerts', 'SnoozedAlerts'],
     }),
 
     // ── GST Integration ──────────────────────────────────────────────────────
@@ -1816,7 +1812,6 @@ export const {
   useStopAlertMutation,
   useGetSnoozedAlertsQuery,
   useClearSnoozedAlertMutation,
-  useGetAlertLogsQuery,
   // GST Integration
   useGetGstConfigQuery,
   useGetGstCredentialsQuery,

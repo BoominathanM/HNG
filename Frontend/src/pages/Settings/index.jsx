@@ -34,7 +34,6 @@ import {
   useRestoreRecordMutation,
   useGetSnoozedAlertsQuery,
   useClearSnoozedAlertMutation,
-  useGetAlertLogsQuery,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -231,13 +230,6 @@ export default function Settings() {
   const [snoozedSearch, setSnoozedSearch] = useState('');
   const [snoozedActionFilter, setSnoozedActionFilter] = useState('all');
   const snoozedAlerts = snoozedData?.data || [];
-
-  // Alert Logs — full history (fired/snoozed/stopped/cleared/expired), unlike
-  // Snoozed Alerts above which only shows currently-active suppressions.
-  const { data: alertLogsData, isLoading: alertLogsLoading } = useGetAlertLogsQuery(undefined, { skip: !isAdminOrManagement });
-  const [alertLogSearch, setAlertLogSearch] = useState('');
-  const [alertLogEventFilter, setAlertLogEventFilter] = useState('all');
-  const alertLogs = alertLogsData?.data || [];
 
   // Form instance for the General tab (so its Save button can persist)
   const [generalForm] = Form.useForm();
@@ -1592,96 +1584,6 @@ export default function Settings() {
                             </Button>
                           </Tooltip>
                         )
-                      },
-                    ]}
-                  />
-                )}
-              </Card>
-            ),
-          }] : []),
-          ...(isAdminOrManagement ? [{
-            key: 'alert_logs',
-            label: <Space><ClockCircleOutlined />Alert Logs</Space>,
-            children: (
-              <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 8 }}>
-                  <Text type="secondary" style={{ fontSize: 13 }}>Full history of every alert event — fired, snoozed, stopped, cleared, expired (Admin/Management only)</Text>
-                  <Space wrap>
-                    <Input
-                      prefix={<span>🔍</span>}
-                      placeholder="Search by user or alert..."
-                      value={alertLogSearch}
-                      onChange={e => setAlertLogSearch(e.target.value)}
-                      style={{ width: 220, borderRadius: 8 }}
-                      allowClear
-                    />
-                    <Select value={alertLogEventFilter} onChange={setAlertLogEventFilter} style={{ width: 160 }}>
-                      <Option value="all">All Events</Option>
-                      <Option value="fired">Fired</Option>
-                      <Option value="snoozed">Snoozed</Option>
-                      <Option value="stopped">Stopped</Option>
-                      <Option value="cleared">Cleared</Option>
-                      <Option value="expired">Expired</Option>
-                    </Select>
-                  </Space>
-                </div>
-                {alertLogsLoading ? (
-                  <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
-                ) : alertLogs.length === 0 ? (
-                  <Empty description="No alert log entries yet" image={Empty.PRESENTED_IMAGE_SIMPLE} />
-                ) : (
-                  <Table
-                    size="small"
-                    dataSource={alertLogs
-                      .filter(r => alertLogEventFilter === 'all' || r.event === alertLogEventFilter)
-                      .filter(r => {
-                        if (!alertLogSearch) return true;
-                        const q = alertLogSearch.toLowerCase();
-                        return (r.userId?.fullName || '').toLowerCase().includes(q)
-                          || (r.targetUserId?.fullName || '').toLowerCase().includes(q)
-                          || (r.title || '').toLowerCase().includes(q)
-                          || (r.group || '').toLowerCase().includes(q);
-                      })}
-                    rowKey="_id"
-                    pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 20 }}
-                    columns={[
-                      {
-                        title: 'Event', dataIndex: 'event', width: 100,
-                        render: v => {
-                          const colors = { fired: 'blue', snoozed: 'orange', stopped: 'red', cleared: 'green', expired: 'purple' };
-                          return <Tag color={colors[v] || 'default'} style={{ borderRadius: 10, fontSize: 12 }}>{v.charAt(0).toUpperCase() + v.slice(1)}</Tag>;
-                        }
-                      },
-                      {
-                        title: 'Alert', key: 'alert',
-                        render: (_, r) => (
-                          <div>
-                            <Text style={{ color: textColor, fontSize: 13, display: 'block' }}>{r.title || `${r.group}${r.role ? ` — ${r.role}` : ''}`}</Text>
-                            <Tag style={{ borderRadius: 10, background: '#B11E6A15', color: '#B11E6A', border: '1px solid #B11E6A33', fontSize: 11, marginTop: 2 }}>{r.group}</Tag>
-                          </div>
-                        )
-                      },
-                      {
-                        title: 'User', key: 'user', width: 200,
-                        render: (_, r) => {
-                          if (r.event === 'fired') return <Text style={{ fontSize: 13, color: '#888' }}>System (scheduler)</Text>;
-                          if (r.event === 'cleared') {
-                            return (
-                              <Text style={{ fontSize: 13, color: textColor }}>
-                                {r.userId?.fullName || 'Unknown'} <Text style={{ color: '#888', fontSize: 12 }}>cleared for</Text> {r.targetUserId?.fullName || 'Unknown'}
-                              </Text>
-                            );
-                          }
-                          return <Text style={{ fontSize: 13, color: textColor }}>{r.userId?.fullName || 'Unknown'}</Text>;
-                        }
-                      },
-                      {
-                        title: 'Details', key: 'details', width: 100,
-                        render: (_, r) => r.event === 'snoozed' ? <Text style={{ fontSize: 13, color: '#888' }}>{r.minutes} min</Text> : <Text style={{ fontSize: 13, color: '#888' }}>—</Text>
-                      },
-                      {
-                        title: 'At', dataIndex: 'createdAt', width: 160,
-                        render: v => <Text style={{ fontSize: 13, color: '#888' }}>{new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}</Text>
                       },
                     ]}
                   />

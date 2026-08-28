@@ -10,6 +10,5 @@ router.post('/snooze', ctrl.snoozeAlert);
 router.post('/stop', ctrl.stopAlert);
 router.get('/snoozed', ctrl.getSnoozedAlerts);
 router.post('/snoozed/:id/clear', ctrl.clearSnoozedAlert);
-router.get('/logs', ctrl.getAlertLogs);
 
 module.exports = router;
