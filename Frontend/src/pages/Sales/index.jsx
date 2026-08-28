@@ -5182,6 +5182,10 @@ export default function Sales() {
       shippingSameAsBilling: true,
       billType: 'GST',
       gstPhone: undefined,
+      // Reset the "Assigned To (Sales)" owner too, so a stale looked-up owner
+      // doesn't linger after the rep switches Category / Hotel Type. Falls back
+      // to the lead's own owner in edit mode, otherwise the current user.
+      salesPerson: editingLead?.salesPerson || currentUser?.fullName || currentUser?.name || undefined,
     });
     setOldHotelAutoFilled(false);
   };
@@ -5218,6 +5222,12 @@ export default function Sales() {
           // Form field is "rowsInHotel", not "numRooms"
           rowsInHotel: d.numRooms || d.rowsInHotel,
           source: d.source,
+          // Carry over the existing "Assigned To (Sales)" owner so a repeat lead for an
+          // old hotel stays with whoever already handles that account. Only override when
+          // the matched record actually has an owner, so the required field is never blanked.
+          ...(d.salesPerson || d.assignedTo?.fullName
+            ? { salesPerson: d.salesPerson || d.assignedTo?.fullName }
+            : {}),
           // Billing address — not previously auto-filled, only guessed manually or via GST verify
           ...(d.detailedAddress || d.address ? { detailedAddress: d.detailedAddress || d.address } : {}),
           ...(d.city ? { city: d.city } : {}),
