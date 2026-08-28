@@ -58,7 +58,9 @@ let refreshTimer = null;
 const decodeJwtExp = (token) => {
   try {
     const payload = token.split('.')[1];
-    const json = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), '=');
+    const json = JSON.parse(atob(padded));
     return typeof json.exp === 'number' ? json.exp : null;
   } catch {
     return null;

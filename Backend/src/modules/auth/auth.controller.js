@@ -1,4 +1,5 @@
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const User = require('../../models/User');
 const AppError = require('../../utils/AppError');
 const asyncHandler = require('../../utils/asyncHandler');
@@ -27,22 +28,40 @@ const sessionTTLSeconds = (rememberMe) =>
 // though the tab was open and active the whole time.
 const REFRESH_TOKEN_BUFFER_SECONDS = 15 * 60;
 
-const signToken = (id, rememberMe) =>
-  jwt.sign({ id }, process.env.JWT_SECRET, { expiresIn: sessionTTLSeconds(rememberMe) });
+const createSessionId = () =>
+  (crypto.randomUUID ? crypto.randomUUID() : crypto.randomBytes(16).toString('hex'));
+
+const signToken = (id, rememberMe, sessionId) =>
+  jwt.sign({ id, sid: sessionId }, process.env.JWT_SECRET, { expiresIn: sessionTTLSeconds(rememberMe) });
 
 // rememberMe travels inside the refresh token itself so /auth/refresh can mint
 // a new pair from the verified JWT alone, with no DB read before the write —
 // that read-then-write gap was the other half of the lost-update race below.
-const signRefreshToken = (id, rememberMe) =>
-  jwt.sign({ id, rememberMe }, process.env.JWT_REFRESH_SECRET, {
+const signRefreshToken = (id, rememberMe, sessionId) =>
+  jwt.sign({ id, rememberMe, sid: sessionId }, process.env.JWT_REFRESH_SECRET, {
     expiresIn: sessionTTLSeconds(rememberMe) + REFRESH_TOKEN_BUFFER_SECONDS,
   });
 
 const REFRESH_GRACE_MS = 15 * 1000;
 
-const sendTokens = async (user, statusCode, res, rememberMe = user.rememberMe || false) => {
-  const token = signToken(user._id, rememberMe);
-  const refreshToken = signRefreshToken(user._id, rememberMe);
+const refreshTokenTTLSeconds = (rememberMe) => sessionTTLSeconds(rememberMe) + REFRESH_TOKEN_BUFFER_SECONDS;
+
+const serializeUser = (user) => {
+  const userObj = user.toObject({ flattenMaps: true });
+  delete userObj.password;
+  delete userObj.refreshToken;
+  delete userObj.previousRefreshToken;
+  delete userObj.previousRefreshTokenExpires;
+  delete userObj.refreshSessions;
+  return userObj;
+};
+
+const sendTokens = async (user, statusCode, res, rememberMe = user.rememberMe || false, existingSessionId = null) => {
+  const sessionId = existingSessionId || createSessionId();
+  const token = signToken(user._id, rememberMe, sessionId);
+  const refreshToken = signRefreshToken(user._id, rememberMe, sessionId);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + refreshTokenTTLSeconds(rememberMe) * 1000);
 
   // Keep the just-superseded refresh token valid for a short grace window. Each
   // browser tab dedupes its own concurrent 401s (see Frontend/src/api/axios.js)
@@ -50,22 +69,49 @@ const sendTokens = async (user, statusCode, res, rememberMe = user.rememberMe ||
   // moment can both call /auth/refresh with the same (still-current) token —
   // the loser would otherwise be hard-rejected and force-logged-out for simply
   // losing a race, not because its session was actually invalid.
-  const update = { refreshToken, rememberMe };
+  const legacyUpdate = { refreshToken, rememberMe };
   if (user.refreshToken) {
-    update.previousRefreshToken = user.refreshToken;
-    update.previousRefreshTokenExpires = new Date(Date.now() + REFRESH_GRACE_MS);
+    legacyUpdate.previousRefreshToken = user.refreshToken;
+    legacyUpdate.previousRefreshTokenExpires = new Date(Date.now() + REFRESH_GRACE_MS);
   }
   // findByIdAndUpdate instead of user.save(): an atomic write, not a
   // read-then-write on the in-memory `user` doc, so this can't lose an update
   // to a concurrent write on the same document (see exports.refresh for the
   // case that actually races: two /auth/refresh calls at once).
-  await User.findByIdAndUpdate(user._id, update, { runValidators: false });
+  await User.updateOne(
+    { _id: user._id },
+    {
+      $pull: {
+        refreshSessions: {
+          $or: [
+            { sid: sessionId },
+            { expiresAt: { $lte: now } },
+          ],
+        },
+      },
+    }
+  );
+  await User.findByIdAndUpdate(
+    user._id,
+    {
+      $set: legacyUpdate,
+      $push: {
+        refreshSessions: {
+          sid: sessionId,
+          refreshToken,
+          rememberMe,
+          expiresAt,
+          createdAt: now,
+          lastUsedAt: now,
+        },
+      },
+    },
+    { runValidators: false }
+  );
 
   // flattenMaps: true converts Mongoose Map fields (permissions, tabAccess) to plain JS objects
   // so they serialize correctly in JSON (without it, Maps become "{}")
-  const userObj = user.toObject({ flattenMaps: true });
-  delete userObj.password;
-  delete userObj.refreshToken;
+  const userObj = serializeUser(user);
 
   res.status(statusCode).json({
     success: true,
@@ -122,8 +168,73 @@ exports.refresh = asyncHandler(async (req, res, next) => {
   }
 
   const rememberMe = !!decoded.rememberMe;
-  const newToken = signToken(decoded.id, rememberMe);
-  const newRefreshToken = signRefreshToken(decoded.id, rememberMe);
+  const sessionId = decoded.sid || null;
+  const newToken = signToken(decoded.id, rememberMe, sessionId);
+  const newRefreshToken = signRefreshToken(decoded.id, rememberMe, sessionId);
+  const now = new Date();
+  const sessionExpiresAt = new Date(now.getTime() + refreshTokenTTLSeconds(rememberMe) * 1000);
+
+  if (sessionId) {
+    await User.updateOne(
+      { _id: decoded.id },
+      { $pull: { refreshSessions: { expiresAt: { $lte: now } } } }
+    );
+
+    const rotatedSession = await User.findOneAndUpdate(
+      {
+        _id: decoded.id,
+        refreshSessions: {
+          $elemMatch: {
+            sid: sessionId,
+            refreshToken,
+            expiresAt: { $gt: now },
+          },
+        },
+      },
+      {
+        $set: {
+          'refreshSessions.$.refreshToken': newRefreshToken,
+          'refreshSessions.$.previousRefreshToken': refreshToken,
+          'refreshSessions.$.previousRefreshTokenExpires': new Date(Date.now() + REFRESH_GRACE_MS),
+          'refreshSessions.$.rememberMe': rememberMe,
+          'refreshSessions.$.expiresAt': sessionExpiresAt,
+          'refreshSessions.$.lastUsedAt': now,
+          refreshToken: newRefreshToken,
+          rememberMe,
+        },
+      },
+      { new: true }
+    );
+
+    if (rotatedSession) {
+      return res.status(200).json({
+        success: true,
+        token: newToken,
+        refreshToken: newRefreshToken,
+        data: { user: serializeUser(rotatedSession) },
+      });
+    }
+
+    const current = await User.findById(decoded.id).select('+refreshSessions');
+    const currentSession = current?.refreshSessions?.find((session) => session.sid === sessionId);
+    const isRecentlyRotated =
+      currentSession &&
+      currentSession.previousRefreshToken === refreshToken &&
+      currentSession.previousRefreshTokenExpires &&
+      currentSession.previousRefreshTokenExpires > new Date() &&
+      currentSession.expiresAt > new Date();
+
+    if (!isRecentlyRotated) {
+      return next(new AppError('Invalid refresh token', 401));
+    }
+
+    return res.status(200).json({
+      success: true,
+      token: signToken(current._id, currentSession.rememberMe, sessionId),
+      refreshToken: currentSession.refreshToken,
+      data: { user: serializeUser(current) },
+    });
+  }
 
   const rotated = await User.findOneAndUpdate(
     { _id: decoded.id, refreshToken },
@@ -179,7 +290,13 @@ exports.refresh = asyncHandler(async (req, res, next) => {
 });
 
 exports.logout = asyncHandler(async (req, res) => {
-  await User.findByIdAndUpdate(req.user._id, { refreshToken: null });
+  if (req.sessionId) {
+    await User.findByIdAndUpdate(req.user._id, {
+      $pull: { refreshSessions: { sid: req.sessionId } },
+    });
+  } else {
+    await User.findByIdAndUpdate(req.user._id, { refreshToken: null });
+  }
   res.status(200).json({ success: true, message: 'Logged out successfully' });
 });
 
@@ -199,5 +316,5 @@ exports.changePassword = asyncHandler(async (req, res, next) => {
   }
   user.password = newPassword;
   await user.save();
-  await sendTokens(user, 200, res, user.rememberMe);
+  await sendTokens(user, 200, res, user.rememberMe, req.sessionId);
 });

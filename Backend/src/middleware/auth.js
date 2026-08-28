@@ -15,6 +15,7 @@ exports.protect = asyncHandler(async (req, res, next) => {
   if (!user) return next(new AppError('User no longer exists.', 401));
   if (user.status === 'Inactive') return next(new AppError('Account is inactive.', 403));
 
+  req.sessionId = decoded.sid || null;
   req.user = user;
   next();
 });
