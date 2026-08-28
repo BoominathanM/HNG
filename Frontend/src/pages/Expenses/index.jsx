@@ -6,7 +6,7 @@ import { enqueueSnackbar } from 'notistack';
 import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined, SearchOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from 'recharts';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
@@ -212,11 +212,39 @@ export default function Expenses() {
     }
   };
 
-  const chartData = EXPENSE_CATEGORIES.map(cat => ({
-    name: cat.label,
-    value: expenses.filter(e => e.category === cat.value).reduce((acc, curr) => acc + curr.amount, 0),
-    color: cat.color
-  })).filter(d => d.value > 0);
+  // Distribution: bucket every expense by its resolved category label (incl.
+  // PURCHASE and any custom "Other" categories), not just the 4 presets.
+  const chartData = useMemo(() => {
+    const OTHER_PALETTE = ['#722ed1', '#eb2f96', '#13c2c2', '#faad14', '#52c41a', '#2f54eb'];
+    const buckets = {};
+    let otherIdx = 0;
+    expenses.forEach((e) => {
+      let label;
+      let color;
+      if (e.category === 'PURCHASE') {
+        label = 'Purchase';
+        color = '#B11E6A';
+      } else if (e.category === 'OTHER') {
+        label = e.customCategory || 'Other';
+        color = null; // assigned from palette below
+      } else {
+        const cat = EXPENSE_CATEGORIES.find((c) => c.value === e.category);
+        label = cat?.label || e.category;
+        color = cat?.color || '#8c8c8c';
+      }
+      if (!buckets[label]) buckets[label] = { name: label, value: 0, color };
+      buckets[label].value += e.amount || 0;
+    });
+    Object.values(buckets).forEach((b) => {
+      if (!b.color) {
+        b.color = OTHER_PALETTE[otherIdx % OTHER_PALETTE.length];
+        otherIdx += 1;
+      }
+    });
+    return Object.values(buckets)
+      .filter((d) => d.value > 0)
+      .sort((a, b) => b.value - a.value);
+  }, [expenses]);
 
   const makeExpenseColumns = (showSource = false) => [
     { title: 'Date', dataIndex: 'date', key: 'date', render: d => <Text style={{ color: textColor }}>{d}</Text> },
@@ -343,30 +371,28 @@ export default function Expenses() {
             style={{ borderRadius: 14, background: cardBg, border: 'none', boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
             styles={{ body: { padding: '0 0 8px' } }}
           >
+            <div className="resp-toolbar" style={{ padding: '12px 16px 0' }}>
+              <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search desc, vendor..." allowClear size="small" value={expSearch} onChange={(e) => setExpSearch(e.target.value)} style={{ width: 200, borderRadius: 6 }} />
+              <Select value={expCategory} onChange={setExpCategory} size="small" style={{ width: 140 }}>
+                <Option value="all">All Categories</Option>
+                {EXPENSE_CATEGORIES.map(c => <Option key={c.value} value={c.value}>{c.label}</Option>)}
+              </Select>
+              <Select allowClear placeholder="Status" value={expStatus} onChange={setExpStatus} size="small" style={{ width: 130 }}>
+                <Option value="Paid">Paid</Option>
+                <Option value="Partially Paid">Partially Paid</Option>
+                <Option value="Unpaid">Unpaid</Option>
+              </Select>
+              <DatePicker.RangePicker
+                size="small"
+                style={{ borderRadius: 8, maxWidth: '100%' }}
+                onChange={(dates) => setExpenseDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
+                allowClear
+              />
+            </div>
             <Tabs
               defaultActiveKey="all"
               size="small"
               style={{ padding: '0 16px' }}
-              tabBarExtraContent={
-                <Space wrap>
-                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search desc, vendor..." allowClear size="small" value={expSearch} onChange={(e) => setExpSearch(e.target.value)} style={{ width: 200, borderRadius: 6 }} />
-                  <Select value={expCategory} onChange={setExpCategory} size="small" style={{ width: 140 }}>
-                    <Option value="all">All Categories</Option>
-                    {EXPENSE_CATEGORIES.map(c => <Option key={c.value} value={c.value}>{c.label}</Option>)}
-                  </Select>
-                  <Select allowClear placeholder="Status" value={expStatus} onChange={setExpStatus} size="small" style={{ width: 130 }}>
-                    <Option value="Paid">Paid</Option>
-                    <Option value="Partially Paid">Partially Paid</Option>
-                    <Option value="Unpaid">Unpaid</Option>
-                  </Select>
-                  <DatePicker.RangePicker
-                    size="small"
-                    style={{ borderRadius: 8 }}
-                    onChange={(dates) => setExpenseDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
-                    allowClear
-                  />
-                </Space>
-              }
               items={filterTabs([
                 {
                   key: 'all',
@@ -390,23 +416,28 @@ export default function Expenses() {
             title={<Space><PieChartOutlined /> <Text strong style={{ color: textColor }}>Distribution</Text></Space>}
             style={{ borderRadius: 14, background: cardBg, border: 'none', boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }}
           >
-            <ResponsiveContainer width="100%" height={250}>
-              <PieChart>
-                <Pie
-                  data={chartData}
-                  innerRadius={60}
-                  outerRadius={80}
-                  paddingAngle={5}
-                  dataKey="value"
-                >
-                  {chartData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.color} />
-                  ))}
-                </Pie>
-                <RechartsTooltip />
-                <Legend layout="vertical" align="right" verticalAlign="middle" />
-              </PieChart>
-            </ResponsiveContainer>
+            {chartData.length === 0 ? (
+              <div style={{ height: 250, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="No expense data" />
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={250}>
+                <PieChart>
+                  <Pie
+                    data={chartData}
+                    innerRadius={60}
+                    outerRadius={80}
+                    paddingAngle={chartData.length > 1 ? 5 : 0}
+                    dataKey="value"
+                  >
+                    {chartData.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    ))}
+                  </Pie>
+                  <RechartsTooltip formatter={(v) => `₹${Number(v).toLocaleString()}`} />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
             <Divider style={{ margin: '12px 0' }} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               {chartData.map(d => (

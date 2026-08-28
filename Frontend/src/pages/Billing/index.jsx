@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
   Typography, Space, Divider, InputNumber, Tabs, Tooltip, Modal, DatePicker, Upload, Checkbox, Radio,
-  Popconfirm,
+  Dropdown,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -11,7 +11,7 @@ import {
   SearchOutlined, WhatsAppOutlined,
   FileDoneOutlined, EditOutlined, SafetyCertificateOutlined,
   AlertFilled, ExperimentOutlined, HistoryOutlined, DeleteOutlined,
-  FileSearchOutlined,
+  FileSearchOutlined, MoreOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -1612,28 +1612,39 @@ export default function Billing() {
     },
     { title: 'Status', dataIndex: 'status', width: 125, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag> },
     {
-      title: 'Actions', key: 'actions', width: 320, fixed: 'right',
-      render: (_, r) => (
-        <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
-          <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={async () => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); setSelectedInv(await withPendingDue(r)); }} /></Tooltip>
-          <Tooltip title="Edit Pricing"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openPriceEdit(r)} /></Tooltip>
-          <Tooltip title="Price Edit Logs"><Button size="small" icon={<HistoryOutlined />} style={{ color: '#3730a3', borderColor: '#3730a344' }} onClick={() => openPriceLogs(r)} /></Tooltip>
-          <Tooltip title="Send invoice on WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp('invoice', r)} /></Tooltip>
-          <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
-          <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument('invoice', r)} /></Tooltip>
-          {r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
-            <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none', fontSize: 12 }} onClick={() => openRecordPay(r)}>Record Manually</Button>
-          )}
-          <Popconfirm
-            title="Delete this invoice?"
-            description="It will move to Settings → Deleted Records and can be restored anytime."
-            onConfirm={() => handleDeleteInvoice(r)}
-            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
-          >
-            <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} /></Tooltip>
-          </Popconfirm>
-        </Space>
-      ),
+      title: 'Actions', key: 'actions', width: 190, fixed: 'right',
+      render: (_, r) => {
+        const moreItems = [
+          { key: 'edit', icon: <EditOutlined />, label: 'Edit Pricing', onClick: () => openPriceEdit(r) },
+          { key: 'logs', icon: <HistoryOutlined />, label: 'Price Edit Logs', onClick: () => openPriceLogs(r) },
+          { type: 'divider' },
+          {
+            key: 'del', icon: <DeleteOutlined />, label: 'Delete', danger: true,
+            onClick: () => Modal.confirm({
+              title: 'Delete this invoice?',
+              content: 'It will move to Settings → Deleted Records and can be restored anytime.',
+              okText: 'Delete', okButtonProps: { danger: true }, cancelText: 'Cancel',
+              onOk: () => handleDeleteInvoice(r),
+            }),
+          },
+        ];
+        return (
+          <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
+            <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={async () => { setSelectedInv(r); setViewDocType('invoice'); setViewModal(true); setSelectedInv(await withPendingDue(r)); }} /></Tooltip>
+            <Tooltip title="Send invoice on WhatsApp"><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp('invoice', r)} /></Tooltip>
+            <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument('invoice', r)} /></Tooltip>
+            <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument('invoice', r)} /></Tooltip>
+            <Dropdown menu={{ items: moreItems }} trigger={['click']} placement="bottomRight">
+              <Button size="small" icon={<MoreOutlined />} />
+            </Dropdown>
+            {r.balance > 0 && r.orderCategory !== 'SAMPLE' && (
+              <Tooltip title="Record Payment Manually">
+                <Button size="small" type="primary" icon={<CheckCircleOutlined />} style={{ background: 'linear-gradient(135deg,#3730a3,#6366f1)', border: 'none' }} onClick={() => openRecordPay(r)} />
+              </Tooltip>
+            )}
+          </Space>
+        );
+      },
     },
   ];
 
@@ -1660,48 +1671,57 @@ export default function Billing() {
     { title: 'Status', dataIndex: 'status', width: 130, render: (v) => <Tag style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, background: `${quotStatusColor[v] || '#aaa'}22`, color: quotStatusColor[v] || '#888', border: `1px solid ${quotStatusColor[v] || '#aaa'}44` }}>{v}</Tag> },
     {
       title: 'Actions', key: 'actions',
-      width: tabType === 'in-process' ? 580 : 190,
+      width: tabType === 'in-process' ? 200 : 160,
       fixed: 'right',
       render: (_, r) => {
         const isOrder = r.docType === 'Order';
         const docType = isOrder ? 'invoice' : 'quotation';
+        const moreItems = [];
+        if (tabType === 'in-process' && !isOrder) {
+          moreItems.push(
+            { key: 'edit', icon: <EditOutlined />, label: 'Edit Pricing', onClick: () => openPriceEdit({ ...r, inv: r.quot }) },
+            { key: 'logs', icon: <HistoryOutlined />, label: 'Price Edit Logs', onClick: () => openPriceLogs(r) },
+          );
+          if (r.status === 'Paid') {
+            moreItems.push(
+              { key: 'proof', icon: <EyeOutlined />, label: 'View Proof', onClick: () => { setProofQuot(r); setProofOpen(true); } },
+              { key: 'verify', icon: <SafetyCertificateOutlined />, label: 'Verify', onClick: () => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); } },
+            );
+          }
+        }
+        if (!isOrder) {
+          if (moreItems.length) moreItems.push({ type: 'divider' });
+          moreItems.push({
+            key: 'del', icon: <DeleteOutlined />, label: 'Delete', danger: true,
+            onClick: () => Modal.confirm({
+              title: 'Delete this quotation?',
+              content: 'It will move to Settings → Deleted Records and can be restored anytime.',
+              okText: 'Delete', okButtonProps: { danger: true }, cancelText: 'Cancel',
+              onOk: () => handleDeleteQuotationInProcess(r),
+            }),
+          });
+        }
         return (
           <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
             <Tooltip title="View"><Button size="small" icon={<EyeOutlined />} onClick={async () => { const base = { ...r, inv: r.quot }; setSelectedInv(base); setViewDocType(docType); setViewModal(true); setSelectedInv(await withPendingDue(base)); }} /></Tooltip>
             <Tooltip title={isOrder ? 'Send invoice on WhatsApp' : 'Send quotation on WhatsApp'}><Button size="small" icon={<WhatsAppOutlined />} style={{ color: '#25D366' }} loading={whatsAppSendingKey === r.key} onClick={() => handleSendInvoiceWhatsApp(docType, r)} /></Tooltip>
             <Tooltip title="Print"><Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrintDocument(docType, r)} /></Tooltip>
             <Tooltip title="Download"><Button size="small" icon={<DownloadOutlined />} loading={downloadingKey === r.key} onClick={() => handleDownloadDocument(docType, r)} /></Tooltip>
-            {/* Quotation-specific actions */}
             {tabType === 'in-process' && !isOrder && (
-              <>
-                <Tooltip title="Edit Pricing"><Button size="small" icon={<EditOutlined />} style={{ color: '#B11E6A', borderColor: '#B11E6A44' }} onClick={() => openPriceEdit({ ...r, inv: r.quot })} /></Tooltip>
-                <Tooltip title="Price Edit Logs"><Button size="small" icon={<HistoryOutlined />} style={{ color: '#3730a3', borderColor: '#3730a344' }} onClick={() => openPriceLogs(r)} /></Tooltip>
+              <Tooltip title="Convert to Invoice">
                 <Button
                   size="small"
                   type="primary"
                   icon={<FileDoneOutlined />}
-                  style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none', fontSize: 12 }}
+                  style={{ background: 'linear-gradient(135deg,#7c3aed,#a78bfa)', border: 'none' }}
                   onClick={() => openConvertModal(r)}
-                >
-                  Convert to Invoice
-                </Button>
-              </>
+                />
+              </Tooltip>
             )}
-            {tabType === 'in-process' && !isOrder && r.status === 'Paid' && (
-              <>
-                <Button size="small" icon={<EyeOutlined />} style={{ color: '#1890ff', borderColor: '#1890ff44', fontSize: 12 }} onClick={() => { setProofQuot(r); setProofOpen(true); }}>View Proof</Button>
-                <Button size="small" icon={<SafetyCertificateOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a44', fontSize: 12 }} onClick={() => { setVerifyQuot(r); setVerifierName(''); setVerifyOpen(true); }}>Verify</Button>
-              </>
-            )}
-            {!isOrder && (
-              <Popconfirm
-                title="Delete this quotation?"
-                description="It will move to Settings → Deleted Records and can be restored anytime."
-                onConfirm={() => handleDeleteQuotationInProcess(r)}
-                okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
-              >
-                <Tooltip title="Delete"><Button size="small" danger icon={<DeleteOutlined />} /></Tooltip>
-              </Popconfirm>
+            {moreItems.length > 0 && (
+              <Dropdown menu={{ items: moreItems }} trigger={['click']} placement="bottomRight">
+                <Button size="small" icon={<MoreOutlined />} />
+              </Dropdown>
             )}
           </Space>
         );
@@ -1809,15 +1829,15 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(124,58,237,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ padding: '10px 16px 8px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', borderBottom: `1px solid ${borderColor}` }}>
-                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search reference, client..." allowClear value={quotSearch} onChange={(e) => setQuotSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
-                  <Select value={quotStatusFilter} onChange={setQuotStatusFilter} size="small" style={{ width: 180 }}>
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search reference, client..." allowClear value={quotSearch} onChange={(e) => setQuotSearch(e.target.value)} style={{ flex: '1 1 200px', minWidth: 0, maxWidth: 260, borderRadius: 8 }} />
+                  <Select value={quotStatusFilter} onChange={setQuotStatusFilter} size="small" style={{ flex: '0 1 180px', minWidth: 140 }}>
                     <Option value="all">All</Option>
                     <Option value="In Process">In Process</Option>
                     <Option value="Paid">Paid</Option>
                     <Option value="Partially Paid">Partially Paid</Option>
                   </Select>
                   <DatePicker.RangePicker
-                    style={{ borderRadius: 8 }}
+                    style={{ borderRadius: 8, flex: '1 1 240px', minWidth: 0, maxWidth: 320 }}
                     onChange={(dates) => setQuotDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
                     allowClear
                   />
@@ -1855,15 +1875,15 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ padding: '10px 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', borderBottom: `1px solid ${borderColor}` }}>
-                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client, order..." allowClear value={invoiceSearch} onChange={(e) => setInvoiceSearch(e.target.value)} style={{ width: 240, borderRadius: 8 }} />
-                  <Select allowClear placeholder="Status" value={invoiceStatusFilter} onChange={(val) => { setInvoiceStatusFilter(val); setInvoicesPage(1); }} style={{ width: 170, borderRadius: 8 }}>
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client, order..." allowClear value={invoiceSearch} onChange={(e) => setInvoiceSearch(e.target.value)} style={{ flex: '1 1 200px', minWidth: 0, maxWidth: 260, borderRadius: 8 }} />
+                  <Select allowClear placeholder="Status" value={invoiceStatusFilter} onChange={(val) => { setInvoiceStatusFilter(val); setInvoicesPage(1); }} style={{ flex: '0 1 170px', minWidth: 140, borderRadius: 8 }}>
                     <Option value="Paid">Paid</Option>
                     <Option value="Pending">Pending</Option>
                     <Option value="Partially Paid">Partially Paid</Option>
                     <Option value="Overdue">Overdue</Option>
                   </Select>
                   <DatePicker.RangePicker
-                    style={{ borderRadius: 8 }}
+                    style={{ borderRadius: 8, flex: '1 1 240px', minWidth: 0, maxWidth: 320 }}
                     onChange={(dates) => setInvoiceDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
                     allowClear
                   />
