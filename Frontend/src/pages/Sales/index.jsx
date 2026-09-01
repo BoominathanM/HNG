@@ -2246,6 +2246,7 @@ export default function Sales() {
   const [reminderDateRange, setReminderDateRange] = useState(null);
   const [customerDateRange, setCustomerDateRange] = useState(null);
   const [customerCategoryFilter, setCustomerCategoryFilter] = useState(null);
+  const [customerSourceFilter, setCustomerSourceFilter] = useState(null);
   const [viewPartyInfo, setViewPartyInfo] = useState(null);
   const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
@@ -3413,6 +3414,13 @@ export default function Sales() {
     (categoryOptionsRaw?.data || []).forEach((o) => { if (o?.value) map.set(o.value, o.label || o.value); });
     return Array.from(map, ([value, label]) => ({ value, label }));
   }, [categoryOptionsRaw]);
+  // Source filter choices for the Parties tab — the distinct "Source" values actually
+  // present on the current party rows (carried over from each hotel's originating Lead).
+  const partySourceFilterOptions = React.useMemo(() => {
+    const set = new Set();
+    customersData.forEach((c) => { const s = (c.source || '').trim(); if (s) set.add(s); });
+    return Array.from(set).sort().map((v) => ({ value: v, label: v }));
+  }, [customersData]);
   const { data: perfRaw, isLoading: perfLoading } = useGetMyPerformanceQuery();
   const { data: staffRaw } = useGetStaffQuery();
   const { data: usersRaw } = useGetUsersQuery({ limit: 1000 });
@@ -4099,6 +4107,10 @@ export default function Sales() {
         location: p.city || o?.location || o?.city || '—',
         phone: p.phone || o?.phone || o?.clientPhone || '—',
         salesPerson: o?.salesPerson || '—',
+        // Source is captured on the originating Lead's "Source" field — carry it onto
+        // the Party row so the Parties tab can filter on it (falls back to any value
+        // already stored on the Party or its most-recent order).
+        source: p.source || l?.source || o?.source || '',
         createdAt: p.createdAt,
         leadCreatedAt: l?.createdAt || p.createdAt,
       };
@@ -5854,6 +5866,7 @@ export default function Sales() {
       ['Location / City', info.location || info.city || '—'],
       ['Destination', info.destination],
       ['Assigned To', info.salesPerson || '—'],
+      ['Source', info.source],
       ['GSTIN', info.gstNumber],
       ['PAN', info.panNumber],
       ['State', info.state],
@@ -5928,6 +5941,7 @@ export default function Sales() {
   const getFilteredParties = () =>
     filtered(customersData).filter((r) => {
       if (customerCategoryFilter && (r.category || 'Hotel') !== customerCategoryFilter) return false;
+      if (customerSourceFilter && (r.source || '') !== customerSourceFilter) return false;
       if (customerDateRange) {
         const raw = r.leadCreatedAt || r.createdAt;
         const d = raw ? dayjs(raw).format('YYYY-MM-DD') : '';
@@ -5957,6 +5971,7 @@ export default function Sales() {
     ['Location / City', (i) => i.location || i.city],
     ['Destination', (i) => i.destination],
     ['Assigned To', (i) => i.salesPerson],
+    ['Source', (i) => i.source],
     ['GSTIN', (i) => i.gstNumber, true],
     ['PAN', (i) => i.panNumber, true],
     ['State', (i) => i.state],
@@ -6344,6 +6359,7 @@ export default function Sales() {
     { title: 'Location', dataIndex: 'location', width: 140, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Phone', dataIndex: 'phone', width: 130, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Assigned To', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Source', dataIndex: 'source', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
     { title: 'Lead Created Date', dataIndex: 'leadCreatedAt', width: 155, sorter: (a, b) => new Date(a.leadCreatedAt || a.createdAt || 0) - new Date(b.leadCreatedAt || b.createdAt || 0), render: (v, r) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v || r.createdAt)}</Text> },
     {
       title: 'Action', key: 'action', width: 70, fixed: 'right',
@@ -15749,6 +15765,14 @@ export default function Sales() {
                       options={categoryFilterOptions}
                       style={{ width: 160, borderRadius: 8 }}
                     />
+                    <Select
+                      allowClear
+                      placeholder="Source"
+                      value={customerSourceFilter}
+                      onChange={setCustomerSourceFilter}
+                      options={partySourceFilterOptions}
+                      style={{ width: 160, borderRadius: 8 }}
+                    />
                     <Text type="secondary" style={{ fontSize: 12 }}>Lead Created Date:</Text>
                     <DatePicker.RangePicker
                       style={{ borderRadius: 8 }}
@@ -15916,6 +15940,7 @@ export default function Sales() {
             <Descriptions.Item label="Location / City">{viewPartyInfo.location || viewPartyInfo.city || '—'}</Descriptions.Item>
             {viewPartyInfo.destination && <Descriptions.Item label="Destination">{viewPartyInfo.destination}</Descriptions.Item>}
             <Descriptions.Item label="Assigned To">{viewPartyInfo.salesPerson || '—'}</Descriptions.Item>
+            {viewPartyInfo.source && <Descriptions.Item label="Source">{viewPartyInfo.source}</Descriptions.Item>}
             {viewPartyInfo.gstNumber && <Descriptions.Item label="GSTIN">{viewPartyInfo.gstNumber}</Descriptions.Item>}
             {viewPartyInfo.panNumber && <Descriptions.Item label="PAN">{viewPartyInfo.panNumber}</Descriptions.Item>}
             {viewPartyInfo.state && <Descriptions.Item label="State">{viewPartyInfo.state}</Descriptions.Item>}
