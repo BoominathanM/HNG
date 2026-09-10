@@ -182,6 +182,58 @@ exports.saveHotelDesign = asyncHandler(async (req, res) => {
   res.status(200).json({ success: true, data: design });
 });
 
+// Read-only listing for the Operations > "Approved Designs" tab. Every StickerRequest
+// (Sticker/Box/Frosted Ziplock/Butter Paper/Wooden Brush/Other/Display Unit) that has
+// cleared BOTH sales + ops-head sign-off, flattened for a table: the design file that
+// was approved, the vendor it was routed to, the size, and the hotel/hospital business
+// category pulled from the originating Lead. Purely additive — touches no other flow.
+exports.getApprovedDesigns = asyncHandler(async (req, res) => {
+  const APPROVED_STATUSES = ['Approved', 'In Process', 'Printing', 'Dispatch', 'Received', 'Done'];
+  const filter = {
+    status: { $in: APPROVED_STATUSES },
+    salesApproved: true,
+    opsHeadApproved: true,
+    designFileUrl: { $nin: [null, ''] },
+  };
+  if (req.query.type) filter.stickerType = req.query.type;
+
+  const rows = await StickerRequest.find(filter)
+    .populate({
+      path: 'orderId',
+      select: 'orderCode clientName leadId',
+      populate: { path: 'leadId', select: 'category hotelName' },
+    })
+    .populate('vendorId', 'fullName email')
+    .populate('createdBy', 'fullName')
+    .populate('salesApprovedBy', 'fullName')
+    .populate('opsHeadApprovedBy', 'fullName')
+    .sort('-opsHeadApprovedAt -salesApprovedAt -updatedAt')
+    .lean();
+
+  const data = rows.map((d) => ({
+    id: d._id,
+    // Hotel / Hospital / custom business category from the originating Lead
+    category: d.orderId?.leadId?.category || 'Hotel',
+    orderCode: d.orderId?.orderCode || '',
+    hotelName: d.hotelName || d.hotelLogo || d.orderId?.leadId?.hotelName || d.orderId?.clientName || '—',
+    product: d.product || '—',
+    type: d.stickerType || 'Sticker',
+    // Order-composition category (personalized | separate_kit | separate_product)
+    compositionCategory: d.category || '',
+    size: d.stickerSize || '',
+    designFileUrl: d.designFileUrl || '',
+    vendorName: d.vendorId?.fullName || '',
+    uploadedBy: d.createdBy?.fullName || '',
+    uploadedAt: d.createdAt || null,
+    approvedAt: d.opsHeadApprovedAt || d.salesApprovedAt || d.updatedAt || null,
+    salesApprovedBy: d.salesApprovedBy?.fullName || '',
+    opsHeadApprovedBy: d.opsHeadApprovedBy?.fullName || '',
+    status: d.status,
+  }));
+
+  res.status(200).json({ success: true, data });
+});
+
 exports.assignTask = asyncHandler(async (req, res, next) => {
   const { productIndex, product } = req.body;
   const orderId = req.params.id;

@@ -12,6 +12,7 @@ import {
   Descriptions,
   Divider,
   Form,
+  Image,
   Input,
   Modal,
   Popover,
@@ -77,6 +78,7 @@ import {
   useApproveEmergencyOpsHeadMutation,
   useGetEmergencyRequestsQuery,
   useGetHotelDesignsQuery,
+  useGetApprovedDesignsQuery,
   useUploadStickerInvoiceMutation,
   useDecideLrMismatchOpsMutation,
   useGetHiddenQueueRowsQuery,
@@ -179,6 +181,10 @@ export default function Operations() {
   const [butterSearch, setButterSearch] = useState('');
   const [woodenBrushSearch, setWoodenBrushSearch] = useState('');
   const [otherSearch, setOtherSearch] = useState('');
+  // "Approved Designs" tab — read-only listing filters
+  const [approvedDesignSearch, setApprovedDesignSearch] = useState('');
+  const [approvedDesignCategory, setApprovedDesignCategory] = useState(null);
+  const [approvedDesignType, setApprovedDesignType] = useState(null);
   const [orderStatusFilter, setOrderStatusFilter] = useState(null);
   // Date-range filters — each Table listing real records gets its own, independent state.
   const [orderMgmtDateRange, setOrderMgmtDateRange] = useState(null);
@@ -266,6 +272,27 @@ export default function Operations() {
   // All hotel designs (previously approved across all orders) — used to bypass re-approval
   const { data: hotelDesignsRaw } = useGetHotelDesignsQuery();
   const hotelDesigns = hotelDesignsRaw?.data || [];
+
+  // Fully-approved sticker/packaging designs — "Approved Designs" tab (read-only)
+  const { data: approvedDesignsRaw, isLoading: approvedDesignsLoading } = useGetApprovedDesignsQuery();
+  const approvedDesigns = approvedDesignsRaw?.data || [];
+  const approvedDesignCategoryOptions = useMemo(
+    () => Array.from(new Set(approvedDesigns.map((d) => d.category).filter(Boolean))),
+    [approvedDesigns],
+  );
+  const filteredApprovedDesigns = useMemo(() => {
+    const q = approvedDesignSearch.trim().toLowerCase();
+    return approvedDesigns.filter((d) => {
+      const matchQ = !q
+        || (d.hotelName || '').toLowerCase().includes(q)
+        || (d.product || '').toLowerCase().includes(q)
+        || (d.orderCode || '').toLowerCase().includes(q)
+        || (d.vendorName || '').toLowerCase().includes(q);
+      const matchCat = !approvedDesignCategory || d.category === approvedDesignCategory;
+      const matchType = !approvedDesignType || d.type === approvedDesignType;
+      return matchQ && matchCat && matchType;
+    });
+  }, [approvedDesigns, approvedDesignSearch, approvedDesignCategory, approvedDesignType]);
   // Map: `${hotelName.toLowerCase()}-${product.toLowerCase()}-${type}` → design record
   const hotelDesignMap = useMemo(() => {
     const map = {};
@@ -2060,6 +2087,148 @@ export default function Operations() {
     );
   };
 
+  const fmtDate = (v) => (v ? new Date(v).toLocaleDateString('en-IN', { dateStyle: 'medium' }) : '—');
+
+  const approvedDesignColumns = [
+    {
+      title: 'Category',
+      dataIndex: 'category',
+      width: 110,
+      render: (v) => {
+        const key = String(v || '').toLowerCase();
+        const color = key === 'hospital' ? 'green' : key === 'hotel' ? 'blue' : 'geekblue';
+        return <Tag color={color} style={{ fontWeight: 600 }}>{v || 'Hotel'}</Tag>;
+      },
+    },
+    {
+      title: 'Order',
+      dataIndex: 'orderCode',
+      width: 120,
+      render: (v) => (v ? <Text strong style={{ color: '#B11E6A' }}>{v}</Text> : '—'),
+    },
+    { title: 'Hotel / Hospital', dataIndex: 'hotelName' },
+    { title: 'Product', dataIndex: 'product' },
+    {
+      title: 'Type',
+      dataIndex: 'type',
+      width: 130,
+      render: (v) => <Tag color="purple">{v || 'Sticker'}</Tag>,
+    },
+    {
+      title: 'Approved Design',
+      dataIndex: 'designFileUrl',
+      width: 110,
+      render: (url) => {
+        if (!url) return <Text type="secondary">—</Text>;
+        const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+        if (isImage) {
+          return (
+            <Image
+              src={url}
+              alt="design"
+              width={44}
+              height={44}
+              style={{ objectFit: 'cover', borderRadius: 6, border: '1px solid #e0d0e8' }}
+            />
+          );
+        }
+        return (
+          <a href={url} target="_blank" rel="noopener noreferrer"
+            style={{ fontSize: 12, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+            <EyeOutlined style={{ fontSize: 12 }} /> View file
+          </a>
+        );
+      },
+    },
+    {
+      title: 'Vendor',
+      dataIndex: 'vendorName',
+      render: (v) => v || <Text type="secondary">—</Text>,
+    },
+    {
+      title: 'Size',
+      dataIndex: 'size',
+      width: 110,
+      render: (v) => (v ? <Tag color="magenta">{v}</Tag> : '—'),
+    },
+    {
+      title: 'Uploaded',
+      key: 'uploaded',
+      width: 150,
+      render: (_, r) => (
+        <Space direction="vertical" size={0}>
+          <Text style={{ fontSize: 12 }}>{fmtDate(r.uploadedAt)}</Text>
+          {r.uploadedBy && <Text type="secondary" style={{ fontSize: 11 }}>{r.uploadedBy}</Text>}
+        </Space>
+      ),
+    },
+    {
+      title: 'Approved',
+      key: 'approved',
+      width: 150,
+      render: (_, r) => (
+        <Space direction="vertical" size={0}>
+          <Text style={{ fontSize: 12 }}>{fmtDate(r.approvedAt)}</Text>
+          {r.opsHeadApprovedBy && <Text type="secondary" style={{ fontSize: 11 }}>{r.opsHeadApprovedBy}</Text>}
+        </Space>
+      ),
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      width: 110,
+      render: (v) => <Tag color={v === 'Done' ? 'success' : 'blue'}>{v}</Tag>,
+    },
+  ];
+
+  const approvedDesignsTab = (
+    <Card
+      title={<Text strong style={{ color: textColor }}>Approved Designs</Text>}
+      extra={
+        <Space wrap>
+          <Input
+            prefix={<SearchOutlined />}
+            placeholder="Search hotel, product, order, vendor"
+            value={approvedDesignSearch}
+            onChange={(e) => setApprovedDesignSearch(e.target.value)}
+            allowClear
+            style={{ width: 260, borderRadius: 8 }}
+          />
+          <Select
+            allowClear
+            placeholder="Category"
+            value={approvedDesignCategory}
+            onChange={setApprovedDesignCategory}
+            style={{ width: 150, borderRadius: 8 }}
+            options={approvedDesignCategoryOptions.map((c) => ({ value: c, label: c }))}
+          />
+          <Select
+            allowClear
+            placeholder="Type"
+            value={approvedDesignType}
+            onChange={setApprovedDesignType}
+            style={{ width: 160, borderRadius: 8 }}
+            options={['Sticker', 'Box', 'Frosted Ziplock', 'Butter Paper', 'Wooden Brush', 'Other', 'Display Unit'].map((t) => ({ value: t, label: t }))}
+          />
+        </Space>
+      }
+      style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+      styles={{ body: { padding: '0 0 8px 0' } }}
+    >
+      <div className="table-responsive" style={{ padding: 4 }}>
+        <Table
+          rowKey="id"
+          loading={approvedDesignsLoading}
+          dataSource={filteredApprovedDesigns}
+          columns={approvedDesignColumns}
+          pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+          size="small"
+          scroll={{ x: 'max-content' }}
+        />
+      </div>
+    </Card>
+  );
+
   return (
     <div className="page-container fade-in">
       <PageBreadcrumb title="Operations" items={[{ label: 'Operations' }]} />
@@ -2220,6 +2389,11 @@ export default function Operations() {
             key: 'other',
             label: <Space><ContainerOutlined />Other</Space>,
             children: renderQueueCard('Other', productionQueues.other, 'Other Queue', otherSearch, setOtherSearch, otherDateRange, setOtherDateRange),
+          },
+          {
+            key: 'approved_designs',
+            label: <Space><CheckCircleOutlined />Approved Designs</Space>,
+            children: approvedDesignsTab,
           },
         ])}
         activeKey={activeKeyFor(activeTab)}

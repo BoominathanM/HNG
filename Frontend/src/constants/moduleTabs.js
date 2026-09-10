@@ -30,6 +30,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'butter_paper', label: 'Butter Paper' },
     { key: 'wooden_brush', label: 'Wooden Brush' },
     { key: 'other', label: 'Other' },
+    { key: 'approved_designs', label: 'Approved Designs' },
   ],
   'Task Management': [
     { key: 'current', label: 'Current Task' },

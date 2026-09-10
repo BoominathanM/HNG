@@ -33,6 +33,9 @@ router.post('/stickers/:id/send-design-confirmation', ctrl.sendDesignConfirmatio
 router.get('/hotel-designs', ctrl.getHotelDesigns);
 router.post('/hotel-designs', ctrl.saveHotelDesign);
 
+// Flattened list of fully-approved sticker/packaging designs — Operations "Approved Designs" tab
+router.get('/approved-designs', ctrl.getApprovedDesigns);
+
 // Queue row visibility (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other tabs) —
 // Admin/Management-only removal of a single row from one packaging queue tab.
 router.get('/queue-rows/hidden', ctrl.getHiddenQueueRows);

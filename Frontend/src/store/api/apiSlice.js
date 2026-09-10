@@ -1042,6 +1042,12 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/operations/hotel-designs', params }),
       providesTags: ['HotelDesigns'],
     }),
+    // Read-only feed for the Operations "Approved Designs" tab — refreshes whenever a
+    // sticker/design approval changes (approveStickerRequest invalidates 'Stickers').
+    getApprovedDesigns: builder.query({
+      query: (params) => ({ url: '/operations/approved-designs', params }),
+      providesTags: ['Stickers', 'HotelDesigns'],
+    }),
     saveHotelDesign: builder.mutation({
       query: (data) => ({ url: '/operations/hotel-designs', method: 'post', data }),
       invalidatesTags: ['HotelDesigns'],
@@ -1585,6 +1591,7 @@ export const {
   useDecideLrMismatchOpsMutation,
   useSplitPartialDeliveryMutation,
   useGetHotelDesignsQuery,
+  useGetApprovedDesignsQuery,
   useSaveHotelDesignMutation,
   useApproveStickerRequestMutation,
   useRejectStickerRequestMutation,
