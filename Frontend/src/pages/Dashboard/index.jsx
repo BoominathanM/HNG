@@ -304,7 +304,7 @@ export default function Dashboard() {
 
         <Col xs={24} xl={8}>
           <motion.div {...fadeIn(0.45)} style={{ height: '100%' }}>
-            <Card title={<Text strong style={{ color: textColor }}>Task Status</Text>}
+            <Card title={<Text strong style={{ color: textColor }}>Task Status Boomi</Text>}
               style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', height: '100%' }}
               styles={{ body: { padding: '12px 16px 16px' } }}>
               {taskStatusData.length > 0 ? (
