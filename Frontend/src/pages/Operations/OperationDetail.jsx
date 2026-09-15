@@ -27,6 +27,7 @@ import {
   ArrowLeftOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  ContainerOutlined,
   CreditCardOutlined,
   DeleteOutlined,
   DownloadOutlined,
@@ -54,6 +55,7 @@ import {
   useAssignTaskMutation,
   useAssignTasksPerProductMutation,
   useSplitPartialDeliveryMutation,
+  useUseExistingMaterialStockMutation,
   useGetHotelDesignsQuery,
   useSaveHotelDesignMutation,
   useGetItemsQuery,
@@ -254,6 +256,7 @@ export default function OperationDetail() {
   const [assignTask] = useAssignTaskMutation();
   const [assignTasksPerProduct] = useAssignTasksPerProductMutation();
   const [splitPartialDelivery] = useSplitPartialDeliveryMutation();
+  const [useExistingMaterialStock, { isLoading: usingExistingStock }] = useUseExistingMaterialStockMutation();
   const [saveHotelDesign] = useSaveHotelDesignMutation();
   const [sendToStickerTeam] = useSendToStickerTeamMutation();
   const [approveStickerRequest] = useApproveStickerRequestMutation();
@@ -497,6 +500,10 @@ export default function OperationDetail() {
         return true;
       });
     })(),
+    // Hotel's own reserved packing-material stock matching this order's lines (computed
+    // backend-side, buildHotelStockGroups) — drives the "Reserved Packing Stock" card + the
+    // per-row stock column in the design-team queues.
+    hotelStockOptions: Array.isArray(o.hotelStockOptions) ? o.hotelStockOptions : [],
   })), [ordersData, displayUnitTabMap]);
   const checkStates = useMemo(() => getCheckStateMap(allOrders), [allOrders]);
   const productionQueues = useMemo(() => buildProductionQueues(allOrders, stickerRequests), [allOrders, stickerRequests]);
@@ -689,6 +696,47 @@ export default function OperationDetail() {
     ? { ...order, printingStatusOverrides: { ...(order.printingStatusOverrides || {}), ...printingStatusValues } }
     : order;
   const assignedEmployee = order ? { key: order.key, name: order.assignedEmployee } : null;
+
+  // Operations > Order detail > "Use Existing": draw this order's packing material from the
+  // hotel's own reserved Material Stock (same backend endpoint the Order Management tab uses).
+  const handleUseExistingStock = () => {
+    const opts = (order?.hotelStockOptions || []).filter((g) => !g.fulfilled && g.outstandingQty > 0);
+    if (!opts.length) { enqueueSnackbar('No reserved stock left to use for this order', { variant: 'info' }); return; }
+    Modal.confirm({
+      title: `Use ${order.hotelLogo}'s reserved packing stock`,
+      width: 460,
+      content: (
+        <div>
+          <Text>These order lines will be sourced from existing reserved stock:</Text>
+          <ul style={{ margin: '8px 0 4px', paddingLeft: 18 }}>
+            {opts.map((g) => (
+              <li key={g.key}>
+                <Text strong>{g.label}{g.size ? ` ${g.size}` : ''}</Text>: draw {Math.min(g.availableQty, g.outstandingQty)} of {g.outstandingQty} needed
+                {g.availableQty < g.outstandingQty && <Text type="warning"> (short {g.outstandingQty - g.availableQty})</Text>}
+              </li>
+            ))}
+          </ul>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            No fresh print run for these lines; any generic-pool stock already deducted is credited back.
+          </Text>
+        </div>
+      ),
+      okText: 'Use Existing',
+      onOk: async () => {
+        try {
+          const res = await useExistingMaterialStock({ id: order.key }).unwrap();
+          const drawn = res?.data?.drawn || [];
+          const shorts = res?.data?.shortfalls || [];
+          enqueueSnackbar(
+            `Drew ${drawn.map((d) => `${d.qty}× ${d.material}`).join(', ') || 'reserved stock'}${shorts.length ? ` — still short on ${shorts.map((s) => s.material).join(', ')}` : ''}`,
+            { variant: shorts.length ? 'warning' : 'success' },
+          );
+        } catch (err) {
+          enqueueSnackbar(err?.data?.message || err?.data || 'Failed to use existing stock', { variant: 'error' });
+        }
+      },
+    });
+  };
   const isKitOrder = !!(order?.kitDisplayUnit) ||
     (Array.isArray(order?.productType) ? order.productType : (order?.productType ? [order.productType] : []))
       .some(v => ['personalized', 'separate_kit', 'PERSONALIZED_KIT'].includes(v)) ||
@@ -2925,6 +2973,55 @@ export default function OperationDetail() {
                           </div>
                         );
                       })}
+                    </Space>
+                  </Card>
+                )}
+                {Array.isArray(order.hotelStockOptions) && order.hotelStockOptions.length > 0 && (
+                  <Card
+                    title={<Space><ContainerOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Reserved Packing Stock — {order.hotelLogo}</Text></Space>}
+                    extra={
+                      order.hotelStockOptions.some((g) => !g.fulfilled && g.outstandingQty > 0) ? (
+                        <Button
+                          type="primary"
+                          size="small"
+                          icon={<ContainerOutlined />}
+                          loading={usingExistingStock}
+                          onClick={handleUseExistingStock}
+                          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 }}
+                        >
+                          Use Existing
+                        </Button>
+                      ) : (
+                        order.hotelStockOptions.some((g) => g.fulfilled)
+                        && <Tag color="green" style={{ margin: 0 }}>Reserved Stock Used</Tag>
+                      )
+                    }
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }}
+                    styles={{ body: { padding: 16 } }}
+                  >
+                    <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 10 }}>
+                      This hotel keeps its own pre-printed / reserved packing material in Inventory &gt; Material Stocks. It is never auto-deducted — click “Use Existing” to source this order’s matching lines from it instead of a fresh print run.
+                    </Text>
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      {order.hotelStockOptions.map((g) => (
+                        <div key={g.key} style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8, padding: '8px 12px', borderRadius: 10, border: `1px solid ${isDark ? '#333' : '#f0e0ea'}`, background: isDark ? 'rgba(177,30,106,0.06)' : 'rgba(177,30,106,0.03)' }}>
+                          <Text strong style={{ color: textColor }}>{g.label}</Text>
+                          {g.size && <Tag color="geekblue" style={{ borderRadius: 12, margin: 0 }}>{g.size}</Tag>}
+                          <Tag color={g.fulfilled ? 'green' : (g.infoOnly ? 'default' : (g.sufficient ? 'blue' : 'orange'))} style={{ borderRadius: 12, margin: 0 }}>
+                            {g.availableQty} in reserve
+                          </Tag>
+                          {g.fulfilled
+                            ? <Tag color="green" style={{ borderRadius: 12, margin: 0 }}>used {g.usedQty}</Tag>
+                            : g.infoOnly
+                              ? <Text type="secondary" style={{ fontSize: 12 }}>line qty not set — nothing to draw yet</Text>
+                              : (
+                                <Text type="secondary" style={{ fontSize: 12 }}>
+                                  order needs {g.outstandingQty}{g.usedQty > 0 ? ` · ${g.usedQty} already drawn` : ''}
+                                  {!g.sufficient && <Text type="warning"> · short {g.outstandingQty - g.availableQty}</Text>}
+                                </Text>
+                              )}
+                        </div>
+                      ))}
                     </Space>
                   </Card>
                 )}

@@ -28,6 +28,7 @@ router.post('/:id/scan-lr', ctrl.scanLorryReceipt);
 router.patch('/:id/transport-mismatch', ctrl.reportTransportMismatch);
 router.patch('/:id/lr-mismatch-request', ctrl.requestLrMismatchApproval);
 router.patch('/:id/invoice-mismatch-request', ctrl.requestInvoiceMismatchApproval);
+router.patch('/:id/approval-request', ctrl.requestDispatchApproval);
 router.patch('/:id/items/:itemId/verify', upload.single('photo'), ctrl.verifyItem);
 router.post('/:id/items/:itemId/box-photos', upload.array('photos', 5), ctrl.uploadItemBoxPhotos);
 router.post('/:id/kits/:kitDispatchId/box-photos', upload.array('photos', 1), ctrl.uploadKitBoxPhotos);

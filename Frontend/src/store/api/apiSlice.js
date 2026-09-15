@@ -381,6 +381,10 @@ export const apiSlice = createApi({
       query: ({ id, ...data }) => ({ url: `/dispatch/${id}/invoice-mismatch-request`, method: 'patch', data }),
       invalidatesTags: (result, error, { id }) => ['Orders', { type: 'Dispatch', id }],
     }),
+    requestDispatchApproval: builder.mutation({
+      query: ({ id }) => ({ url: `/dispatch/${id}/approval-request`, method: 'patch' }),
+      invalidatesTags: (result, error, { id }) => ['Orders', 'Operations', { type: 'Dispatch', id }],
+    }),
     verifyItem: builder.mutation({
       query: ({ id, itemId, formData, verified }) => ({
         url: `/dispatch/${id}/items/${itemId}/verify`,
@@ -1022,6 +1026,10 @@ export const apiSlice = createApi({
       query: ({ id, decision }) => ({ url: `/operations/orders/${id}/lr-mismatch-decision`, method: 'patch', data: { decision } }),
       invalidatesTags: ['Orders', 'Operations', 'Dispatch'],
     }),
+    decideDispatchApproval: builder.mutation({
+      query: ({ id, decision }) => ({ url: `/operations/orders/${id}/dispatch-approval-decision`, method: 'patch', data: { decision } }),
+      invalidatesTags: ['Orders', 'Operations', 'Dispatch', 'Reports'],
+    }),
     updateItemPrintingStatus: builder.mutation({
       query: ({ orderId, itemKey, printingStatus, product }) => ({
         url: `/operations/orders/${orderId}/items/${itemKey}/printing-status`,
@@ -1037,6 +1045,13 @@ export const apiSlice = createApi({
     splitPartialDelivery: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/operations/orders/${id}/partial-split`, method: 'post', data }),
       invalidatesTags: ['Operations'],
+    }),
+    // Operations > Order Management > "Use Existing": draw this order's packing material from
+    // the hotel's own reserved Material Stock rows. Invalidates MaterialStocks (Inventory tab
+    // reflects the draw-down) and Orders/Tasks (line marked packingFromExistingStock).
+    useExistingMaterialStock: builder.mutation({
+      query: ({ id, groups }) => ({ url: `/operations/orders/${id}/use-existing-stock`, method: 'post', data: groups ? { groups } : {} }),
+      invalidatesTags: ['Operations', 'MaterialStocks', 'Orders', 'Tasks'],
     }),
     getHotelDesigns: builder.query({
       query: (params) => ({ url: '/operations/hotel-designs', params }),
@@ -1054,7 +1069,9 @@ export const apiSlice = createApi({
     }),
     approveStickerRequest: builder.mutation({
       query: ({ id, role }) => ({ url: `/operations/stickers/${id}/approve`, method: 'patch', data: { role } }),
-      invalidatesTags: ['Stickers'],
+      // Full dual approval auto-saves the artwork to HotelDesign (size + vendor + date) for
+      // reuse and for the Parties > eye-view "Packaging Designs on File" list — refresh both.
+      invalidatesTags: ['Stickers', 'HotelDesigns'],
     }),
     rejectStickerRequest: builder.mutation({
       query: ({ id, role, reason }) => ({ url: `/operations/stickers/${id}/reject`, method: 'patch', data: { role, reason } }),
@@ -1590,6 +1607,7 @@ export const {
   useSetOrderEmergencyMutation,
   useDecideLrMismatchOpsMutation,
   useSplitPartialDeliveryMutation,
+  useUseExistingMaterialStockMutation,
   useGetHotelDesignsQuery,
   useGetApprovedDesignsQuery,
   useSaveHotelDesignMutation,
@@ -1602,6 +1620,8 @@ export const {
   useReportTransportMismatchMutation,
   useRequestLrMismatchApprovalMutation,
   useRequestInvoiceMismatchApprovalMutation,
+  useRequestDispatchApprovalMutation,
+  useDecideDispatchApprovalMutation,
   useVerifyItemMutation,
   // Inventory
   useGetItemsQuery,

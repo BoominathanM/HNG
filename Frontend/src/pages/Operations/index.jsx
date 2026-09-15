@@ -70,6 +70,7 @@ import {
   useSendDesignConfirmationWhatsAppMutation,
   useAssignTaskMutation,
   useSetOrderEmergencyMutation,
+  useUseExistingMaterialStockMutation,
   useApproveStickerRequestMutation,
   useGetVendorsQuery,
   useGetUsersQuery,
@@ -81,6 +82,7 @@ import {
   useGetApprovedDesignsQuery,
   useUploadStickerInvoiceMutation,
   useDecideLrMismatchOpsMutation,
+  useDecideDispatchApprovalMutation,
   useGetHiddenQueueRowsQuery,
   useHideQueueRowMutation,
 } from '../../store/api/apiSlice';
@@ -96,6 +98,7 @@ import {
   getEmergencyProductSet,
   getFlowStep,
   getProgressFromChecks,
+  hotelStockGroupForRow,
   inferItemLogoType,
   normYNOps,
   PACKAGING_TYPE_LABELS,
@@ -209,6 +212,8 @@ export default function Operations() {
   const [sendDesignConfirmationWhatsApp] = useSendDesignConfirmationWhatsAppMutation();
   const [assignTask] = useAssignTaskMutation();
   const [setOrderEmergency] = useSetOrderEmergencyMutation();
+  const [useExistingMaterialStock] = useUseExistingMaterialStockMutation();
+  const [usingExistingStockId, setUsingExistingStockId] = useState(null);
   const [approveStickerRequest] = useApproveStickerRequestMutation();
   const [approveEmergencyOpsHead] = useApproveEmergencyOpsHeadMutation();
   const [emergencyOpsApprovalOrder, setEmergencyOpsApprovalOrder] = useState(null);
@@ -217,6 +222,9 @@ export default function Operations() {
   const [decideLrMismatchOps] = useDecideLrMismatchOpsMutation();
   const [lrMismatchOpsOrder, setLrMismatchOpsOrder] = useState(null);
   const [decidingLrMismatchOps, setDecidingLrMismatchOps] = useState(false);
+  const [decideDispatchApproval] = useDecideDispatchApprovalMutation();
+  const [dispatchApprovalOrder, setDispatchApprovalOrder] = useState(null);
+  const [decidingDispatchApproval, setDecidingDispatchApproval] = useState(false);
   const { data: emergencyRequestsRaw } = useGetEmergencyRequestsQuery();
   // Queue row visibility (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other tabs) —
   // Admin/Management-only removal of a single row from one packaging queue tab, without
@@ -391,6 +399,12 @@ export default function Operations() {
     lrMismatchFields: o.dispatchLrMismatchFields || [],
     lrMismatchSalesApproved: !!o.dispatchLrMismatchSalesApproved,
     lrMismatchOpsApproved: !!o.dispatchLrMismatchOpsApproved,
+    // Dispatch Confirmation Approval — single Operations sign-off the dispatcher requests
+    // (Dispatch page "Send Approval") before either Confirm Partial/Full Dispatch button
+    // unlocks. See the "Dispatch Approve" row action below + decideDispatchApproval.
+    dispatchApprovalStatus: o.dispatchApprovalStatus || 'none',
+    dispatchApprovalRequestedByName: o.dispatchApprovalRequestedByName || '',
+    dispatchApprovalRequestedAt: o.dispatchApprovalRequestedAt || null,
     // Fall back to linked lead's splitDates so emergency products identified on the lead
     // (before order creation) are still reflected in the Operations queue.
     splitDates: (o.splitDates && o.splitDates.length > 0) ? o.splitDates : (o.leadId?.splitDates || []),
@@ -594,6 +608,10 @@ export default function Operations() {
     })(),
     logoRequired: o.logoRequired || o.leadId?.logoNeeded || false,
     logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
+    // Hotel's own reserved packing-material stock (Inventory > Material Stocks rows tagged
+    // with this hotel) matching this order's packing lines by material + size — computed
+    // backend-side (buildHotelStockGroups). Drives the "Hotel Stock" column + "Use Existing".
+    hotelStockOptions: Array.isArray(o.hotelStockOptions) ? o.hotelStockOptions : [],
   })), [ordersData, packingMaterialTabMap, displayUnitTabMap, emergencyRequestsByOrder]);
 
   const [queueSteps, setQueueSteps] = useState({});
@@ -805,6 +823,61 @@ export default function Operations() {
     },
   ];
 
+  // Operations > Order Management > "Use Existing" — source an order's packing material from
+  // its hotel's own reserved Material Stock (across every design vendor) instead of a fresh
+  // print run. Backend (buildHotelStockGroups + useExistingMaterialStock) does the matching,
+  // oldest-first draw-down, per-line marking and generic-pool credit-back.
+  const handleUseExistingStock = (record) => {
+    if (!requireAccess('edit')) return;
+    if (usingExistingStockId) return; // a draw is already in flight — block re-entry
+    const opts = (record.hotelStockOptions || []).filter((g) => !g.fulfilled && g.outstandingQty > 0);
+    if (!opts.length) { enqueueSnackbar('No reserved stock left to use for this order', { variant: 'info' }); return; }
+    setUsingExistingStockId(record.key);
+    Modal.confirm({
+      title: `Use ${record.hotelLogo}'s reserved packing stock`,
+      width: 460,
+      onCancel: () => setUsingExistingStockId(null),
+      content: (
+        <div>
+          <Text>The following order lines will be sourced from existing reserved stock:</Text>
+          <ul style={{ margin: '8px 0 4px', paddingLeft: 18 }}>
+            {opts.map((g) => {
+              const draw = Math.min(g.availableQty, g.outstandingQty);
+              return (
+                <li key={g.key}>
+                  <Text strong>{g.label}{g.size ? ` ${g.size}` : ''}</Text>: draw {draw} of {g.outstandingQty} needed
+                  {g.availableQty < g.outstandingQty && (
+                    <Text type="warning"> (short {g.outstandingQty - g.availableQty})</Text>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            These lines get marked as packed from existing stock — no fresh print run, and any generic-pool
+            stock already deducted for them is credited back.
+          </Text>
+        </div>
+      ),
+      okText: 'Use Existing',
+      onOk: async () => {
+        try {
+          const res = await useExistingMaterialStock({ id: record.key }).unwrap();
+          const drawn = res?.data?.drawn || [];
+          const shorts = res?.data?.shortfalls || [];
+          enqueueSnackbar(
+            `Drew ${drawn.map((d) => `${d.qty}× ${d.material}`).join(', ') || 'reserved stock'}${shorts.length ? ` — still short on ${shorts.map((s) => s.material).join(', ')}` : ''}`,
+            { variant: shorts.length ? 'warning' : 'success' },
+          );
+        } catch (err) {
+          enqueueSnackbar(err?.data?.message || err?.data || 'Failed to use existing stock', { variant: 'error' });
+        } finally {
+          setUsingExistingStockId(null);
+        }
+      },
+    });
+  };
+
   const orderColumns = [
     {
       title: 'Order ID',
@@ -868,6 +941,42 @@ export default function Operations() {
     },
     { title: 'Assigned To', dataIndex: 'assignedEmployee', responsive: ['lg'] },
     {
+      title: 'Hotel Stock',
+      key: 'hotelStock',
+      responsive: ['lg'],
+      render: (_, record) => {
+        const opts = record.hotelStockOptions || [];
+        if (!opts.length) return <Text type="secondary">—</Text>;
+        return (
+          <Space direction="vertical" size={2}>
+            {opts.map((g) => {
+              const label = `${g.label}${g.size ? ` ${g.size}` : ''}`;
+              if (g.fulfilled) {
+                return <Tag key={g.key} color="green" style={{ margin: 0, fontSize: 10 }}>{label} · used {g.usedQty}</Tag>;
+              }
+              if (g.infoOnly) {
+                return (
+                  <Tooltip key={g.key} title={`${record.hotelLogo} has ${g.availableQty} of this in reserved stock (across ${g.rows.length} vendor row(s)). Order qty for this line isn't set, so there's nothing to auto-draw yet.`}>
+                    <Tag style={{ margin: 0, fontSize: 10 }}>{label} · {g.availableQty} in reserve</Tag>
+                  </Tooltip>
+                );
+              }
+              return (
+                <Tooltip
+                  key={g.key}
+                  title={`${g.availableQty} in ${record.hotelLogo}'s reserved stock across ${g.rows.length} vendor row(s) · this order still needs ${g.outstandingQty}${g.usedQty > 0 ? ` · ${g.usedQty} already drawn` : ''}`}
+                >
+                  <Tag color={g.sufficient ? 'blue' : 'orange'} style={{ margin: 0, fontSize: 10 }}>
+                    {label} · {g.availableQty}{g.sufficient ? '' : ` / need ${g.outstandingQty}`}{g.usedQty > 0 ? ` (used ${g.usedQty})` : ''}
+                  </Tag>
+                </Tooltip>
+              );
+            })}
+          </Space>
+        );
+      },
+    },
+    {
       title: 'Actions',
       key: 'actions',
       render: (_, record) => (
@@ -875,6 +984,23 @@ export default function Operations() {
           <Tooltip title="View full operation screen">
             <Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); navigate(`/operations/${record.id}`); }} />
           </Tooltip>
+          {(record.hotelStockOptions || []).some((g) => !g.fulfilled && g.outstandingQty > 0) && (
+            <Tooltip title="Use this hotel's reserved packing stock for this order">
+              <Button
+                size="small"
+                icon={<ContainerOutlined />}
+                loading={usingExistingStockId === record.key}
+                disabled={!!usingExistingStockId && usingExistingStockId !== record.key}
+                onClick={(e) => { e.stopPropagation(); handleUseExistingStock(record); }}
+              >
+                Use Existing
+              </Button>
+            </Tooltip>
+          )}
+          {(record.hotelStockOptions || []).some((g) => g.fulfilled)
+            && (record.hotelStockOptions || []).every((g) => g.fulfilled || g.infoOnly) && (
+            <Tag color="green" style={{ fontSize: 10, margin: 0 }}>Reserved Stock Used</Tag>
+          )}
           <Tooltip title={record.isUrgent ? 'Unmark emergency' : 'Mark as emergency'}>
             <Button
               size="small"
@@ -943,6 +1069,25 @@ export default function Operations() {
           )}
           {record.lrMismatchStatus === 'rejected' && (
             <Tag color="error" style={{ fontSize: 10, margin: 0 }}>LR Mismatch Rejected</Tag>
+          )}
+          {record.dispatchApprovalStatus === 'pending' && (
+            <Tooltip title={`Dispatch (${record.dispatchApprovalRequestedByName || 'the dispatcher'}) is requesting approval to confirm dispatch for this order. Click to review.`}>
+              <Button
+                size="small"
+                type="primary"
+                icon={<CheckCircleOutlined />}
+                style={{ fontWeight: 600 }}
+                onClick={(e) => { e.stopPropagation(); setDispatchApprovalOrder(record); }}
+              >
+                Dispatch Approve
+              </Button>
+            </Tooltip>
+          )}
+          {record.dispatchApprovalStatus === 'approved' && (
+            <Tag color="success" style={{ fontSize: 10, margin: 0 }}>Dispatch Approved</Tag>
+          )}
+          {record.dispatchApprovalStatus === 'rejected' && (
+            <Tag color="error" style={{ fontSize: 10, margin: 0 }}>Dispatch Approval Rejected</Tag>
           )}
         </Space>
       ),
@@ -1136,6 +1281,41 @@ export default function Operations() {
             );
           }
           return (value || 0).toLocaleString();
+        },
+      },
+      {
+        title: 'Hotel Stock',
+        key: 'hotelStock',
+        width: 128,
+        render: (_, record) => {
+          const ord = apiOrders.find((o) => o.id === record.orderId);
+          const g = hotelStockGroupForRow(ord?.hotelStockOptions, record.packingSize || record.size, record.itemIndex, label);
+          if (!g) return <Text type="secondary">—</Text>;
+          const who = ord?.hotelLogo || 'This hotel';
+          // Fully sourced from the hotel's own reserved stock — no print run for this row.
+          if (g.fulfilled) {
+            return (
+              <Tooltip title={`Fully sourced from ${who}'s reserved ${g.label}${g.size ? ` ${g.size}` : ''} stock (${g.usedQty} used). No print run needed for this row.`}>
+                <Tag color="green" style={{ fontSize: 10, margin: 0 }}>Reserved · {g.usedQty}</Tag>
+              </Tooltip>
+            );
+          }
+          // Partially drawn from reserved stock — show used / total; the rest still prints.
+          if (g.usedQty > 0) {
+            return (
+              <Tooltip title={`${g.usedQty} of ${g.requiredQty} sourced from ${who}'s reserved stock · ${g.outstandingQty} still needs a print run.`}>
+                <Tag color="gold" style={{ fontSize: 10, margin: 0 }}>Reserved {g.usedQty} / {g.requiredQty}</Tag>
+              </Tooltip>
+            );
+          }
+          // Not drawn yet — just show the available reserved count.
+          return (
+            <Tooltip title={`${who} has ${g.availableQty} ${g.label}${g.size ? ` ${g.size}` : ''} in its own reserved stock (across ${g.rows.length} vendor row${g.rows.length === 1 ? '' : 's'})${g.infoOnly ? '' : ` · this order needs ${g.outstandingQty}`}. Draw it from Order Management / the order detail page → “Use Existing”.`}>
+              <Tag color={g.infoOnly ? 'default' : (g.sufficient ? 'blue' : 'orange')} style={{ fontSize: 10, margin: 0 }}>
+                {g.availableQty}{!g.infoOnly && g.outstandingQty ? ` / ${g.outstandingQty}` : ''} avail
+              </Tag>
+            </Tooltip>
+          );
         },
       },
       ...(isStickerTab ? [{
@@ -1337,39 +1517,66 @@ export default function Operations() {
                       )}
                     </Space>
                   )}
-                  {/* If a previously approved design exists for this hotel+product, offer one-click reuse */}
+                  {/* If a previously approved design exists for this hotel+product, offer one-click
+                      reuse. The artwork is copied in and AUTO-APPROVED (it's already-approved
+                      artwork) — it goes straight to printing. The design is reviewable in
+                      Sales > Parties > eye-view "Packaging Designs on File". A preview is shown
+                      here first so whoever clicks can confirm it's the right file. */}
                   {existingHotelDesign && !sr && (
-                    <Tooltip title={`Previously approved design from a past order — click to use it directly without re-approval`}>
+                    <Tooltip title="Previously approved design for this hotel + product — reuse it directly. It's auto-approved and goes straight to printing.">
                       <Button
                         size="small"
                         icon={<CheckCircleOutlined />}
                         style={{ background: '#52c41a', borderColor: '#52c41a', color: '#fff', borderRadius: 6 }}
-                        onClick={async () => {
+                        onClick={() => {
                           const ord = apiOrders.find((o) => o.id === record.orderId);
                           const queueType = queueTypeFromKey(record.key);
-                          try {
-                            await createStickerRequest({
-                              orderId: ord?.key,
-                              hotelLogo: record.hotelLogo,
-                              product: record.product,
-                              category: record.category || '',
-                              stickerType: queueType,
-                              quantity: record.qty,
-                              stickerSize: record.stickerSize || record.size,
-                              designFileUrl: existingHotelDesign.designFileUrl,
-                              status: 'Approved',
-                              salesApproved: true,
-                              salesApprovedAt: new Date(),
-                              opsHeadApproved: true,
-                              opsHeadApprovedAt: new Date(),
-                              ...(kitTypeName && { kitType: kitTypeName }),
-                              ...(kitProductsList.length && { kitProducts: kitProductsList }),
-                            }).unwrap();
-                            advanceStep(record.key, 2);
-                            enqueueSnackbar(`Existing design applied — ${kitTypeName || record.product} marked Approved`, { variant: 'success' });
-                          } catch (err) {
-                            enqueueSnackbar(err?.data?.message || err?.data || 'Failed to apply existing design', { variant: 'error' });
-                          }
+                          const dUrl = existingHotelDesign.designFileUrl;
+                          const isImg = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(dUrl || '');
+                          Modal.confirm({
+                            title: 'Use this existing design?',
+                            width: 460,
+                            icon: null,
+                            content: (
+                              <div>
+                                <Text style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                                  {existingHotelDesign.product} · {existingHotelDesign.type}
+                                  {existingHotelDesign.size ? ` · ${existingHotelDesign.size}` : ''}
+                                </Text>
+                                {dUrl
+                                  ? (isImg
+                                      ? <img src={dUrl} alt="design" style={{ width: '100%', maxHeight: 280, objectFit: 'contain', borderRadius: 8, border: '1px solid #eee' }} />
+                                      : <a href={dUrl} target="_blank" rel="noopener noreferrer">Open design file ↗</a>)
+                                  : <Text type="secondary">No file on record</Text>}
+                                <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 10 }}>
+                                  It's applied and auto-approved straight away — ready to print. This design also shows in Sales &gt; Parties &gt; eye-view.
+                                </Text>
+                              </div>
+                            ),
+                            okText: 'Use Existing Design',
+                            onOk: async () => {
+                              try {
+                                await createStickerRequest({
+                                  orderId: ord?.key,
+                                  hotelLogo: record.hotelLogo,
+                                  product: record.product,
+                                  category: record.category || '',
+                                  stickerType: queueType,
+                                  quantity: record.qty,
+                                  stickerSize: record.stickerSize || record.size,
+                                  designFileUrl: dUrl,
+                                  reusedFromDesignId: existingHotelDesign._id,
+                                  reuseVendorId: existingHotelDesign.vendorId?._id || existingHotelDesign.vendorId || undefined,
+                                  ...(kitTypeName && { kitType: kitTypeName }),
+                                  ...(kitProductsList.length && { kitProducts: kitProductsList }),
+                                }).unwrap();
+                                advanceStep(record.key, 2);
+                                enqueueSnackbar(`Existing design applied & auto-approved — ${kitTypeName || record.product} ready to print`, { variant: 'success' });
+                              } catch (err) {
+                                enqueueSnackbar(err?.data?.message || err?.data || 'Failed to apply existing design', { variant: 'error' });
+                              }
+                            },
+                          });
                         }}
                       >
                         ♻ Use Existing Design
@@ -1893,7 +2100,12 @@ export default function Operations() {
             category: first.category,
             kitId: first.kitId || '',
             kitName: first.kitName || '',
+            // Carried so the "Hotel Stock" column + fully-reserved row dimming can resolve
+            // this kit parent to its backend hotelStockOptions group (by item index / size).
+            itemIndex: first.itemIndex,
+            childItemIndexes: group.map((r) => r.itemIndex).filter((n) => Number.isInteger(n)),
             size: kitSizeFor(first.kitId, first.kitName),
+            packingSize: first.packingSize || kitSizeFor(first.kitId, first.kitName) || '',
             stickerPrinting: first.stickerPrinting,
             packagingType: first.packagingType,
             displayUnit: first.displayUnit || '',
@@ -1974,6 +2186,14 @@ export default function Operations() {
             <Table
               dataSource={tableSource}
               columns={queueColumns(type)}
+              // A row whose packing is FULLY sourced from the hotel's own reserved stock
+              // (Operations → Use Existing) has no print run left — dim it and stop the row
+              // click so the design team treats it as done.
+              onRow={(record) => {
+                const ord = apiOrders.find((o) => o.id === record.orderId);
+                const g = hotelStockGroupForRow(ord?.hotelStockOptions, record.packingSize || record.size, record.itemIndex, type);
+                return g?.fulfilled ? { style: { opacity: 0.45, pointerEvents: 'none' } } : {};
+              }}
               // Kit parent rows carry a `children` array (used for the "Includes" summary tags
               // and product count elsewhere) but that must never render as AntD's built-in nested
               // rows — the kit parent row's Actions/Product columns already summarize the included
@@ -2895,6 +3115,84 @@ export default function Operations() {
                   type={liveOrder.lrMismatchStatus === 'approved' ? 'success' : 'warning'}
                   showIcon
                   message={`Already ${liveOrder.lrMismatchStatus}`}
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+            </div>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Dispatch Confirmation Approval — Operations Review Modal ─────────
+          Dispatch's "Send Approval" button gates Confirm Partial/Full Dispatch on this
+          single Operations sign-off (no Sales side) — see decideDispatchApproval. */}
+      <Modal
+        title={<Space><CheckCircleOutlined style={{ color: '#B11E6A' }} /><span>Dispatch Approval — Review</span></Space>}
+        open={!!dispatchApprovalOrder}
+        onCancel={() => setDispatchApprovalOrder(null)}
+        width={Math.min(480, window.innerWidth - 32)}
+        footer={[<Button key="cancel" onClick={() => setDispatchApprovalOrder(null)}>Close</Button>]}
+      >
+        {dispatchApprovalOrder && (() => {
+          const liveOrder = apiOrders.find((o) => o.key === dispatchApprovalOrder.key) || dispatchApprovalOrder;
+          const isPending = liveOrder.dispatchApprovalStatus === 'pending';
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 8 }}>
+              <Alert type="info" showIcon
+                message="Dispatch is requesting approval to confirm dispatch"
+                description="Approving unlocks the Confirm Partial/Full Dispatch button for the dispatcher for this round. If the order dispatches in multiple rounds, each later round will need its own approval."
+                style={{ borderRadius: 8, whiteSpace: 'pre-wrap' }}
+              />
+              <Descriptions bordered size="small" column={1} style={{ borderRadius: 8 }}>
+                <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{liveOrder.id}</span></Descriptions.Item>
+                <Descriptions.Item label="Client">{liveOrder.hotelLogo}</Descriptions.Item>
+                <Descriptions.Item label="Requested By">{liveOrder.dispatchApprovalRequestedByName || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Requested At">
+                  {liveOrder.dispatchApprovalRequestedAt ? new Date(liveOrder.dispatchApprovalRequestedAt).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                </Descriptions.Item>
+              </Descriptions>
+              {isPending ? (
+                <Space>
+                  <Button
+                    type="primary"
+                    loading={decidingDispatchApproval}
+                    onClick={async () => {
+                      setDecidingDispatchApproval(true);
+                      try {
+                        await decideDispatchApproval({ id: liveOrder.key, decision: 'approved' }).unwrap();
+                        enqueueSnackbar('Dispatch approved — the dispatcher can now confirm dispatch.', { variant: 'success' });
+                        setDispatchApprovalOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to approve', { variant: 'error' });
+                      } finally {
+                        setDecidingDispatchApproval(false);
+                      }
+                    }}>
+                    Approve
+                  </Button>
+                  <Button
+                    danger
+                    loading={decidingDispatchApproval}
+                    onClick={async () => {
+                      setDecidingDispatchApproval(true);
+                      try {
+                        await decideDispatchApproval({ id: liveOrder.key, decision: 'rejected' }).unwrap();
+                        enqueueSnackbar('Dispatch approval rejected.', { variant: 'success' });
+                        setDispatchApprovalOrder(null);
+                      } catch (err) {
+                        enqueueSnackbar(err?.data?.message || 'Failed to reject', { variant: 'error' });
+                      } finally {
+                        setDecidingDispatchApproval(false);
+                      }
+                    }}>
+                    Reject
+                  </Button>
+                </Space>
+              ) : (
+                <Alert
+                  type={liveOrder.dispatchApprovalStatus === 'approved' ? 'success' : 'warning'}
+                  showIcon
+                  message={`Already ${liveOrder.dispatchApprovalStatus}`}
                   style={{ borderRadius: 8 }}
                 />
               )}

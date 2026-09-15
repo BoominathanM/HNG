@@ -10,7 +10,9 @@ const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { computeTaskEstimate, computeRating } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
-const { checkTaskQuantityOverflow, checkStockDeductionGate } = require('../../utils/taskQuantity');
+const {
+  checkTaskQuantityOverflow, checkLiveStockAvailability, deductStockForTask, reverseStockForTask,
+} = require('../../utils/taskQuantity');
 const aiService = require('../../services/aiService');
 
 // Notification recipients for a task — every assignee when it has multiple
@@ -516,7 +518,7 @@ async function computeSuggestedTasks() {
   const Order = require('../../models/Order');
   const TaskTimeConfig = require('../../models/TaskTimeConfig');
   const MaterialStock = require('../../models/MaterialStock');
-  const { resolveMaterialStock } = require('../../utils/materialStockMatch');
+  const { resolveMaterialStock, effectivePackingSize, findReservedRowsForLine } = require('../../utils/materialStockMatch');
 
   // Orders still awaiting production, PLUS orders already forwarded to Dispatch Ready —
   // dispatchOrder (below) forwards the whole order once ANY sibling task completes,
@@ -709,14 +711,37 @@ async function computeSuggestedTasks() {
       // row was actually found for this item's packing material+size — an item whose
       // packaging was never entered into Material Stocks isn't treated as "out of stock",
       // just as "not tracked here" (same posture deductMaterialStockForOrder already takes).
-      const materialStockMatch = resolveMaterialStock(it, materialStocks, o.hotelName);
-      const materialStockReady = !materialStockMatch || (materialStockMatch.stockCount || 0) >= requiredQty;
-      const materialShortfall = materialStockReady ? null : {
-        material: materialStockMatch.packingMaterial,
-        size: materialStockMatch.size,
-        available: materialStockMatch.stockCount || 0,
-        needed: requiredQty,
-      };
+      // Size matched here is the PACKING size (never the product fill size, never the sticker
+      // size) — same effectivePackingSize the deduction uses; Sticker is not a factor.
+      // A line whose hotel keeps a matching RESERVED row belongs to Operations "Use Existing":
+      // it is ready only once actually drawn (packingFromExistingStock); until then the
+      // shortfall points at the reserved stock so the operator knows to go draw it.
+      // Otherwise the generic (non-hotelName) pool decides readiness — but ONLY for non-kit
+      // lines with a packing size, exactly like deduction (kit boxes: "Use Existing" only).
+      const isKitLine = !!(it.isKit || it.kitType || it.kitId);
+      const effPackSize = effectivePackingSize(it, o);
+      const reservedForLine = findReservedRowsForLine(it, o, materialStocks);
+      const materialStockMatch = (reservedForLine.length || isKitLine || !String(effPackSize || '').trim())
+        ? null
+        : resolveMaterialStock(it, materialStocks, effPackSize);
+      const materialStockReady = !!it.packingFromExistingStock
+        || (!reservedForLine.length && (!materialStockMatch || (materialStockMatch.stockCount || 0) >= requiredQty));
+      const materialShortfall = materialStockReady
+        ? null
+        : reservedForLine.length
+          ? {
+            material: reservedForLine[0].packingMaterial,
+            size: reservedForLine[0].size,
+            available: reservedForLine.reduce((s, r) => s + (Number(r.stockCount) || 0), 0),
+            needed: requiredQty,
+            fromReserved: true,
+          }
+          : {
+            material: materialStockMatch.packingMaterial,
+            size: materialStockMatch.size,
+            available: materialStockMatch.stockCount || 0,
+            needed: requiredQty,
+          };
 
       // Printing completion is a hard blocker — there is no physical task to assign until
       // the print step is actually done, so those items don't belong on today's checklist
@@ -793,11 +818,11 @@ async function computeSuggestedTasks() {
         stockReady, stickerReady, printingReady,
         // Whether THIS order's own allocation has actually been pulled from Inventory yet
         // (order.items[idx].deductedQty vs requiredQty) — distinct from stockReady above,
-        // which only reflects CURRENT live stock levels. A product can show stockReady:true
-        // (there's enough in Inventory right now) while stockDeducted is still false (this
-        // order hasn't been given its share yet — some other pending order is ahead of it in
-        // the FIFO backfill queue). Assignment is actually blocked server-side
-        // (checkStockDeductionGate, utils/taskQuantity.js) on stockDeducted, not stockReady.
+        // which only reflects CURRENT live stock levels. Stock is now deducted per task, at
+        // assignment time (utils/taskQuantity.js's deductStockForTask), so deductedQty only
+        // reaches requiredQty once enough tasks have actually been assigned against this
+        // line — a product can show stockReady:true (there's enough in Inventory right now)
+        // while stockDeducted is still false simply because no task has claimed it yet.
         stockDeducted: (Number(it.deductedQty) || 0) >= requiredQty,
         pendingDeductionQty: Math.max(0, requiredQty - (Number(it.deductedQty) || 0)),
         // Own-print-gate (Stickering, or Box/Frosted Ziplock/Butter Paper packing when
@@ -1027,7 +1052,12 @@ exports.createTask = asyncHandler(async (req, res, next) => {
     });
     if (overflowMsg) return next(new AppError(overflowMsg, 409));
 
-    const stockMsg = await checkStockDeductionGate({ orderId, productIndex });
+    // Stock (Inventory + Material Stock) is committed per task, right here, not in bulk at
+    // order creation — see utils/taskQuantity.js. This confirms it's actually on the shelf
+    // right now before the task is allowed to exist at all.
+    const stockMsg = await checkLiveStockAvailability({
+      orderId, productIndex, taskType: req.body.taskType, product, qty: req.body.qty,
+    });
     if (stockMsg) return next(new AppError(stockMsg, 409));
   }
 
@@ -1047,6 +1077,16 @@ exports.createTask = asyncHandler(async (req, res, next) => {
     ? { paymentStatus: await resolveOrderPaymentStatus(orderId).catch(() => 'Pending') }
     : {};
   const task = await Task.create({ ...req.body, ...timeFields, ...paymentFields, taskCode, createdBy: req.user._id });
+  if (orderId) {
+    try {
+      task.stockDeductions = await deductStockForTask({
+        orderId, productIndex, taskType: req.body.taskType, product, qty: req.body.qty, userId: req.user._id,
+      });
+      if (task.stockDeductions.length) await task.save({ validateBeforeSave: false });
+    } catch (err) {
+      console.error(`Stock deduction failed for task ${task.taskCode}:`, err.message);
+    }
+  }
   notifyRoles({ modules: ['Task Management'], userIds: taskRecipients(task), type: 'task', title: 'New Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} for ${task.clientName || 'order'}`, link: '/tasks' }).catch(() => {});
   res.status(201).json({ success: true, data: task });
 });
@@ -1505,6 +1545,19 @@ exports.deleteTask = asyncHandler(async (req, res, next) => {
   }
   const task = await Task.findOne({ _id: req.params.id, deletedAt: null });
   if (!task) return next(new AppError('Task not found', 404));
+  // A task that never reached Done never actually produced/consumed its reserved stock —
+  // credit it back so deleting it doesn't leave the units permanently "missing". Several
+  // differently-named tasks can share ONE line's stock reservation (see taskQuantity.js's
+  // deductStockForTask), so this only actually reverses anything once every task for that
+  // same product/kit has been deleted — deleting one of several still-active tasks for a
+  // product leaves the reservation in place for the ones that remain. A Done task's
+  // consumption is real and stays deducted either way (same as every other "goods already
+  // produced" case in this app — see utils/taskQuantity.js's reverseStockForTask).
+  if (task.status !== 'Done') {
+    await reverseStockForTask(task).catch((err) => {
+      console.error(`Stock reversal failed for deleted task ${task.taskCode}:`, err.message);
+    });
+  }
   task.deletedAt = Date.now();
   task.deletedBy = req.user._id;
   await task.save({ validateBeforeSave: false });

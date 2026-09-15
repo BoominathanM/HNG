@@ -5,7 +5,7 @@ import {
   Tabs, Card, Table, Button, Tag, Space, Input, Select, Modal, Form, Row, Col, Typography,
   Drawer, Steps, Divider, Badge, InputNumber, Tooltip, Checkbox, Slider, Upload, Progress,
   DatePicker, Descriptions, Timeline, AutoComplete, Switch,
-  Spin, Popconfirm, Alert,
+  Spin, Popconfirm, Alert, Popover,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -70,6 +70,7 @@ import {
   useGetItemsQuery,
   useUploadFilesMutation,
   useGetStickerRequestsQuery,
+  useGetHotelDesignsQuery,
   useApproveStickerRequestMutation,
   useRejectStickerRequestMutation,
   useGetCompanySettingsQuery,
@@ -1151,7 +1152,7 @@ const YES_NO_ATTR_KEYS = new Set(['sticker', 'logo', 'printing', 'stickerPrintin
 const STICKER_LIKE_KEYS = new Set(['sticker', 'stickerPrinting']);
 // Internal per-packing-material sticker size keys stored on the inventory item — resolved into a
 // single "Sticker Size" field rather than shown as their own raw dropdowns (Inventory + Lead).
-const STICKER_SIZE_ATTR_KEYS = new Set(['boxStickerSize', 'ziplockStickerSize', 'butterPaperStickerSize', 'bottleStickerSize']);
+const STICKER_SIZE_ATTR_KEYS = new Set(['boxStickerSize', 'ziplockStickerSize', 'butterPaperStickerSize', 'bottleStickerSize', 'packingSize', 'packingSizes', 'packingMaterialType']);
 
 // Per-product-type attribute fields — kept in sync with Inventory's PRODUCT_FIELD_DEFS so the
 // lead form shows exactly the attributes that inventory collects for each product type. The
@@ -1390,8 +1391,26 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
 
   // Attribute fields to show: the product type's schema, or (for unrecognized types) whatever
   // attributes the selected inventory item actually stores. Nothing hardcoded/generic.
+  // Append a read-only "Packing Size" right after a def list's Packing Material field. It
+  // auto-fills from the selected inventory item's per-packing-material size
+  // (productAttributes.packingSizes[<chosen material>], set on the Add Item modal), and is
+  // what Material Stock deduction matches on — NOT the product's fill `size`.
+  const withPackingTypeDefs = (defs) => {
+    if (!Array.isArray(defs) || !defs.some((d) => d.key === 'packingMaterial') || defs.some((d) => d.key === 'packingSize')) {
+      return defs;
+    }
+    const out = [];
+    defs.forEach((d) => {
+      out.push(d);
+      if (d.key === 'packingMaterial') {
+        out.push({ key: 'packingSize', label: 'Packing Size', field: 'product_attr_packingSize', options: [], showIf: 'packingMaterial', inputType: 'readonly' });
+      }
+    });
+    return out;
+  };
+
   const dynamicFieldDefs = React.useMemo(() => {
-    if (productTypeKey && PRODUCT_FIELD_DEFS_LEAD[productTypeKey]) return PRODUCT_FIELD_DEFS_LEAD[productTypeKey];
+    if (productTypeKey && PRODUCT_FIELD_DEFS_LEAD[productTypeKey]) return withPackingTypeDefs(PRODUCT_FIELD_DEFS_LEAD[productTypeKey]);
     const attrs = invItem?.productAttributes || {};
     // The per-material sizes (boxStickerSize/ziplockStickerSize/butterPaperStickerSize) are internal
     // storage keys on the inventory item, not something to expose as their own dropdowns here —
@@ -1412,7 +1431,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     if (defs.some((d) => d.key === 'sticker')) {
       defs.push({ key: 'stickerSize', label: 'Sticker Size', field: 'product_attr_stickerSize', options: [], showIf: 'sticker', inputType: 'readonly' });
     }
-    return defs;
+    return withPackingTypeDefs(defs);
   }, [productTypeKey, invItem]);
 
   // Pre-fill a spec field only when the inventory item defines a single value; when it offers
@@ -1454,6 +1473,14 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
       }
     };
     applyAttrSpec('packingMaterial', item.packingMaterial);
+    // Packing Size is filled per chosen packing material from the item's per-material sizes
+    // (productAttributes.packingSizes[<value>]) — see the effect below; when the product-select
+    // pre-fills a single packing material, seed it here too.
+    const pmNow = form.getFieldValue([fieldName, name, 'packingMaterial']);
+    const psMap = item.productAttributes?.packingSizes;
+    if (pmNow && psMap && psMap[pmNow]) {
+      form.setFieldValue([fieldName, name, 'packingSize'], psMap[pmNow]);
+    }
     applySpec('materialCategory', item.materialCategory);
     applyAttrSpec('brand', item.brand);
     // Brush Type ('Wooden'/'Plastic') drives Operations routing to the Wooden Brush
@@ -1477,14 +1504,27 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     if (isBottleType) {
       resolved = attrs.bottleStickerSize;
     } else {
+      // One size per packing material (Add Item > "<value> Size") now drives the sticker size
+      // too. Fall back to the legacy per-category *StickerSize attrs for items that still have them.
       const pm = String(packingMaterialVal || '').toLowerCase();
-      resolved = pm.includes('box') ? attrs.boxStickerSize
-        : pm.includes('ziplock') ? attrs.ziplockStickerSize
-        : pm.includes('butter') ? attrs.butterPaperStickerSize
-        : '';
+      resolved = (attrs.packingSizes && packingMaterialVal ? attrs.packingSizes[packingMaterialVal] : '')
+        || (pm.includes('box') ? attrs.boxStickerSize
+          : pm.includes('ziplock') ? attrs.ziplockStickerSize
+            : pm.includes('butter') ? attrs.butterPaperStickerSize
+              : '');
     }
     form.setFieldValue([fieldName, name, 'stickerSize'], resolved || '');
   }, [activeStickerFlag, isBottleType, packingMaterialVal, invItem, fieldName, name, form]);
+
+  // Auto-fill this line's Packing Size from the selected inventory item's per-packing-material
+  // size (productAttributes.packingSizes[<chosen value>], entered on the Add Item modal). Kept
+  // live as the packing material / inventory item changes. Only sets when the item actually
+  // has a size for that material — never clobbers a value the user typed or a loaded order's.
+  React.useEffect(() => {
+    const map = invItem?.productAttributes?.packingSizes;
+    const mapped = map && packingMaterialVal ? map[packingMaterialVal] : '';
+    if (mapped) form.setFieldValue([fieldName, name, 'packingSize'], mapped);
+  }, [packingMaterialVal, invItem, fieldName, name, form]);
 
   return (
     <div
@@ -1815,7 +1855,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                 // 'stickerPrinting') only matter once that flag is Yes — keep them out of the
                 // layout entirely otherwise. The field stays registered in the form store when
                 // hidden, so a previously fetched size survives toggling Sticker off and back on.
-                if (fd.showIf) {
+                if (fd.showIf === 'packingMaterial') {
+                  // Packing Type / Packing Size: shown once a packing material is chosen —
+                  // independent of the Sticker flag.
+                  if (!packingMaterialVal) return null;
+                } else if (fd.showIf) {
                   const gateVal = fd.showIf === 'stickerPrinting' ? stickerPrintingVal : stickerVal;
                   if (gateVal !== 'YES') return null;
                 }
@@ -1842,14 +1886,20 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     : null;
                 const handleStickerPrintingChange = stickerSiblingKey
                   ? (val) => { if (val === 'YES') form.setFieldValue([fieldName, name, stickerSiblingKey], 'NO'); }
-                  : undefined;
+                  : fd.key === 'packingMaterial'
+                    // Changing the packing material re-derives Packing Size — clear it; the
+                    // effect refills from the item's per-material size map for the new material.
+                    ? () => {
+                      form.setFieldValue([fieldName, name, 'packingSize'], '');
+                    }
+                    : undefined;
                 return (
                   <div key={fd.key} style={{ flex: '1 1 120px', minWidth: 100 }}>
                     <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fd.label}</span>} style={{ marginBottom: 0 }}>
                       {fd.inputType === 'text' ? (
                         <Input placeholder="e.g. 2.5cm x 2.5cm" disabled={isItemDisabled} size="small" />
                       ) : fd.inputType === 'readonly' ? (
-                        <Input readOnly size="small" placeholder="Set on the Inventory item" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : '#f5f5f5', cursor: 'not-allowed' }} />
+                        <Input readOnly size="small" placeholder={fd.key === 'packingSize' ? 'Set per packing material on the Inventory item' : 'Set on the Inventory item'} style={{ background: isDark ? 'rgba(255,255,255,0.04)' : '#f5f5f5', cursor: 'not-allowed' }} />
                       ) : (
                         // Spec values come purely from inventory — no inline "Add" option here.
                         // Yes/No toggles offer both choices; everything else lists only the values
@@ -3159,7 +3209,7 @@ export default function Sales() {
   // ── Order-edit modal display helpers (shared by both modal copies) ───────────────
   // Keys rendered explicitly below or that are structural — everything else on a product is
   // treated as a dynamic inventory attribute (shape, fragrance, bottleType, …) and shown.
-  const ORDER_EDIT_SHOWN_KEYS = new Set(['name','itemName','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
+  const ORDER_EDIT_SHOWN_KEYS = new Set(['name','itemName','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','packingMaterialType','packingSize','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
   // Read-only specifications strip for a product row in the order edit modal — mirrors the lead
   // detail view so specs entered earlier stay visible (and are preserved) while editing an order.
   const renderOrderEditProductSpecs = (p) => {
@@ -3644,6 +3694,36 @@ export default function Sales() {
   const [updateComplaintStatusMutation] = useUpdateComplaintStatusMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
   const { data: stickerData } = useGetStickerRequestsQuery();
+  // Approved packaging designs (Sticker / Box / Frosted Ziplock / Butter Paper / Wooden Brush /
+  // Other) on file for the hotel currently open in the Parties eye-view. One row per
+  // product + type + size (newest upload kept) — drives the "Packaging Designs on File" card
+  // and its Excel/PDF export. Skips entirely until a party is opened.
+  const { data: partyDesignsRaw } = useGetHotelDesignsQuery(
+    { hotelName: viewPartyInfo?.hotelName, approved: 'true' },
+    { skip: !viewPartyInfo?.hotelName },
+  );
+  const partyDesigns = React.useMemo(() => {
+    const seen = new Set();
+    return (partyDesignsRaw?.data || [])
+      .filter((d) => d && d.designFileUrl && d.approved !== false)
+      .map((d) => ({
+        id: d._id,
+        product: d.product || '—',
+        type: d.type || 'Sticker',
+        size: d.size || '',
+        url: d.designFileUrl,
+        uploadedAt: d.lastUploadedAt || d.updatedAt || d.createdAt || null,
+        vendorName: d.vendorId?.fullName || d.vendorName || '',
+        vendorEmail: d.vendorId?.email || '',
+        vendorPhone: d.vendorId?.mobile || '',
+      }))
+      .filter((d) => {
+        const k = `${d.product.toLowerCase()}|${d.type}|${(d.size || '').toLowerCase()}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+  }, [partyDesignsRaw]);
   const [approveStickerRequest] = useApproveStickerRequestMutation();
   const [rejectStickerRequest] = useRejectStickerRequestMutation();
   const [designRejectModal, setDesignRejectModal] = useState(null); // { id, label } | null
@@ -5882,13 +5962,30 @@ export default function Sales() {
 
   const partyInfoFileBase = (info) => `Party_${String(info?.hotelName || 'info').replace(/[^\w\-]+/g, '_')}_Info`;
 
+  // Rows for the "Packaging Designs on File" block in the eye-view exports — one line per
+  // saved design: Product · Type · Size · Uploaded On · Design Vendor · file link.
+  const buildPartyDesignRows = (designs) => (designs || []).map((d) => [
+    d.product || '—',
+    d.type || 'Sticker',
+    d.size || '—',
+    d.uploadedAt ? fmtDateTimeShort(d.uploadedAt) : '—',
+    [d.vendorName, d.vendorEmail, d.vendorPhone].filter(Boolean).join(' · ') || '—',
+    d.url || '',
+  ]);
+
   // Excel download — CSV with a UTF-8 BOM (Excel opens it natively), matching the
   // export approach used across Reports / PartiesLedger.
-  const exportPartyInfoExcel = (info) => {
+  const exportPartyInfoExcel = (info, designs) => {
     const rows = buildPartyInfoRows(info);
     if (!rows.length) { enqueueSnackbar('Nothing to export', { variant: 'warning' }); return; }
-    const csv = ['Field,Value', ...rows.map(([k, v]) => `"${String(k).replace(/"/g, '""')}","${String(v).replace(/"/g, '""')}"`)].join('\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+    const q = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const lines = ['Field,Value', ...rows.map(([k, v]) => `${q(k)},${q(v)}`)];
+    const designRows = buildPartyDesignRows(designs);
+    if (designRows.length) {
+      lines.push('', 'Packaging Designs on File', ['Product', 'Type', 'Size', 'Uploaded On', 'Design Vendor', 'Design File'].map(q).join(','));
+      designRows.forEach((r) => lines.push(r.map(q).join(',')));
+    }
+    const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -5899,10 +5996,23 @@ export default function Sales() {
 
   // PDF download — render the card as a plain HTML table and rasterize with the
   // same html2pdf pipeline used for invoice/quotation downloads in this file.
-  const exportPartyInfoPDF = async (info) => {
+  const exportPartyInfoPDF = async (info, designs) => {
     const rows = buildPartyInfoRows(info);
     if (!rows.length) { enqueueSnackbar('Nothing to export', { variant: 'warning' }); return; }
     const cat = info.category || 'Hotel';
+    const designRows = buildPartyDesignRows(designs);
+    const designBlock = designRows.length ? `
+      <h3 style="color:#B11E6A;margin:18px 0 6px;font-size:14px;">Packaging Designs on File</h3>
+      <table style="border-collapse:collapse;width:100%;font-size:11px;">
+        <tr>
+          ${['Product', 'Type', 'Size', 'Uploaded On', 'Design Vendor', 'Design File'].map((h) => `<th style="border:1px solid #e0d3dc;padding:5px 8px;background:#faf0f6;text-align:left;">${escapeHtml(h)}</th>`).join('')}
+        </tr>
+        ${designRows.map((r) => `
+          <tr>
+            ${r.slice(0, 5).map((c) => `<td style="border:1px solid #e0d3dc;padding:5px 8px;">${escapeHtml(c)}</td>`).join('')}
+            <td style="border:1px solid #e0d3dc;padding:5px 8px;">${r[5] ? `<a href="${escapeHtml(r[5])}">${escapeHtml(r[5])}</a>` : '—'}</td>
+          </tr>`).join('')}
+      </table>` : '';
     const container = document.createElement('div');
     container.style.cssText = 'padding:16px;font-family:Arial,Helvetica,sans-serif;color:#222;background:#fff;width:760px;';
     container.innerHTML = `
@@ -5915,6 +6025,7 @@ export default function Sales() {
             <td style="border:1px solid #e0d3dc;padding:6px 9px;">${escapeHtml(v)}</td>
           </tr>`).join('')}
       </table>
+      ${designBlock}
       <div style="margin-top:16px;font-size:10px;color:#999;">Generated ${escapeHtml(new Date().toLocaleString('en-IN'))}</div>`;
     document.body.appendChild(container);
     try {
@@ -6911,7 +7022,7 @@ export default function Sales() {
         const brand           = p.brand           || p.specs?.brand;
         const otherSpecs      = p.otherSpecs      || p.specs?.otherSpecs;
         const productName     = p.name || p.itemName || p.kitType || '—';
-        const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','stickerPrinting','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
+        const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','packingMaterialType','packingSize','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','stickerPrinting','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
         const extraAttrs = Object.entries(p || {}).filter(([k, v]) => {
           if (SHOWN_ATTR_KEYS.has(k)) return false;
           if (k === 'productAttributes' || k === 'attachments' || k === 'kitIncludes' || k === 'kitIncludesQty') return false;
@@ -13696,7 +13807,7 @@ export default function Sales() {
                           // Inventory-driven product attributes (shape, fragrance, bottleType, size, …)
                           // not already shown as a dedicated spec above — rendered generically so the
                           // specs entered during lead creation are never hidden in the view.
-                          const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
+                          const SHOWN_ATTR_KEYS = new Set(['name','itemName','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent','unit','lineTotal','logoType','boxes','packaging','packingMaterial','packingMaterialType','packingSize','material','materialCategory','hsnCode','discountPercent','discount','logo','sticker','brand','otherSpecs','size','defaultSize','specs','displayType','itemId','_id','key','amount','rateValue','total']);
                           const pExtraAttrs = Object.entries(p || {}).filter(([k, v]) => {
                             if (SHOWN_ATTR_KEYS.has(k)) return false;
                             if (k === 'productAttributes' || k === 'attachments' || k === 'kitIncludes' || k === 'kitIncludesQty' || k === 'specification') return false;
@@ -15907,8 +16018,8 @@ export default function Sales() {
         open={!!viewPartyInfo}
         onCancel={() => setViewPartyInfo(null)}
         footer={[
-          <Button key="xlsx" icon={<DownloadOutlined />} onClick={() => exportPartyInfoExcel(viewPartyInfo)}>Excel</Button>,
-          <Button key="pdf" icon={<DownloadOutlined />} onClick={() => exportPartyInfoPDF(viewPartyInfo)}>PDF</Button>,
+          <Button key="xlsx" icon={<DownloadOutlined />} onClick={() => exportPartyInfoExcel(viewPartyInfo, partyDesigns)}>Excel</Button>,
+          <Button key="pdf" icon={<DownloadOutlined />} onClick={() => exportPartyInfoPDF(viewPartyInfo, partyDesigns)}>PDF</Button>,
           <Button key="close" onClick={() => setViewPartyInfo(null)}>Close</Button>,
         ]}
         width={Math.min(1000, window.innerWidth - 32)}
@@ -15951,6 +16062,72 @@ export default function Sales() {
             <Descriptions.Item label="Lead Created Date">{fmtDateTimeShort(viewPartyInfo.leadCreatedAt || viewPartyInfo.createdAt)}</Descriptions.Item>
             <Descriptions.Item label="Party Since">{fmtDateTimeShort(viewPartyInfo.createdAt)}</Descriptions.Item>
           </Descriptions>
+          </div>
+        )}
+        {viewPartyInfo && (
+          <div style={{ marginTop: 20 }}>
+            <Divider style={{ margin: '0 0 12px' }}>
+              <Space size={6}>
+                <BankOutlined style={{ color: '#B11E6A' }} />
+                <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 700 }}>Packaging Designs on File</Text>
+              </Space>
+            </Divider>
+            {partyDesigns.length === 0 ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                No approved packaging designs saved for this {(viewPartyInfo.category || 'hotel').toLowerCase()} yet.
+              </Text>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <Table
+                  size="small"
+                  rowKey="id"
+                  dataSource={partyDesigns}
+                  pagination={false}
+                  scroll={{ x: 'max-content' }}
+                  columns={[
+                    { title: 'Product', dataIndex: 'product', render: (v) => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                    { title: 'Type', dataIndex: 'type', width: 120, render: (v) => <Tag style={{ fontSize: 11 }}>{v}</Tag> },
+                    { title: 'Size', dataIndex: 'size', width: 90, render: (v) => (v ? <Text style={{ fontSize: 12 }}>{v}</Text> : <Text type="secondary">—</Text>) },
+                    {
+                      title: 'Design', dataIndex: 'url', width: 80, align: 'center',
+                      render: (url) => {
+                        if (!url) return <Text type="secondary">—</Text>;
+                        const isImg = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+                        return isImg ? (
+                          <Popover
+                            trigger="click"
+                            placement="left"
+                            content={(
+                              <div style={{ textAlign: 'center' }}>
+                                <img src={url} alt="design" style={{ maxWidth: 320, maxHeight: 320, objectFit: 'contain', borderRadius: 8 }} />
+                                <div style={{ marginTop: 8 }}>
+                                  <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>Open full size ↗</a>
+                                </div>
+                              </div>
+                            )}
+                          >
+                            <img src={url} alt="design" style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, border: '1px solid #e0d0e8', cursor: 'pointer' }} />
+                          </Popover>
+                        ) : (
+                          <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 11, color: '#B11E6A' }}>
+                            <EyeOutlined /> View
+                          </a>
+                        );
+                      },
+                    },
+                    { title: 'Uploaded On', dataIndex: 'uploadedAt', width: 150, render: (v) => <Text style={{ fontSize: 12 }}>{v ? fmtDateTimeShort(v) : '—'}</Text> },
+                    {
+                      title: 'Design Vendor', key: 'vendor', width: 170,
+                      render: (_, r) => (r.vendorName ? (
+                        <Tooltip title={[r.vendorEmail, r.vendorPhone].filter(Boolean).join(' · ') || 'No contact on file'}>
+                          <Text style={{ fontSize: 12 }}>{r.vendorName}</Text>
+                        </Tooltip>
+                      ) : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>),
+                    },
+                  ]}
+                />
+              </div>
+            )}
           </div>
         )}
         {viewPartyInfo && (

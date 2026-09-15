@@ -43,6 +43,11 @@ const stickerRequestSchema = new mongoose.Schema({
   opsHeadRejectReason: { type: String, default: '' },
   isUrgent: { type: Boolean, default: false },
   dispatchedToOps: { type: Boolean, default: false },
+  // Set when this request was raised by "Use Existing Design" (Operations queue) — the artwork
+  // is copied from an already-approved HotelDesign and the request is AUTO-APPROVED (Sales +
+  // Ops Head) on creation, so it goes straight to printing. Kept as an audit link to the
+  // source design; the design is reviewable in Sales > Parties > eye-view. See createStickerRequest.
+  reusedFromDesignId: { type: mongoose.Schema.Types.ObjectId, ref: 'HotelDesign', default: null },
   // Invoice uploaded by the design team after printing (shown in Operations product spec table)
   invoiceFile: {
     name: { type: String, default: '' },

@@ -1499,13 +1499,13 @@ const maxDate = (a, b) => {
   return da || db || null;
 };
 
-const APPROVAL_MODULES = ['emergency', 'design', 'transport_mismatch', 'lr_mismatch', 'invoice_mismatch'];
+const APPROVAL_MODULES = ['emergency', 'design', 'transport_mismatch', 'lr_mismatch', 'invoice_mismatch', 'dispatch_approval'];
 
 exports.getEmergencyApprovalsReport = asyncHandler(async (req, res) => {
   const userSelect = 'fullName role';
   const orderSelect = { path: 'orderId', select: 'orderCode clientName salesPerson assignedTo', populate: { path: 'assignedTo', select: 'fullName' } };
 
-  const [emergencyTasks, stickerRequests, mismatchOrders] = await Promise.all([
+  const [emergencyTasks, stickerRequests, mismatchOrders, dispatchApprovalOrders] = await Promise.all([
     Task.find({ emergencyRequested: true, deletedAt: null })
       .populate(orderSelect)
       .populate('emergencyRequestedBy', userSelect)
@@ -1542,6 +1542,25 @@ exports.getEmergencyApprovalsReport = asyncHandler(async (req, res) => {
       .populate('dispatchLrMismatchOpsApprovedBy', userSelect)
       .populate('dispatchInvoiceMismatchRequestedBy', userSelect)
       .populate('dispatchInvoiceMismatchDecidedBy', userSelect),
+    // Dispatch Confirmation Approval (single Operations approver, gates Confirm
+    // Partial/Full Dispatch — see dispatch.controller.js requestDispatchApproval /
+    // operations.controller.js decideDispatchApproval). Requester/decider names are
+    // already denormalized onto the order (and each history entry), so no populate
+    // is needed here — same convention as Task/StickerRequest switchHistory.
+    Order.find({
+      deletedAt: null,
+      $or: [
+        { dispatchApprovalStatus: { $in: ['pending', 'rejected'] } },
+        { 'dispatchApprovalHistory.0': { $exists: true } },
+      ],
+    })
+      .select([
+        'orderCode', 'clientName', 'salesPerson', 'assignedTo',
+        'dispatchApprovalStatus', 'dispatchApprovalRequestedByName', 'dispatchApprovalRequestedByRole',
+        'dispatchApprovalRequestedAt', 'dispatchApprovalDecidedByName', 'dispatchApprovalDecidedAt',
+        'dispatchApprovalHistory',
+      ].join(' '))
+      .populate('assignedTo', userSelect),
   ]);
 
   const rows = [];
@@ -1684,6 +1703,57 @@ exports.getEmergencyApprovalsReport = asyncHandler(async (req, res) => {
         approvedReason: o.dispatchInvoiceMismatchDecisionNote || '',
       });
     }
+  });
+
+  // ── Dispatch Confirmation Approval (single Operations approver) ──
+  // Unlike the mismatch flows above, this can recur multiple times per order (one round
+  // per Confirm Partial/Full Dispatch click), so a currently pending/rejected request
+  // (live fields) and every past approved round (dispatchApprovalHistory, archived by
+  // confirmDispatch once a round goes through) are surfaced as separate rows.
+  dispatchApprovalOrders.forEach((o) => {
+    const base = {
+      orderId: o._id,
+      orderCode: o.orderCode || '',
+      clientName: o.clientName || '',
+      salesPerson: o.salesPerson || userName(o.assignedTo) || '',
+      raisedByTeam: 'Dispatch',
+      module: 'dispatch_approval',
+      type: 'Dispatch Approval (Confirm Dispatch)',
+      reason: '',
+      approver1Role: 'Operations',
+      approver2Role: '', approver2Name: '', approver2At: null, approver2Decision: '',
+      approvedReason: '',
+    };
+    if (o.dispatchApprovalStatus === 'pending' || o.dispatchApprovalStatus === 'rejected') {
+      const isRejected = o.dispatchApprovalStatus === 'rejected';
+      rows.push({
+        ...base,
+        key: `dispatch-approval-live-${o._id}`,
+        sentAtRaw: o.dispatchApprovalRequestedAt,
+        sentBy: o.dispatchApprovalRequestedByName || '',
+        sentByRole: o.dispatchApprovalRequestedByRole || '',
+        approver1Name: o.dispatchApprovalDecidedByName || '',
+        approver1At: o.dispatchApprovalDecidedAt,
+        approver1Decision: isRejected ? 'Rejected' : 'Pending',
+        status: isRejected ? 'Rejected' : 'Pending',
+        approvedAtRaw: isRejected ? o.dispatchApprovalDecidedAt : null,
+      });
+    }
+    (o.dispatchApprovalHistory || []).forEach((h, i) => {
+      const decision = h.status === 'approved' ? 'Approved' : 'Rejected';
+      rows.push({
+        ...base,
+        key: `dispatch-approval-${o._id}-${i}`,
+        sentAtRaw: h.requestedAt,
+        sentBy: h.requestedByName || '',
+        sentByRole: h.requestedByRole || '',
+        approver1Name: h.decidedByName || '',
+        approver1At: h.decidedAt,
+        approver1Decision: decision,
+        status: decision,
+        approvedAtRaw: h.decidedAt,
+      });
+    });
   });
 
   // Date filter applied uniformly across every source's own "sent/requested" timestamp,

@@ -12,6 +12,10 @@ const materialStockSchema = new mongoose.Schema({
   minStock: { type: Number, default: 0 },
   purchaseDate: { type: Date, default: Date.now },
   vendor: { type: String, default: '' },
+  // Business category (Hotel/Hospital/custom) the hotelName below belongs to — used only to
+  // scope the hotel/hospital name picker on the Add/Edit modal (mirrors Lead.category). '' on
+  // rows created before this field / on generic (no-hotel) stock.
+  category: { type: String, default: '' },
   hotelName: { type: String, default: '' },
   notes: { type: String, default: '' },
   invoiceFile: {

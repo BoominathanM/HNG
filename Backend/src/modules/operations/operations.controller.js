@@ -12,12 +12,31 @@ const generateCode = require('../../utils/codeGenerator');
 const MaterialStock = require('../../models/MaterialStock');
 const { notifyRoles } = require('../../utils/notify');
 const { ROLE_TO_STICKER_TYPE } = require('../../utils/alertConfigQueries');
-const { findHotelMaterialStock } = require('../../utils/materialStockMatch');
+const { findHotelMaterialStock, buildHotelStockGroups } = require('../../utils/materialStockMatch');
 const { sendMessage } = require('../../services/whatsAppService');
 const { computeTaskEstimate } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
-const { checkTaskQuantityOverflow, checkStockDeductionGate } = require('../../utils/taskQuantity');
+const {
+  checkTaskQuantityOverflow, checkLiveStockAvailability, deductStockForTask,
+} = require('../../utils/taskQuantity');
 const { resolveItemConsumedQty } = require('../sales/sales.controller');
+
+// Order + originating-lead merge with just the fields buildHotelStockGroups /
+// resolveItemConsumedQty need — kit lines carry their packing/size on the kit config, not on
+// the raw item, and legacy orders keep kit data only on the lead. Mirrors the Operations
+// frontend's own order→item enrichment fallbacks.
+function effOrderForHotelStock(o) {
+  const lead = o.leadId || {};
+  const pick = (...v) => v.find((x) => x != null && x !== '' && !(Array.isArray(x) && !x.length));
+  return {
+    hotelName: o.hotelName, clientName: o.clientName, orderCategory: o.orderCategory,
+    kitOrders: pick(o.kitOrders, lead.kitOrders) || [],
+    kitOverallQty: pick(o.kitOverallQty, lead.kitOverallQty) || 0,
+    kitDisplayUnit: pick(o.kitDisplayUnit, o.displayUnit, lead.kitDisplayUnit, lead.displayUnit) || '',
+    displayUnit: pick(o.displayUnit, o.kitDisplayUnit, lead.displayUnit, lead.kitDisplayUnit) || '',
+    kitSize: pick(o.kitSize, lead.kitSize) || '',
+  };
+}
 
 // ─── ORDER MANAGEMENT ─────────────────────────────────────────────────────────
 // Visibility scoping (same rule as Sales getLeads/Task Management getTasks):
@@ -82,6 +101,22 @@ exports.getOrders = asyncHandler(async (req, res) => {
   }));
 
   await backfillLogoUrlByHotelName(orders);
+
+  // Hotel reserved packing-material stock (Inventory > Material Stocks rows tagged with a
+  // hotelName) that matches each order's packing lines by material + size. Powers the
+  // "Hotel Stock" column and the "Use Existing" action in Order Management. One collection
+  // read for the whole page; matching + required-qty math lives in buildHotelStockGroups.
+  if (orders.length) {
+    const allStocks = await MaterialStock.find({ hotelName: { $nin: [null, ''] } })
+      .select('packingMaterial size stockCount hotelName vendor purchaseDate').lean();
+    if (allStocks.length) orders.forEach((o) => {
+      const eff = effOrderForHotelStock(o);
+      o.hotelStockOptions = buildHotelStockGroups(
+        eff, Array.isArray(o.items) ? o.items : [], allStocks,
+        (it) => resolveItemConsumedQty(it, eff),
+      );
+    });
+  }
 
   res.status(200).json({ success: true, total, page, data: orders });
 });
@@ -162,21 +197,120 @@ exports.updateOrderStatus = asyncHandler(async (req, res, next) => {
 });
 
 // Save approved packaging design for a hotel (reuse in future orders)
+
+// Escapes a string for safe use inside a RegExp (hotel names can contain (), &, +, …).
+const escapeRegex = (s) => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// StickerRequest.stickerType → HotelDesign.type (Product/Display Unit rows have no artwork).
+const STICKER_TO_DESIGN_TYPE = {
+  Box: 'Box',
+  'Frosted Ziplock': 'Frosted Ziplock',
+  'Butter Paper': 'Butter Paper',
+  'Wooden Brush': 'Wooden Brush',
+  Other: 'Other',
+  Sticker: 'Sticker',
+};
+
+// Match key for the ONE HotelDesign row per hotel + product + packaging type + size.
+// A blank size also matches legacy rows saved before the `size` field existed (missing/null),
+// so the first re-approval after this change updates that row in place instead of forking it.
+const hotelDesignMatchKey = (hotelName, product, type, size) => {
+  const key = {
+    hotelName: new RegExp(`^${escapeRegex(hotelName)}$`, 'i'),
+    product,
+    type,
+  };
+  key.size = size ? size : { $in: ['', null] };
+  return key;
+};
+
+// Best-effort upsert of the reusable design row from an approved StickerRequest — captures
+// size, the design vendor and the approval date so Parties > eye-view can list it. Never
+// throws into the approval flow.
+async function upsertHotelDesignFromSticker(sticker, userId) {
+  try {
+    const HotelDesign = require('../../models/HotelDesign');
+    const Party = require('../../models/Party');
+    const hotelName = sticker.hotelLogo || sticker.hotelName;
+    if (!hotelName || !sticker.designFileUrl) return;
+    const type = STICKER_TO_DESIGN_TYPE[sticker.stickerType] || 'Sticker';
+    const size = sticker.stickerSize || '';
+
+    let vendorName = '';
+    if (sticker.vendorId) {
+      const v = await User.findById(sticker.vendorId).select('fullName').lean();
+      vendorName = v?.fullName || '';
+    }
+    const party = await Party.findOne({ name: new RegExp(`^${escapeRegex(hotelName)}$`, 'i') })
+      .select('_id').lean();
+
+    await HotelDesign.findOneAndUpdate(
+      hotelDesignMatchKey(hotelName, sticker.product, type, size),
+      {
+        hotelName,
+        product: sticker.product,
+        type,
+        size,
+        designFileUrl: sticker.designFileUrl,
+        approved: true,
+        category: sticker.category || '',
+        vendorId: sticker.vendorId || null,
+        vendorName,
+        stickerRequestId: sticker._id,
+        partyId: party?._id || null,
+        lastUploadedAt: new Date(),
+        createdBy: userId,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  } catch (_) { /* best-effort — a design-cache write must never break approval */ }
+}
+
 exports.getHotelDesigns = asyncHandler(async (req, res) => {
   const HotelDesign = require('../../models/HotelDesign');
   const filter = {};
-  if (req.query.hotelName) filter.hotelName = req.query.hotelName;
+  if (req.query.hotelName) filter.hotelName = new RegExp(`^${escapeRegex(req.query.hotelName)}$`, 'i');
   if (req.query.type) filter.type = req.query.type;
-  const designs = await HotelDesign.find(filter).sort('-createdAt');
+  if (req.query.approved === 'true') filter.approved = true;
+  const designs = await HotelDesign.find(filter)
+    .populate('vendorId', 'fullName email mobile')
+    .sort({ lastUploadedAt: -1, createdAt: -1 });
   res.status(200).json({ success: true, data: designs });
 });
 
 exports.saveHotelDesign = asyncHandler(async (req, res) => {
   const HotelDesign = require('../../models/HotelDesign');
-  const { hotelName, product, type } = req.body;
+  const Party = require('../../models/Party');
+  const { hotelName, product, type, size } = req.body;
+  const sizeVal = size || '';
+  const designType = type || 'Sticker';
+
+  let vendorName = req.body.vendorName || '';
+  if (req.body.vendorId && !vendorName) {
+    const v = await User.findById(req.body.vendorId).select('fullName').lean();
+    vendorName = v?.fullName || '';
+  }
+  let partyId = req.body.partyId || null;
+  if (!partyId && hotelName) {
+    const party = await Party.findOne({ name: new RegExp(`^${escapeRegex(hotelName)}$`, 'i') })
+      .select('_id').lean();
+    partyId = party?._id || null;
+  }
+
   const design = await HotelDesign.findOneAndUpdate(
-    { hotelName, product, type: type || 'Sticker' },
-    { ...req.body, approved: true, createdBy: req.user._id },
+    hotelDesignMatchKey(hotelName, product, designType, sizeVal),
+    {
+      ...req.body,
+      hotelName,
+      product,
+      type: designType,
+      size: sizeVal,
+      vendorName,
+      partyId,
+      approved: true,
+      lastUploadedAt: new Date(),
+      createdBy: req.user._id,
+    },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
   res.status(200).json({ success: true, data: design });
@@ -249,7 +383,12 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
   });
   if (overflowMsg) return next(new AppError(overflowMsg, 409));
 
-  const stockMsg = await checkStockDeductionGate({ orderId, productIndex });
+  // Stock (Inventory + Material Stock) is committed per task, right here, not in bulk at
+  // order creation — see utils/taskQuantity.js. Confirms it's actually on the shelf right
+  // now before the task is allowed to exist at all.
+  const stockMsg = await checkLiveStockAvailability({
+    orderId, productIndex, taskType: req.body.taskType, product, qty: req.body.qty,
+  });
   if (stockMsg) return next(new AppError(stockMsg, 409));
 
   // Prevent duplicate Kit Packing task per order
@@ -300,6 +439,14 @@ exports.assignTask = asyncHandler(async (req, res, next) => {
     orderId,
     createdBy: req.user._id,
   });
+  try {
+    task.stockDeductions = await deductStockForTask({
+      orderId, productIndex, taskType: req.body.taskType, product, qty: req.body.qty, userId: req.user._id,
+    });
+    if (task.stockDeductions.length) await task.save({ validateBeforeSave: false });
+  } catch (err) {
+    console.error(`Stock deduction failed for task ${task.taskCode}:`, err.message);
+  }
   const recipients = (task.assignedToMany && task.assignedToMany.length) ? task.assignedToMany : [task.assignedTo].filter(Boolean);
   notifyRoles({ modules: ['Task Management'], userIds: recipients, type: 'task', title: 'Task Assigned', message: `Task ${task.taskCode}: ${task.taskName || task.product || 'Task'} assigned`, link: '/tasks' }).catch(() => {});
   res.status(201).json({ success: true, data: task });
@@ -345,17 +492,17 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
       skippedProducts.push(it.itemName);
       continue;
     }
-    // Physical stock not yet deducted for this line (order was taken/edited while short) —
-    // skip it here rather than hard-failing the whole bulk call; it'll unlock automatically
-    // once backfillPendingDeductionsForItem pays off the shortfall on restock.
-    const consumedRequired = resolveItemConsumedQty(it, order);
-    if (consumedRequired > (Number(it.deductedQty) || 0)) {
+    // Stock (Inventory + Material Stock) must actually be on hand right now for this many
+    // units — deduction happens per task, not in bulk at order creation (see
+    // utils/taskQuantity.js) — skip rather than hard-failing the whole bulk call.
+    const stockMsg = await checkLiveStockAvailability({ orderId: order._id, productIndex: i, taskType: baseType, qty: pending });
+    if (stockMsg) {
       stockPendingProducts.push(it.itemName);
       continue;
     }
     const taskCode = await generateCode('TASK');
     const assignment = assignmentByIndex.get(i);
-    tasks.push(await Task.create({
+    const task = await Task.create({
       taskCode,
       orderId: order._id,
       taskType: baseType,
@@ -369,13 +516,22 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
       assignedTo: assignment?.assignedTo || undefined,
       assigneeName: assignment?.assigneeName || undefined,
       createdBy: req.user._id,
-    }));
+    });
+    try {
+      task.stockDeductions = await deductStockForTask({
+        orderId: order._id, productIndex: i, taskType: baseType, qty: pending, userId: req.user._id,
+      });
+      if (task.stockDeductions.length) await task.save({ validateBeforeSave: false });
+    } catch (err) {
+      console.error(`Stock deduction failed for task ${task.taskCode}:`, err.message);
+    }
+    tasks.push(task);
   }
 
   if (tasks.length === 0) {
     const reasons = [];
     if (skippedProducts.length) reasons.push(`already assigned (${skippedProducts.join(', ')})`);
-    if (stockPendingProducts.length) reasons.push(`stock not yet deducted (${stockPendingProducts.join(', ')})`);
+    if (stockPendingProducts.length) reasons.push(`not enough stock on hand right now (${stockPendingProducts.join(', ')})`);
     return next(new AppError(
       `No tasks were assigned — all products for this order are ${reasons.join('; ') || 'unavailable'}.`,
       409
@@ -473,6 +629,42 @@ exports.decideLrMismatchOps = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: order });
 });
 
+// PATCH /api/operations/orders/:id/dispatch-approval-decision — Operations side of the
+// "Dispatch Approve" row action on Order Management (single approver, no Sales side).
+// Dispatch's "Send Approval" button (dispatch.controller.js requestDispatchApproval) sets
+// this pending; approving here is what unlocks the Confirm Partial/Full Dispatch button
+// back on the Dispatch page for this round (confirmDispatch re-locks it after the round is
+// confirmed, so a later round needs its own fresh request+approval).
+exports.decideDispatchApproval = asyncHandler(async (req, res, next) => {
+  const { decision } = req.body;
+  if (!['approved', 'rejected'].includes(decision)) {
+    return next(new AppError('decision must be "approved" or "rejected"', 400));
+  }
+  const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
+  if (!order) return next(new AppError('Order not found', 404));
+  if (order.dispatchApprovalStatus !== 'pending') {
+    return next(new AppError('No pending dispatch approval for this order', 400));
+  }
+
+  order.dispatchApprovalStatus = decision;
+  order.dispatchApprovalDecidedBy = req.user._id;
+  order.dispatchApprovalDecidedByName = req.user.fullName || req.user.name || '';
+  order.dispatchApprovalDecidedAt = Date.now();
+  await order.save({ validateBeforeSave: false });
+
+  await notifyRoles({
+    modules: ['Dispatch Team'],
+    userIds: [order.dispatchApprovalRequestedBy].filter(Boolean),
+    type: 'dispatch',
+    title: decision === 'approved' ? 'Dispatch Approved' : 'Dispatch Approval Rejected',
+    message: decision === 'approved'
+      ? `Order ${order.orderCode}: Operations approved dispatch — you can now confirm dispatch.`
+      : `Order ${order.orderCode}: Operations rejected the dispatch approval request.`,
+  });
+
+  res.status(200).json({ success: true, data: order });
+});
+
 // Partial-delivery split: record a partial qty now; the balance becomes a follow-on entry (same order ID).
 exports.splitPartialDelivery = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null });
@@ -561,6 +753,16 @@ exports.createStickerRequest = asyncHandler(async (req, res) => {
     const asTeamMember = await User.findOne({ _id: vendorId, department: 'Vendors' }).select('_id').lean();
     if (!asTeamMember) vendorId = null;
   }
+  // "Use Existing Design" — the artwork is copied from an already-approved HotelDesign, so the
+  // request is AUTO-APPROVED (Sales + Ops Head) and goes straight to printing. It never enters
+  // the approval queues, so the design is reviewed instead in Sales > Parties > eye-view
+  // "Packaging Designs on File". Route the print job to whoever made the original design;
+  // fall back to Auto below.
+  const isReusedDesign = !!req.body.reusedFromDesignId;
+  if (isReusedDesign && !vendorId && req.body.reuseVendorId) {
+    const asTeamMember = await User.findOne({ _id: req.body.reuseVendorId, department: 'Vendors' }).select('_id').lean();
+    if (asTeamMember) vendorId = req.body.reuseVendorId;
+  }
   if (!vendorId) {
     // No team member picked explicitly — route to whichever teammate is currently
     // marked "Auto" for this stickerType (Vendors & Suppliers > Vendor Team Members).
@@ -570,13 +772,28 @@ exports.createStickerRequest = asyncHandler(async (req, res) => {
       vendorId = settings?.automationVendors?.[vendorRole] || null;
     }
   }
-  const sticker = await StickerRequest.create({ ...req.body, vendorId, createdBy: req.user._id });
+  const payload = { ...req.body, vendorId, createdBy: req.user._id };
+  if (isReusedDesign) {
+    // Auto-approve, whatever the client sent — a reused design is already approved artwork.
+    const now = new Date();
+    payload.status = 'Approved';
+    payload.salesApproved = true;
+    payload.salesApprovedAt = now;
+    payload.salesApprovedBy = req.user._id;
+    payload.opsHeadApproved = true;
+    payload.opsHeadApprovedAt = now;
+    payload.opsHeadApprovedBy = req.user._id;
+  }
+  delete payload.reuseVendorId;
+  const sticker = await StickerRequest.create(payload);
   notifyRoles({
     modules: ['Operations', 'Sales Team'],
     userIds: vendorId ? [vendorId] : [],
     type: 'task',
-    title: 'Sticker/Design Request Created',
-    message: `${sticker.stickerType || 'Sticker'} request for "${sticker.product || 'product'}" pending approval`,
+    title: isReusedDesign ? 'Existing Design Reused — Auto-Approved' : 'Sticker/Design Request Created',
+    message: isReusedDesign
+      ? `Existing ${sticker.stickerType || 'Sticker'} design applied to "${sticker.product || 'product'}" — auto-approved, ready to print`
+      : `${sticker.stickerType || 'Sticker'} request for "${sticker.product || 'product'}" pending approval`,
     link: '/operations',
   }).catch(() => {});
 
@@ -796,20 +1013,12 @@ exports.approveStickerRequest = asyncHandler(async (req, res, next) => {
   }
   if (sticker.salesApproved && sticker.opsHeadApproved) {
     sticker.status = 'Approved';
-    // Auto-save approved design to HotelDesign for reuse in future orders
+    // Auto-save approved design to HotelDesign for reuse in future orders (captures size +
+    // design vendor + approval date so Parties > eye-view can list it). Reused-design
+    // requests land here too after their vendor preview + dual approval, refreshing the
+    // same row in place. Awaited but self-contained — never breaks approval.
     if ((sticker.hotelLogo || sticker.hotelName) && sticker.designFileUrl) {
-      const HotelDesign = require('../../models/HotelDesign');
-      const designType = sticker.stickerType === 'Box' ? 'Box'
-        : sticker.stickerType === 'Frosted Ziplock' ? 'Frosted Ziplock'
-        : sticker.stickerType === 'Butter Paper' ? 'Butter Paper'
-        : sticker.stickerType === 'Wooden Brush' ? 'Wooden Brush'
-        : sticker.stickerType === 'Other' ? 'Other'
-        : 'Sticker';
-      HotelDesign.findOneAndUpdate(
-        { hotelName: sticker.hotelLogo || sticker.hotelName, product: sticker.product, type: designType },
-        { designFileUrl: sticker.designFileUrl, approved: true, createdBy: userId },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      ).catch(() => {});
+      await upsertHotelDesignFromSticker(sticker, userId);
     }
     notifyRoles({ modules: ['Operations', 'Sales Team'], type: 'task', title: 'Sticker/Design Approved', message: `${sticker.stickerType || 'Sticker'} for "${sticker.product || 'product'}" fully approved — ready to print`, link: '/operations' }).catch(() => {});
   } else {
@@ -898,3 +1107,127 @@ exports.hideQueueRow = asyncHandler(async (req, res, next) => {
   );
   res.status(200).json({ success: true, data: doc });
 });
+
+// ─── USE EXISTING (hotel reserved) MATERIAL STOCK ────────────────────────────────────
+// Operations > Order Management > "Use Existing": source this order's packing material from
+// the hotel's OWN reserved MaterialStock rows (hotelName-tagged, across every design vendor)
+// instead of a fresh print run / the generic pool. For each matching packing-material+size
+// group it draws the still-outstanding required qty oldest-purchaseDate-first across the
+// hotel's reserved rows, marks the covered order lines packingFromExistingStock (so the
+// checklist packing/fill gate treats them as ready and deductMaterialStockQty skips them),
+// and credits back to its exact source any generic-pool amount the line already consumed.
+// In-process guard against a double-click / retry landing two concurrent draws on one order
+// before the first has persisted its packingExistingStockQty (there is no DB transaction here).
+const useExistingInFlight = new Set();
+exports.useExistingMaterialStock = asyncHandler(async (req, res, next) => {
+  const orderId = String(req.params.id);
+  if (useExistingInFlight.has(orderId)) {
+    return next(new AppError('A "Use Existing" draw is already being processed for this order — try again in a moment', 409));
+  }
+  useExistingInFlight.add(orderId);
+  try {
+    await runUseExistingMaterialStock(req, res, next);
+  } finally {
+    useExistingInFlight.delete(orderId);
+  }
+});
+
+async function runUseExistingMaterialStock(req, res, next) {
+  const order = await Order.findOne({ _id: req.params.id, deletedAt: null })
+    .populate('leadId', 'kitOrders kitOverallQty kitDisplayUnit displayUnit kitSize');
+  if (!order) return next(new AppError('Order not found', 404));
+
+  const items = Array.isArray(order.items) ? order.items : [];
+  const stocks = await MaterialStock.find({ hotelName: { $nin: [null, ''] } });
+  // Same order+lead merge getOrders uses, so the qty drawn here matches the "needs N" the
+  // Hotel Stock column showed (kit packing/size lives on the kit config, not the raw item).
+  const eff = effOrderForHotelStock(order);
+  const consumedQty = (it) => resolveItemConsumedQty(it, eff);
+  const groups = buildHotelStockGroups(eff, items, stocks, consumedQty);
+  if (!groups.length) return next(new AppError('No matching hotel reserved stock for this order', 400));
+
+  const wanted = Array.isArray(req.body && req.body.groups) && req.body.groups.length
+    ? new Set(req.body.groups.map(String))
+    : null;
+  const stockById = new Map(stocks.map((s) => [String(s._id), s]));
+
+  const drawn = [];
+  const shortfalls = [];
+  let anyChange = false;
+
+  for (const g of groups) {
+    if (wanted && !wanted.has(g.key)) continue;
+    if (g.outstandingQty <= 0) continue;
+
+    let need = g.outstandingQty;
+    const rowDocs = g.rowIds
+      .map((id) => stockById.get(String(id)))
+      .filter(Boolean)
+      .sort((a, b) => new Date(a.purchaseDate || 0) - new Date(b.purchaseDate || 0));
+    for (const doc of rowDocs) {
+      if (need <= 0) break;
+      const avail = Number(doc.stockCount || 0);
+      if (avail <= 0) continue;
+      const take = Math.min(need, avail);
+      doc.stockCount = avail - take;
+      await doc.save();
+      need -= take;
+      anyChange = true;
+    }
+    const took = g.outstandingQty - need;
+    if (took <= 0) { shortfalls.push({ material: g.label, size: g.size, short: need }); continue; }
+
+    // Spread what we drew across the group's lines, each capped at its own remaining need —
+    // buildHotelStockGroups already computed the per-line packing need (g.lineNeeds), which
+    // for a kit is the kit count charged once, NOT per component. Σ line needs === group
+    // required, so a `took` ≤ outstanding never leaves a leftover. A line is only flagged
+    // fully "from existing stock" once reserved covers ALL of it; a partial line keeps
+    // needing the generic pool / a print run. Credit back only the generic-pool amount now
+    // displaced by reserved stock, to its exact source row.
+    let remaining = took;
+    for (const { idx, need: required } of g.lineNeeds) {
+      if (remaining <= 0) break;
+      const it = items[idx];
+      const already = Number(it.packingExistingStockQty) || 0;
+      const lineNeed = Math.max(0, required - already);
+      if (lineNeed <= 0) continue;
+      const give = Math.min(lineNeed, remaining);
+      remaining -= give;
+      it.packingExistingStockQty = already + give;
+      it.packingFromExistingStock = it.packingExistingStockQty >= required;
+      it.packingExistingStockAt = new Date();
+      it.packingExistingStockBy = req.user._id;
+      const back = Math.min(Number(it.materialDeductedQty) || 0, give);
+      if (back > 0 && it.materialDeductedFrom) {
+        const src = await MaterialStock.findById(it.materialDeductedFrom).catch(() => null);
+        if (src) { src.stockCount = Number(src.stockCount || 0) + back; await src.save().catch(() => {}); }
+        it.materialDeductedQty = (Number(it.materialDeductedQty) || 0) - back;
+        if (it.materialDeductedQty <= 0) { it.materialDeductedQty = 0; it.materialDeductedFrom = ''; }
+      }
+      anyChange = true;
+    }
+
+    drawn.push({
+      material: g.label, size: g.size, qty: took,
+      vendors: [...new Set(g.rows.map((r) => r.vendor).filter(Boolean))],
+    });
+    if (need > 0) shortfalls.push({ material: g.label, size: g.size, short: need });
+  }
+
+  if (anyChange) {
+    order.markModified('items');
+    await order.save({ validateBeforeSave: false });
+  }
+  if (!drawn.length) return next(new AppError('Nothing to draw — reserved stock already used or exhausted', 400));
+
+  const summary = drawn.map((d) => `${d.qty}× ${d.material}${d.size ? ` (${d.size})` : ''}`).join(', ');
+  notifyRoles({
+    modules: ['Operations', 'Inventory', 'Purchase'],
+    type: 'material_stock',
+    title: 'Reserved Stock Used',
+    message: `Order ${order.orderCode} drew ${summary} from ${order.hotelName || order.clientName}'s reserved packing stock${shortfalls.length ? ` — still short on ${shortfalls.map((s) => s.material).join(', ')}` : ''}`,
+    link: '/operations',
+  }).catch(() => {});
+
+  res.status(200).json({ success: true, data: { drawn, shortfalls } });
+}

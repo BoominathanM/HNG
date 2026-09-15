@@ -3178,6 +3178,7 @@ export default function Reports() {
                 transport_mismatch: { label: 'Transport Mismatch', color: '#fa8c16' },
                 lr_mismatch: { label: 'Packages/Destination Mismatch', color: '#1890ff' },
                 invoice_mismatch: { label: 'Dispatch Mismatch', color: '#eb2f96' },
+                dispatch_approval: { label: 'Dispatch Approval (Confirm Dispatch)', color: '#13c2c2' },
               };
               const eaStatusColor = { Pending: '#fa8c16', Approved: '#52c41a', Rejected: '#ff4d4f', 'Sent Back for Change': '#7c3aed' };
               const summary = apiEmergencyApprovals.summary || {};

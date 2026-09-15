@@ -99,6 +99,62 @@ export const formatSizeWithUnit = (size, unit, productName) => {
   return unitLabel ? `${raw}${unitLabel}` : raw;
 };
 
+// Mirror of Backend/src/utils/materialStockMatch.js normalizeSize — keep in sync. Used to
+// line up a design-queue row / order-detail line with its backend-computed hotelStockOptions
+// group ("2.3 cm x 2.6cm" / "2.3x2.6" / "2.3*2.6" all -> "2.3x2.6"; "15ml" -> "15").
+export const normSize = (v) => {
+  const compact = String(v ?? '').trim().toLowerCase().replace(/\s+/g, '');
+  if (/^[\d.]/.test(compact) && /[x*×]/.test(compact)) {
+    const nums = compact.match(/[\d.]+/g);
+    if (nums && nums.length >= 2) return nums.join('x');
+  }
+  if (/^[\d.]/.test(compact)) {
+    const m = compact.match(/^[\d.]+/);
+    if (m) return m[0];
+  }
+  return compact.replace(/[^a-z0-9.]/g, '');
+};
+
+// Pick the hotelStockOptions group that backs a given design-queue row / order line, by
+// normalized size (falls back to the sole group when the row carries no size).
+export const hotelStockGroupFor = (opts, size) => {
+  const list = Array.isArray(opts) ? opts : [];
+  if (!list.length) return null;
+  const rn = normSize(size);
+  return list.find((g) => normSize(g.size) === rn) || (list.length === 1 && !rn ? list[0] : null);
+};
+
+// Which reserved-stock keyword category each design-team tab consumes. A tab is only ever
+// gated by reserved stock of its OWN category — Sticker printing is not a packing material,
+// so it is never gated (null).
+export const TAB_TO_STOCK_CATEGORY = {
+  Box: 'box',
+  'Frosted Ziplock': 'ziplock',
+  'Butter Paper': 'butterPaper',
+  'Wooden Brush': 'woodenBrush',
+  Other: '',
+  Sticker: null,
+};
+
+// Same, but for a design-queue row: restrict to the group whose category matches THIS tab
+// (so a reserved White box only affects the Box tab, not the Sticker / Ziplock / Butter
+// Paper rows for the same kit), then match on the backend group's itemIndexes (kit component
+// rows carry no size of their own — the size lives on the kit config), then size, then the
+// sole group. Pass `tab` (the queue label) to enable the per-tab restriction.
+export const hotelStockGroupForRow = (opts, size, itemIndex, tab) => {
+  const list = Array.isArray(opts) ? opts : [];
+  if (!list.length) return null;
+  const wantCat = tab === undefined ? undefined : TAB_TO_STOCK_CATEGORY[tab];
+  if (wantCat === null) return null; // Sticker tab — never gated by reserved packing stock
+  const pool = wantCat === undefined ? list : list.filter((g) => (g.category || '') === wantCat);
+  if (!pool.length) return null;
+  if (Number.isInteger(itemIndex)) {
+    const byIdx = pool.find((g) => Array.isArray(g.itemIndexes) && g.itemIndexes.includes(itemIndex));
+    if (byIdx) return byIdx;
+  }
+  return hotelStockGroupFor(pool, size);
+};
+
 export const PAYMENT_LABELS = {
   BEFORE_100: '100% Payment Before Dispatch',
   ON_DISPATCH: '50% Advance, 50% on Dispatch',
@@ -372,6 +428,21 @@ const EMERGENCY_COMPLETE_STATUSES = new Set(['Done', 'Received', 'Closed']);
 // component happened to be exactly 1-per-kit, wrong the moment any component's ratio differs
 // (e.g. 2 brushes/kit showed as if it needed only 1× the kit count, not 2×).
 const effectiveItemQty = (it, order, kitCfgById) => {
+  // A synthesized "personalized packing" copy (see index.jsx productionQueues) has isKit
+  // FORCED true purely so it routes by the personalized outer unit's display-unit tab.
+  // underlyingIsKit preserves the item's REAL kind. When the underlying item is NOT a kit
+  // (a Separate Product bundled inside the personalized outer), its `qty` is ALREADY the
+  // true standalone order total — running it through the kit-component branch below would
+  // multiply it by the kit count (~kitOverallQty×), e.g. a 1,500-unit Soap bundled into
+  // 1,500 personalized kits rendered as 2,250,000. Use the amount actually packed inside
+  // the personalized outer (packagingIncludesQty, keyed by product name), falling back to
+  // the item's own standalone total.
+  if (it.isPersonalizedPacking && !it.underlyingIsKit) {
+    const piQty = order.packagingIncludesQty || {};
+    const nameKey = String(it.name || it.itemName || it.product || '');
+    const bundled = Number(piQty[nameKey]);
+    return bundled > 0 ? bundled : Number(it.qty) || 0;
+  }
   if (!(it.isKit || it.kitType)) return Number(it.qty) || 0;
   const perUnitQty = Number(it.qty) || 0;
   const kitCfg = kitCfgById[String(it.kitId)] || null;
@@ -607,6 +678,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           const makeRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
             key: `${order.id}-${idx}-sticker${keySuffix}`,
             orderId: order.id,
+            itemIndex: idx,
+
+            packingSize: item.packingSize || '',
             orderCategory: order.orderCategory || 'ORDER',
             category: itemCategoryOf(item),
             hotelLogo: order.hotelLogo || order.clientName,
@@ -705,6 +779,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const makeBoxRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-box${keySuffix}`,
           orderId: order.id,
+          itemIndex: idx,
+
+          packingSize: item.packingSize || '',
           orderCategory: order.orderCategory || 'ORDER',
           category: itemCategoryOf(item),
           hotelLogo: order.hotelLogo || order.clientName,
@@ -822,6 +899,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const makeFrostedRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-frosted${keySuffix}`,
           orderId: order.id,
+          itemIndex: idx,
+
+          packingSize: item.packingSize || '',
           orderCategory: order.orderCategory || 'ORDER',
           category: itemCategoryOf(item),
           hotelLogo: order.hotelLogo || order.clientName,
@@ -926,6 +1006,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const makeButterRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-butter${keySuffix}`,
           orderId: order.id,
+          itemIndex: idx,
+
+          packingSize: item.packingSize || '',
           orderCategory: order.orderCategory || 'ORDER',
           category: itemCategoryOf(item),
           hotelLogo: order.hotelLogo || order.clientName,
@@ -1030,6 +1113,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const makeWoodenBrushRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-wooden_brush${keySuffix}`,
           orderId: order.id,
+          itemIndex: idx,
+
+          packingSize: item.packingSize || '',
           orderCategory: order.orderCategory || 'ORDER',
           category: itemCategoryOf(item),
           hotelLogo: order.hotelLogo || order.clientName,
@@ -1112,6 +1198,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         const makeOtherRow = (qty, keySuffix, isEmergencyProduct, isEmergencyGated) => ({
           key: `${order.id}-${idx}-other${keySuffix}`,
           orderId: order.id,
+          itemIndex: idx,
+
+          packingSize: item.packingSize || '',
           orderCategory: order.orderCategory || 'ORDER',
           category: itemCategoryOf(item),
           hotelLogo: order.hotelLogo || order.clientName,

@@ -42,6 +42,13 @@ const orderItemSchema = new mongoose.Schema({
   stickerSize: String,
   packaging: String,
   packingMaterial: String,
+  // Chosen sub-type of the packing material (from Inventory > Packing Config > Packing
+  // Materials subtypes, e.g. "Small Box") and its physical dimensions. packingSize — NOT
+  // the product's fill size (`size` above) — is what Material Stock deduction matches on
+  // (falling back to stickerSize when Sticker = YES). Mirrors kitOrders[].displayUnitType /
+  // .size for standalone products.
+  packingMaterialType: String,
+  packingSize: String,
   material: String,
   rate: Number,
   gst: Number,
@@ -53,6 +60,22 @@ const orderItemSchema = new mongoose.Schema({
   // LESS than the required qty (isKit ? qty × kit count : qty) when stock was insufficient
   // at deduction time — the gap is the order's outstanding "owed" inventory.
   deductedQty: { type: Number, default: 0 },
+  // ─── Packing-material (Inventory > Material Stocks) tracking for THIS line ───
+  // Units actually decremented from a generic (non-hotel) MaterialStock row for this line's
+  // packing material at order creation / qty-raise, plus the row it came from — recorded so
+  // Operations' "Use Existing" action (draw from the hotel's own reserved stock instead) can
+  // credit that exact amount back to that exact row rather than guessing. 0 in the common
+  // case where the hotel keeps its own pre-printed packaging and no generic row matched.
+  materialDeductedQty: { type: Number, default: 0 },
+  materialDeductedFrom: String,
+  // Set by Operations > Order Management > "Use Existing" — this line's packing material is
+  // sourced from the hotel's own reserved MaterialStock (hotelName-tagged) rows, so the
+  // generic-pool deduction is skipped for it and the checklist packing/fill gate treats it
+  // as ready. packingExistingStockQty = how much has already been drawn from reserved stock.
+  packingFromExistingStock: { type: Boolean, default: false },
+  packingExistingStockQty: { type: Number, default: 0 },
+  packingExistingStockAt: Date,
+  packingExistingStockBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   verified: { type: Boolean, default: false },
   // ─── Order-composition category (drives 3-bucket totals + Operations grouping) ───
   // 'personalized'  = kit + extra products customized together as one unit
@@ -177,6 +200,38 @@ const orderSchema = new mongoose.Schema({
   dispatchInvoiceMismatchDecidedAt: Date,
   dispatchInvoiceMismatchDecisionNote: String,
   dispatchInvoiceMismatchAwaitingReupload: { type: Boolean, default: false },
+  // Dispatch Confirmation Approval — before EITHER "Confirm Partial Dispatch" or "Confirm
+  // Full Dispatch" (Dispatch module) can be used, the dispatcher must send an approval
+  // request and get sign-off from Operations (single approver, no Sales side — see
+  // requestDispatchApproval in dispatch.controller.js / decideDispatchApproval in
+  // operations.controller.js, surfaced as the "Dispatch Approve" row action on
+  // Operations > Order Management). This can recur more than once per order — a fresh
+  // approval is required before EVERY confirm round (a Partial round, a later Partial
+  // round, the final Full round) — so confirmDispatch resets these live fields back to
+  // 'none' once a round is actually confirmed. Past decisions are preserved in
+  // dispatchApprovalHistory (one entry per round) so a multi-round dispatch still shows
+  // every approval on Reports > Approval Report — same history-flattening approach used
+  // for Task/StickerRequest switchHistory on the Switch Report.
+  dispatchApprovalStatus: { type: String, enum: ['none', 'pending', 'approved', 'rejected'], default: 'none' },
+  dispatchApprovalRequestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  dispatchApprovalRequestedByName: String,
+  dispatchApprovalRequestedByRole: String,
+  dispatchApprovalRequestedAt: Date,
+  dispatchApprovalDecidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  dispatchApprovalDecidedByName: String,
+  dispatchApprovalDecidedAt: Date,
+  // Denormalized name/role snapshots (rather than relying on populate) mirror the
+  // Task/StickerRequest switchHistory convention — one entry per confirmed round.
+  dispatchApprovalHistory: [{
+    status: { type: String, enum: ['approved', 'rejected'] },
+    requestedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    requestedByName: String,
+    requestedByRole: String,
+    requestedAt: Date,
+    decidedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    decidedByName: String,
+    decidedAt: Date,
+  }],
   // Delivery routing (copied from the originating lead/negotiation at conversion).
   deliveryBy: String,
   transportationBy: String,
@@ -240,10 +295,12 @@ const orderSchema = new mongoose.Schema({
   deletedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   // True when at least one item's deductedQty is still short of what the order actually
-  // needs (isKit ? qty × kit count : qty) — set/cleared by deductInventoryQty and
-  // backfillPendingDeductionsForItem in sales.controller.js. Drives the Task Management
-  // assignment gate (checkStockDeductionGate, utils/taskQuantity.js) and the "Stock
-  // Pending" badge on Orders.
+  // needs (isKit ? qty × kit count : qty) — set/cleared by deductInventoryQty in
+  // sales.controller.js. Since stock is now deducted per task at assignment time (see
+  // utils/taskQuantity.js's deductStockForTask) rather than in bulk at order creation, this
+  // only ever gets set by a legacy pre-migration order's backfillPendingDeductionsForItem
+  // payoff; it no longer drives the Task Management assignment gate (that's
+  // checkLiveStockAvailability now), just the "Stock Pending" badge on Orders.
   hasPendingStockDeduction: { type: Boolean, default: false },
 }, { timestamps: true, strict: false });
 

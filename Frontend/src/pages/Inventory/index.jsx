@@ -56,6 +56,8 @@ import {
   useDeleteMaterialStockMutation,
   useUploadMaterialStockInvoiceMutation,
   useGetUsersQuery,
+  useGetHotelNamesQuery,
+  useGetOptionsQuery,
 } from '../../store/api/apiSlice';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
 import PhoneInput from '../../components/common/PhoneInput';
@@ -760,23 +762,41 @@ export default function Inventory() {
     return opts;
   }, [printingSuppliers, editingMaterialStock]);
 
+  // Category → hotel/hospital name picker for the Material Stock modal. Same source the Sales
+  // Lead form uses: category options from the shared DropdownOption store (+ Hotel/Hospital
+  // defaults), names from Lead.distinct('hotelName') scoped to the chosen category. Leaving
+  // the name blank = general (non-reserved) stock.
+  const watchedMsCategory = Form.useWatch('category', materialStockForm) || 'Hotel';
+  const { data: msCategoryOptionsRaw } = useGetOptionsQuery({ field: 'category' });
+  const { data: msHotelNamesRaw } = useGetHotelNamesQuery({ category: watchedMsCategory });
+  const materialStockCategoryOptions = useMemo(() => {
+    const map = new Map([['Hotel', 'Hotel'], ['Hospital', 'Hospital']]);
+    (msCategoryOptionsRaw?.data || []).forEach((o) => { if (o?.value) map.set(o.value, o.label || o.value); });
+    return Array.from(map, ([value, label]) => ({ value, label }));
+  }, [msCategoryOptionsRaw]);
+  const materialStockHotelOptions = useMemo(() => {
+    const opts = (msHotelNamesRaw?.data || []).map((n) => ({ value: n, label: n }));
+    const cur = editingMaterialStock?.hotelName;
+    if (cur && !opts.some((o) => o.value === cur)) opts.unshift({ value: cur, label: `${cur} (existing)` });
+    return opts;
+  }, [msHotelNamesRaw, editingMaterialStock]);
+
   const openMaterialStockModal = (item = null) => {
     if (!requireAccess(item ? 'edit' : 'add')) return;
     setEditingMaterialStock(item);
     setMaterialStockInvoiceFile(null);
     materialStockForm.resetFields();
-    if (item) {
-      materialStockForm.setFieldsValue({
-        packingMaterial: item.packingMaterial,
-        size: item.size,
-        stockCount: item.stockCount,
-        minStock: item.minStock,
-        purchaseDate: item.purchaseDate ? dayjs(item.purchaseDate) : null,
-        vendor: item.vendor,
-        hotelName: item.hotelName,
-        notes: item.notes,
-      });
-    }
+    materialStockForm.setFieldsValue(item ? {
+      category: item.category || 'Hotel',
+      packingMaterial: item.packingMaterial,
+      size: item.size,
+      stockCount: item.stockCount,
+      minStock: item.minStock,
+      purchaseDate: item.purchaseDate ? dayjs(item.purchaseDate) : null,
+      vendor: item.vendor,
+      hotelName: item.hotelName,
+      notes: item.notes,
+    } : { category: 'Hotel' });
     setMaterialStockModal(true);
   };
 
@@ -2174,7 +2194,7 @@ export default function Inventory() {
                         render: v => <Text strong style={{ color: textColor }}>{v}</Text>,
                       },
                       {
-                        title: 'Size',
+                        title: 'Packing Size',
                         dataIndex: 'size',
                         render: v => v ? <Tag color="geekblue" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text>,
                       },
@@ -2195,9 +2215,11 @@ export default function Inventory() {
                         render: v => v || <Text type="secondary">—</Text>,
                       },
                       {
-                        title: 'Hotel Name',
+                        title: 'Hotel / Hospital',
                         dataIndex: 'hotelName',
-                        render: v => v || <Text type="secondary">—</Text>,
+                        render: (v, row) => v
+                          ? <Space size={4}><Tag color={row.category === 'Hospital' ? 'purple' : 'blue'} style={{ margin: 0 }}>{row.category || 'Hotel'}</Tag><Text>{v}</Text></Space>
+                          : <Text type="secondary">— general —</Text>,
                       },
                       {
                         title: 'Invoice',
@@ -2334,7 +2356,6 @@ export default function Inventory() {
                   )}
                 </Card>
 
-
               </div>
             ),
           },
@@ -2374,8 +2395,8 @@ export default function Inventory() {
               </Form.Item>
             </Col>
             <Col span={10}>
-              <Form.Item label="Size" name="size">
-                <Input placeholder="e.g. 100ml, 30×20cm" style={{ borderRadius: 8 }} />
+              <Form.Item label="Packing Size" name="size" tooltip="The packing material's physical dimensions — matched against the order line's Packing Size (or Sticker Size when Sticker = Yes).">
+                <Input placeholder="e.g. 2.3 cm x 2.6 cm" style={{ borderRadius: 8 }} />
               </Form.Item>
             </Col>
           </Row>
@@ -2405,9 +2426,35 @@ export default function Inventory() {
               notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No printing suppliers yet — add one in Vendors & Suppliers</span>}
             />
           </Form.Item>
-          <Form.Item label="Hotel Name" name="hotelName">
-            <Input placeholder="e.g. Taj, Marriott…" style={{ borderRadius: 8 }} />
-          </Form.Item>
+          <Row gutter={12}>
+            <Col span={9}>
+              <Form.Item label="Category" name="category" tooltip="Filters the name list below. Pick the category first.">
+                <Select
+                  placeholder="Category"
+                  style={{ borderRadius: 8 }}
+                  options={materialStockCategoryOptions}
+                  onChange={() => materialStockForm.setFieldsValue({ hotelName: undefined })}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={15}>
+              <Form.Item
+                label={`${watchedMsCategory === 'Hotel' ? 'Hotel' : watchedMsCategory} Name`}
+                name="hotelName"
+                tooltip="Leave blank for general stock. Choosing a name RESERVES this stock for that hotel/hospital — it is never auto-deducted, only drawn via Operations > “Use Existing”."
+              >
+                <Select
+                  showSearch
+                  allowClear
+                  optionFilterProp="label"
+                  placeholder={`Select a ${(watchedMsCategory || 'hotel').toLowerCase()} (or leave blank)`}
+                  style={{ borderRadius: 8 }}
+                  options={materialStockHotelOptions}
+                  notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No {String(watchedMsCategory || 'hotel').toLowerCase()} names found for this category yet</span>}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
           <Form.Item label="Notes" name="notes">
             <Input.TextArea rows={2} placeholder="Optional notes…" style={{ borderRadius: 8 }} />
           </Form.Item>
@@ -2468,23 +2515,25 @@ export default function Inventory() {
               </Form.Item>
             </Col>
           </Row>
-          <Form.Item
-            label="Operations Tab Mapping"
-            name="tabMapping"
-            tooltip="Which Operations tab orders using this display unit appear in"
-          >
-            <Select allowClear placeholder="Select tab (optional)">
-              <Option value="Sticker">Sticker</Option>
-              <Option value="Box">Box</Option>
-              <Option value="Ziplock">Ziplock (Frosted)</Option>
-              <Option value="Butter Paper">Butter Paper</Option>
-              <Option value="Wooden Brush">Wooden Brush</Option>
-              <Option value="Other">Other</Option>
-            </Select>
-          </Form.Item>
+          {packingConfigType === 'displayUnit' && (
+            <Form.Item
+              label="Operations Tab Mapping"
+              name="tabMapping"
+              tooltip="Which Operations tab orders using this display unit appear in"
+            >
+              <Select allowClear placeholder="Select tab (optional)">
+                <Option value="Sticker">Sticker</Option>
+                <Option value="Box">Box</Option>
+                <Option value="Ziplock">Ziplock (Frosted)</Option>
+                <Option value="Butter Paper">Butter Paper</Option>
+                <Option value="Wooden Brush">Wooden Brush</Option>
+                <Option value="Other">Other</Option>
+              </Select>
+            </Form.Item>
+          )}
 
           <Divider style={{ margin: '8px 0 12px' }}>
-            <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>Types & Pricing</Text>
+            <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 600 }}>Types &amp; Pricing</Text>
           </Divider>
           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 10 }}>
             Add sub-types for this display unit (e.g. "Small Box", "Large Box") with their sticker/logo/printing options and pricing.
@@ -3176,10 +3225,9 @@ export default function Inventory() {
           {watchedItemType !== 'bulk' && (() => {
             const activeDefs = productFieldDefs.length > 0 ? productFieldDefs : GENERIC_PRODUCT_FIELD_DEFS;
             const hasPackingMaterial = activeDefs.some((fd) => fd.key === 'packingMaterial');
-            const selectedPackingMaterials = (Array.isArray(watchedPackingMaterial) ? watchedPackingMaterial : [watchedPackingMaterial])
+            const selectedPackingMaterialValues = (Array.isArray(watchedPackingMaterial) ? watchedPackingMaterial : [watchedPackingMaterial])
               .filter(Boolean)
-              .map((v) => String(v).toLowerCase());
-            const showStickerSizeFor = (needle) => selectedPackingMaterials.some((v) => v.includes(needle));
+              .map((v) => String(v));
             // Bottle types (shampoo/moisturizer/shower gel) — Sticker Printing = Yes shows
             // Bottle Sticker Size, same pattern as Box/Ziplock/Butter Paper above.
             // Gated on 'bottleType' (not just 'stickerPrinting') so soap — which also has a
@@ -3212,36 +3260,33 @@ export default function Inventory() {
                     </Col>
                     );
                   })}
-                  {/* Per-packing-material sticker size — one field per selected material, so the
-                      Lead form can later auto-fetch the right size once Sticker = Yes. */}
-                  {hasPackingMaterial && showStickerSizeFor('box') && (
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Box Sticker Size" name={['productAttrs', 'boxStickerSize']}>
-                        <Input placeholder="e.g. 3in x 2in" allowClear />
-                      </Form.Item>
-                    </Col>
-                  )}
-                  {hasPackingMaterial && showStickerSizeFor('ziplock') && (
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Ziplock Sticker Size" name={['productAttrs', 'ziplockStickerSize']}>
-                        <Input placeholder="e.g. 3in x 2in" allowClear />
-                      </Form.Item>
-                    </Col>
-                  )}
-                  {hasPackingMaterial && showStickerSizeFor('butter') && (
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Butter Paper Sticker Size" name={['productAttrs', 'butterPaperStickerSize']}>
-                        <Input placeholder="e.g. 3in x 2in" allowClear />
-                      </Form.Item>
-                    </Col>
-                  )}
+                  {/* Bottle-type products have no packing material — their label size is a
+                      standalone field. (Box/Ziplock/Butter Paper "Sticker Size" fields were
+                      removed: the single per-packing-material size below now drives both the
+                      Sales Sticker Size and Material Stock deduction.) */}
                   {showBottleStickerSize && (
                     <Col xs={24} sm={12}>
-                      <Form.Item label="Bottle Sticker Size" name={['productAttrs', 'bottleStickerSize']}>
+                      <Form.Item label="Bottle Label Size" name={['productAttrs', 'bottleStickerSize']}>
                         <Input placeholder="e.g. 3in x 2in" allowClear />
                       </Form.Item>
                     </Col>
                   )}
+                  {/* Per-packing-material size — one field per selected packing material value
+                      (e.g. "White box Size", "Butter paper Size"). Stored under
+                      productAttributes.packingSizes[<value>]; the Sales product line auto-fills
+                      its Packing Size from here based on the material chosen, and Material Stock
+                      deduction matches on that size. */}
+                  {hasPackingMaterial && selectedPackingMaterialValues.map((pmv) => (
+                    <Col xs={24} sm={12} key={`packsize-${pmv}`}>
+                      <Form.Item
+                        label={`${pmv} Size`}
+                        name={['productAttrs', 'packingSizes', pmv]}
+                        tooltip={`Physical dimensions of "${pmv}" — pre-fills the Sales product line and is what Material Stock deduction matches on.`}
+                      >
+                        <Input placeholder="e.g. 2.3 cm x 2.6 cm" allowClear />
+                      </Form.Item>
+                    </Col>
+                  ))}
                 </Row>
               </>
             );

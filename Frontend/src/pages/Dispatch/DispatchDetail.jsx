@@ -35,6 +35,7 @@ import {
   useReportTransportMismatchMutation,
   useRequestLrMismatchApprovalMutation,
   useRequestInvoiceMismatchApprovalMutation,
+  useRequestDispatchApprovalMutation,
 } from '../../store/api/apiSlice';
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
@@ -48,8 +49,10 @@ const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
 // Per-row cap on Open/Closed box photos in the Product Details table (Kit/Product rows) —
 // dispatchers select several images at once (Upload's `multiple`), so this also bounds how
-// many of a batch selection get accepted once the row is already near the limit.
-const MAX_ROW_BOX_PHOTOS = 5;
+// many of a batch selection get accepted once the row is already near the limit. Matches the
+// backend cap enforced in uploadItemBoxPhotos/uploadKitBoxPhotos and the order-level
+// "All Closed Box Photos" limit below.
+const MAX_ROW_BOX_PHOTOS = 20;
 
 // Case/whitespace/punctuation-insensitive compare used for the transport-name mismatch
 // check — AI-scanned and manually-entered names rarely match byte-for-byte (e.g. "VRL
@@ -112,6 +115,7 @@ export default function DispatchDetail() {
   const [reportTransportMismatch] = useReportTransportMismatchMutation();
   const [requestLrMismatchApproval] = useRequestLrMismatchApprovalMutation();
   const [requestInvoiceMismatchApproval] = useRequestInvoiceMismatchApprovalMutation();
+  const [requestDispatchApproval, { isLoading: sendingDispatchApproval }] = useRequestDispatchApprovalMutation();
 
   // Derive orderId from raw dispatch data (before `order` useMemo is computed)
   const dispatchRaw = dispatchData?.data;
@@ -578,6 +582,15 @@ export default function DispatchDetail() {
       invoiceMismatchReason: o.dispatchInvoiceMismatchReason || '',
       invoiceMismatchDecisionNote: o.dispatchInvoiceMismatchDecisionNote || '',
       invoiceMismatchAwaitingReupload: !!o.dispatchInvoiceMismatchAwaitingReupload,
+      // Dispatch Confirmation Approval — single Operations sign-off required before either
+      // Confirm Partial/Full Dispatch button unlocks for THIS round (see requestDispatchApproval
+      // below / decideDispatchApproval in Operations > Order Management). Resets to 'none'
+      // server-side once a round is confirmed, so a later round needs its own fresh approval.
+      dispatchApprovalStatus: o.dispatchApprovalStatus || 'none',
+      dispatchApprovalRequestedByName: o.dispatchApprovalRequestedByName || '',
+      dispatchApprovalRequestedAt: o.dispatchApprovalRequestedAt || null,
+      dispatchApprovalDecidedByName: o.dispatchApprovalDecidedByName || '',
+      dispatchApprovalDecidedAt: o.dispatchApprovalDecidedAt || null,
       isCredit,
       creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
       payment: isCredit ? 'Credit' : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (emergencyApproved ? 'Emergency Approved' : (basePaymentConfirmed ? 'Confirmed' : 'Pending')))),
@@ -1156,6 +1169,19 @@ export default function DispatchDetail() {
     });
   };
 
+  // "Send Approval" — required once per round before Confirm Partial/Full Dispatch
+  // unlocks (see the disabled gate on that button below). Notifies Operations, who
+  // approve/reject from the "Dispatch Approve" action on Order Management; confirming a
+  // round resets this back to 'none' server-side so the next round needs its own request.
+  const handleSendDispatchApproval = async () => {
+    try {
+      await requestDispatchApproval({ id }).unwrap();
+      enqueueSnackbar('Approval request sent to Operations.', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Failed to send approval request.', { variant: 'error' });
+    }
+  };
+
   const handleSaveDraft = async () => {
     try {
       const vals = form.getFieldsValue();
@@ -1590,6 +1616,14 @@ export default function DispatchDetail() {
   const transportFilled = !!String(liveTransport ?? order.storedTransportName ?? '').trim();
   const weightFilled = !!String(liveWeight ?? order.storedWeight ?? '').trim();
   const boxesFilled = Number(liveBoxes ?? order.storedBoxes ?? order.boxes ?? 0) > 0;
+
+  // Dispatch Confirmation Approval — every other pre-condition below (payment, verified
+  // photos, transport/weight/boxes) must already be satisfied before it's worth sending;
+  // once sent, Confirm stays locked until Operations approves it from Order Management.
+  const dispatchApprovalStatus = order?.dispatchApprovalStatus || 'none';
+  const dispatchApprovalOk = dispatchApprovalStatus === 'approved';
+  const readyToSendDispatchApproval = !dispatched && paymentConfirmed && verificationGateSatisfied
+    && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled;
 
   return (
     <div className="page-container fade-in">
@@ -2359,6 +2393,16 @@ export default function DispatchDetail() {
                     Enter Transport Name, Weight and Boxes above to enable dispatch confirmation.
                   </Text>
                 )}
+                {!dispatched && readyToSendDispatchApproval && dispatchApprovalStatus === 'none' && (
+                  <Text style={{ fontSize: 12, color: '#fa8c16', marginRight: 'auto' }}>
+                    Send Approval and wait for Operations to approve before confirming dispatch.
+                  </Text>
+                )}
+                {!dispatched && dispatchApprovalStatus === 'rejected' && (
+                  <Text style={{ fontSize: 12, color: '#ff4d4f', marginRight: 'auto' }}>
+                    Operations rejected the last approval request{order.dispatchApprovalDecidedByName ? ` (${order.dispatchApprovalDecidedByName})` : ''} — send it again once ready.
+                  </Text>
+                )}
                 <Select
                   mode="multiple"
                   value={printContactTypes}
@@ -2377,11 +2421,29 @@ export default function DispatchDetail() {
                 <Button icon={<SaveOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }} onClick={handleSaveDraft}>
                   Save as Draft
                 </Button>
+                {!dispatched && !dispatchApprovalOk && (
+                  <Button
+                    icon={<FileDoneOutlined />}
+                    loading={sendingDispatchApproval}
+                    disabled={!readyToSendDispatchApproval || dispatchApprovalStatus === 'pending'}
+                    style={dispatchApprovalStatus === 'pending'
+                      ? { borderColor: '#fa8c16', color: '#fa8c16' }
+                      : { borderColor: '#B11E6A', color: '#B11E6A' }}
+                    onClick={handleSendDispatchApproval}
+                  >
+                    {dispatchApprovalStatus === 'pending' ? 'Approval Pending…' : 'Send Approval'}
+                  </Button>
+                )}
+                {dispatchApprovalOk && !dispatched && (
+                  <Tag color="success" style={{ margin: 0, fontSize: 12 }}>
+                    Dispatch Approved{order.dispatchApprovalDecidedByName ? ` by ${order.dispatchApprovalDecidedByName}` : ''}
+                  </Tag>
+                )}
                 <Button
                   type="primary"
                   icon={<CarOutlined />}
-                  disabled={!paymentConfirmed || dispatched || !verificationGateSatisfied || closeBoxCount === 0 || !transportFilled || !weightFilled || !boxesFilled}
-                  style={{ background: (paymentConfirmed && !dispatched && verificationGateSatisfied && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
+                  disabled={!paymentConfirmed || dispatched || !verificationGateSatisfied || closeBoxCount === 0 || !transportFilled || !weightFilled || !boxesFilled || !dispatchApprovalOk}
+                  style={{ background: (paymentConfirmed && !dispatched && verificationGateSatisfied && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled && dispatchApprovalOk) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
                   onClick={handleConfirmDispatch}
                 >
                   {dispatched

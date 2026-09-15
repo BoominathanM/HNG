@@ -9,12 +9,15 @@ const InventoryItem = require('../../models/InventoryItem');
 const StockMovement = require('../../models/StockMovement');
 const MaterialStock = require('../../models/MaterialStock');
 const DispatchRecord = require('../../models/DispatchRecord');
+const Task = require('../../models/Task');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const { cloudinary } = require('../../config/cloudinary');
 const { notifyRoles } = require('../../utils/notify');
-const { resolveMaterialStock } = require('../../utils/materialStockMatch');
+const {
+  resolveGenericStockForView, findReservedRowsForView, buildPackingRows, packagingViewOfItem,
+} = require('../../utils/materialStockMatch');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
 const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
 const { buildLeadEditHistory } = require('../../utils/leadEditHistory');
@@ -649,12 +652,43 @@ async function recomputeOrderStockPendingFlag(order) {
   await order.save({ validateBeforeSave: false });
 }
 
+// Shared InventoryItem lookup for an order line: its own itemId first, falling back to an
+// exact (case-insensitive) itemName match. Factored out of deductInventoryQty so the
+// task-time live-availability check (utils/taskQuantity.js) resolves the exact same row a
+// deduction would hit — "is this in stock" can never disagree with what actually deducts.
+async function findInventoryItemForLine(it) {
+  if (it.itemId) {
+    const item = await InventoryItem.findOne({ _id: it.itemId, deletedAt: null });
+    if (item) return item;
+  }
+  const name = it.itemName || it.name;
+  if (!name) return null;
+  const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null });
+}
+
+// Read-only: how many units of `it`'s InventoryItem are actually on the shelf right now, for
+// the task-time gate in utils/taskQuantity.js (a task can only be created once its stock is
+// actually on hand — no silent shortfall/backfill the way order-creation deduction used to
+// allow). Returns null when the line isn't tracked in Inventory at all (not a shortfall).
+async function resolveInventoryAvailable(it) {
+  const item = await findInventoryItemForLine(it);
+  return item ? (Number(item.currentStock) || 0) : null;
+}
+exports.resolveInventoryAvailable = resolveInventoryAvailable;
+// Exported so utils/taskQuantity.js's line-level reversal can re-resolve the exact same
+// InventoryItem row a deduction drew from, without needing a task to have recorded it.
+exports.findInventoryItemForLine = findInventoryItemForLine;
+
 // Core FIFO deduction + StockMovement + low-stock-notify logic, shared by full order-creation
 // deduction (deductInventoryForOrder) and delta-only re-deduction (deductInventoryDeltaForOrder,
 // for when an already-created order's qty is raised later). `rows` is [{ item: <order item
 // row>, qty: <exact amount to deduct for this row> }] — qty is already resolved by the caller
 // (full consumed qty at creation, or just the increase on a later edit) so this function
-// doesn't need to know which case it's in.
+// doesn't need to know which case it's in. Returns the deductions actually made, as
+// [{ pool: 'inventory', refId, qtyDeducted }] — callers that need an exact reversal record
+// (deductInventoryForTask below) read this; callers that don't (the order-creation/delta
+// paths) simply ignore it.
 //
 // Insufficient-stock orders are still allowed through: only what's actually available is
 // deducted now (deductNow = min(qty, currentStock)); any shortfall is tracked on the order
@@ -663,20 +697,13 @@ async function recomputeOrderStockPendingFlag(order) {
 // the moment this item is restocked from any source.
 async function deductInventoryQty(rows, order, userId) {
   let orderItemsChanged = false;
+  const deductions = [];
   for (const row of rows) {
     const it = row.item;
     const qty = row.qty;
     if (!(qty > 0)) continue;
     try {
-      let item = null;
-      if (it.itemId) item = await InventoryItem.findOne({ _id: it.itemId, deletedAt: null });
-      if (!item) {
-        const name = it.itemName || it.name;
-        if (name) {
-          const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          item = await InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null });
-        }
-      }
+      const item = await findInventoryItemForLine(it);
       if (!item) continue;
       const qtyBefore = item.currentStock;
       const deductNow = Math.min(qty, qtyBefore);
@@ -685,6 +712,7 @@ async function deductInventoryQty(rows, order, userId) {
         const segments = consumeFromBatches(item, deductNow);
         await item.save({ validateBeforeSave: false });
         await writeOutMovements(item, qtyBefore, segments, order, userId);
+        deductions.push({ pool: 'inventory', refId: String(item._id), qtyDeducted: deductNow });
 
         if (item.minStock > 0 && item.currentStock < item.minStock) {
           const isOut = item.currentStock === 0;
@@ -706,7 +734,19 @@ async function deductInventoryQty(rows, order, userId) {
       console.error(`Failed to update hasPendingStockDeduction for order ${order.orderCode}:`, err.message);
     });
   }
+  return deductions;
 }
+
+// Task-time deduction — the only caller is utils/taskQuantity.js's deductStockForTask, itself
+// only called after checkLiveStockAvailability there has already confirmed `qty` is fully
+// covered, so this reuses deductInventoryQty's exact FIFO/StockMovement/low-stock-notify logic
+// rather than duplicating it, just scoped to one row sized to the task's own qty (not the
+// whole order line).
+async function deductInventoryForTask(order, it, qty, userId) {
+  if (!(qty > 0)) return [];
+  return deductInventoryQty([{ item: it, qty }], order, userId);
+}
+exports.deductInventoryForTask = deductInventoryForTask;
 
 // Deduct ordered quantities from Inventory when an Order is created (both lead→order
 // conversion and direct/sample orders), so stock reflects goods committed to the order.
@@ -748,19 +788,50 @@ async function deductInventoryDeltaForOrder(existingOrder, updatedOrder, userId)
 // Name/size resolution lives in utils/materialStockMatch.js, shared with
 // tasks.controller.js's Today's Checklist readiness check, so "is this in stock" can never
 // disagree with what actually gets deducted here. Same full/delta split as inventory above.
+//
+// Only the GENERIC (non-hotelName) MaterialStock pool is touched here — resolveMaterialStock
+// hard-excludes hotelName-tagged rows (a hotel's own reserved / pre-printed stock), which are
+// drawn down only by Operations' explicit "Use Existing" action. A line already sourced from
+// reserved stock (packingFromExistingStock) is skipped entirely, AND a line whose hotel has
+// ANY matching reserved row is skipped up front (that line belongs to "Use Existing", not the
+// generic pool).
+//
+// A line deducts a packing material whenever it has a packing-material NAME + a PACKING SIZE
+// (effectivePackingSize) — the Sticker flag is NOT a factor (it's saved on the line for the
+// design/print flow only). `rows` come from buildPackingRows: one per non-kit line (its own
+// qty) + ONE per kit (qty = kit count — the outer box is one per kit, never per component).
+// Size matched is the packing size, never the product's fill size.
 async function deductMaterialStockQty(rows, order) {
+  let itemsChanged = false;
+  const deductions = [];
   for (const row of rows) {
     const it = row.item;
     const qty = row.qty;
-    if (String(it.sticker || '').trim().toUpperCase() !== 'YES') continue;
+    const view = row.view || packagingViewOfItem(it, order);
+    if (it.packingFromExistingStock) continue; // packing sourced from the hotel's reserved stock
     if (!(qty > 0)) continue;
+    if (!view.names.length || !String(view.size || '').trim()) continue; // no packing name/size -> not tracked
     try {
       const stocks = await MaterialStock.find().sort('purchaseDate');
-      const target = resolveMaterialStock(it, stocks, order.hotelName);
-      if (!target) continue; // no matching stock entry (or Ziplock/no packing attribute) — skip rather than guess
+      // The hotel keeps its own reserved row for this exact packing material + size — leave
+      // the whole line to Operations "Use Existing"; the generic pool is not touched for it.
+      if (findReservedRowsForView(view, order, stocks).length) continue;
+      const target = resolveGenericStockForView(view, stocks);
+      if (!target) continue; // no matching GENERIC stock entry (or Ziplock/no packing attribute) — skip rather than guess
 
-      target.stockCount = Math.max(0, (target.stockCount || 0) - qty);
+      const before = Number(target.stockCount || 0);
+      const deducted = Math.min(qty, before);
+      target.stockCount = before - deducted;
       await target.save();
+      if (deducted > 0) {
+        it.materialDeductedQty = (Number(it.materialDeductedQty) || 0) + deducted;
+        // Keep the FIRST (creation-time, largest) source row so a later credit-back on
+        // "Use Existing" returns stock to where the bulk of it came from. A subsequent
+        // delta that resolved to a different generic row isn't separately tracked.
+        if (!it.materialDeductedFrom) it.materialDeductedFrom = String(target._id);
+        itemsChanged = true;
+        deductions.push({ pool: 'materialStock', refId: String(target._id), qtyDeducted: deducted });
+      }
 
       if (target.minStock > 0 && target.stockCount < target.minStock) {
         const isOut = target.stockCount === 0;
@@ -776,26 +847,63 @@ async function deductMaterialStockQty(rows, order) {
       console.error(`Material stock deduction failed for order ${order.orderCode}, item "${it.itemName || it.name}":`, err.message);
     }
   }
+  if (itemsChanged && typeof order.save === 'function') {
+    order.markModified('items');
+    await order.save({ validateBeforeSave: false }).catch((err) => {
+      console.error(`Failed to persist materialDeductedQty for order ${order.orderCode}:`, err.message);
+    });
+  }
+  return deductions;
 }
+
+// Read-only counterpart to resolveInventoryAvailable, for MaterialStock (generic, non-hotel
+// pool only — a line whose hotel keeps a matching reserved row belongs to Operations "Use
+// Existing", not this gate, same as deductMaterialStockQty's own posture). Returns null when
+// the line has no packing name/size, is Ziplock, or has no matching generic stock row at all
+// (i.e. "not tracked here", never treated as a shortfall).
+async function resolveMaterialStockAvailable(view, order) {
+  if (!view || !view.names.length || !String(view.size || '').trim()) return null;
+  const stocks = await MaterialStock.find().sort('purchaseDate');
+  if (findReservedRowsForView(view, order, stocks).length) return null;
+  const target = resolveGenericStockForView(view, stocks);
+  return target ? (Number(target.stockCount) || 0) : null;
+}
+exports.resolveMaterialStockAvailable = resolveMaterialStockAvailable;
+
+// Task-time deduction — the only caller is utils/taskQuantity.js's deductStockForTask, itself
+// only called after checkLiveStockAvailability there has already confirmed `qty` is fully
+// covered, so this reuses deductMaterialStockQty's exact matching/notify logic rather than
+// duplicating it, just scoped to one row sized to the task's own qty.
+async function deductMaterialStockForTask(order, it, qty, view) {
+  if (!(qty > 0)) return [];
+  return deductMaterialStockQty([{ item: it, qty, view }], order);
+}
+exports.deductMaterialStockForTask = deductMaterialStockForTask;
 
 async function deductMaterialStockForOrder(order) {
   const items = Array.isArray(order.items) ? order.items : [];
-  const rows = items.map((it) => ({ item: it, qty: resolveItemConsumedQty(it, order) }));
+  const rows = buildPackingRows(order, items, (it) => resolveItemConsumedQty(it, order));
   await deductMaterialStockQty(rows, order);
+}
+
+// Stable key for delta-comparing packing rows: a kit by its kitId, a non-kit line by the same
+// orderItemKey the inventory delta uses.
+function packingRowKey(row) {
+  return row.isKit ? `kit:${row.kitId}` : `it:${orderItemKey(row.item)}`;
 }
 
 // Delta counterpart of deductMaterialStockForOrder — same reasoning as deductInventoryDeltaForOrder.
 async function deductMaterialStockDeltaForOrder(existingOrder, updatedOrder) {
   const oldItems = Array.isArray(existingOrder.items) ? existingOrder.items : [];
   const newItems = Array.isArray(updatedOrder.items) ? updatedOrder.items : [];
-  // Same orderItemKey matching as deductInventoryDeltaForOrder — see its comment.
-  const oldQtyByKey = new Map(oldItems.map((it) => [orderItemKey(it), resolveItemConsumedQty(it, existingOrder)]));
+  const oldRows = buildPackingRows(existingOrder, oldItems, (it) => resolveItemConsumedQty(it, existingOrder));
+  const newRows = buildPackingRows(updatedOrder, newItems, (it) => resolveItemConsumedQty(it, updatedOrder));
+  const oldQtyByKey = new Map(oldRows.map((r) => [packingRowKey(r), r.qty]));
   const rows = [];
-  newItems.forEach((newIt) => {
-    const oldQty = oldQtyByKey.get(orderItemKey(newIt)) || 0;
-    const newQty = resolveItemConsumedQty(newIt, updatedOrder);
-    const delta = newQty - oldQty;
-    if (delta > 0) rows.push({ item: newIt, qty: delta });
+  newRows.forEach((newRow) => {
+    const oldQty = oldQtyByKey.get(packingRowKey(newRow)) || 0;
+    const delta = newRow.qty - oldQty;
+    if (delta > 0) rows.push({ ...newRow, qty: delta });
   });
   await deductMaterialStockQty(rows, updatedOrder);
 }
@@ -804,9 +912,10 @@ async function deductMaterialStockDeltaForOrder(existingOrder, updatedOrder) {
 // triggered the qty change.
 exports.deductInventoryDeltaForOrder = deductInventoryDeltaForOrder;
 exports.deductMaterialStockDeltaForOrder = deductMaterialStockDeltaForOrder;
-// Exported so utils/taskQuantity.js's checkStockDeductionGate can compute "how much does this
-// order item actually require" with the EXACT same formula deductedQty is measured against —
-// using a different formula there would make the gate's pending math disagree with reality.
+// Exported so utils/taskQuantity.js's checkTaskQuantityOverflow/checkLiveStockAvailability
+// can compute "how much does this order item actually require" with the EXACT same formula
+// deductedQty is measured against — using a different formula there would make the gate's
+// math disagree with reality.
 exports.resolveItemConsumedQty = resolveItemConsumedQty;
 
 // Returns true if `it` (an order item row) refers to the given InventoryItem — same matching
@@ -994,8 +1103,9 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
       { $set: { orderId: order._id } }
     ).catch(() => {});
   }
-  await deductInventoryForOrder(order, req.user._id);
-  await deductMaterialStockForOrder(order);
+  // Inventory/Material Stock are no longer deducted here — they're deducted per task, at the
+  // moment a task is actually assigned against a product line (utils/taskQuantity.js's
+  // deductStockForTask), not committed in bulk just because an order was written.
   notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} is now In Production`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: order });
 });
@@ -1031,8 +1141,8 @@ exports.createDirectOrder = asyncHandler(async (req, res) => {
     createdBy: req.user._id,
     statusHistory: [{ status: initialStatus, changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });
-  await deductInventoryForOrder(order, req.user._id);
-  await deductMaterialStockForOrder(order);
+  // Inventory/Material Stock are no longer deducted here — see the comment in convertToOrder
+  // above; deduction now happens per task, at assignment time.
   notifyRoles({ modules: ['Operations', 'Dispatch Team', 'Sales Team'], type: 'order', title: 'New Order Created', message: `Order ${order.orderCode} for ${order.clientName} — ₹${order.total?.toLocaleString() || 0} created directly`, link: '/operations' }).catch(() => {});
   res.status(201).json({ success: true, data: order });
 });
@@ -1109,6 +1219,25 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));
   const [data] = await attachDispatchStage([order]);
+  // Informational only: lines whose stock hasn't been committed to ANY task yet. Inventory/
+  // Material Stock are deducted per task (utils/taskQuantity.js's deductStockForTask), not in
+  // bulk at order creation — a line nobody has assigned a task for yet has no stock reserved
+  // for it at all. Surfaced here so it can be caught before dispatch instead of silently
+  // missed; nothing is deducted or blocked just by reading this.
+  const tasksForOrder = await Task.find({ orderId: order._id, deletedAt: null }).select('productIndex qty').lean();
+  const assignedQtyByIndex = new Map();
+  tasksForOrder.forEach((t) => {
+    if (t.productIndex === undefined || t.productIndex === null) return;
+    assignedQtyByIndex.set(t.productIndex, (assignedQtyByIndex.get(t.productIndex) || 0) + (Number(t.qty) || 0));
+  });
+  data.pendingTaskAssignment = (order.items || [])
+    .map((it, idx) => ({
+      productIndex: idx,
+      itemName: it.itemName,
+      required: resolveItemConsumedQty(it, order),
+      assigned: assignedQtyByIndex.get(idx) || 0,
+    }))
+    .filter((x) => x.required > x.assigned);
   res.status(200).json({ success: true, data });
 });
 
@@ -1247,22 +1376,41 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
     return next(new AppError(`Order quantity cannot be reduced once placed — it can only be increased. ${qtyDecreases.join('; ')}`, 400));
   }
 
-  // deductedQty is a backend-only bookkeeping field (utils/taskQuantity.js's
-  // checkStockDeductionGate) — the Sales edit form doesn't know about it and always resends
-  // the FULL items array on any edit (price change, adding a row, etc.), even for rows whose
-  // qty didn't change. Without this, the $set below would blindly overwrite every item back
-  // to its schema default (deductedQty: 0), making Task Management think stock was never
-  // pulled for products that were already fully deducted at order creation — even though
-  // nothing about them actually changed. Carry the prior value forward by the same
-  // orderItemKey match deductInventoryDeltaForOrder uses, so only a genuine qty increase
-  // (handled separately, below) adds to it.
+  // deductedQty is a backend-only bookkeeping field, written only by
+  // utils/taskQuantity.js's deductStockForTask (task-assignment time) and reverseStockForTask
+  // (task-delete time) — the Sales edit form doesn't know about it and always resends the
+  // FULL items array on any edit (price change, adding a row, etc.), even for rows whose qty
+  // didn't change. Without this, the $set below would blindly overwrite every item back to
+  // its schema default (deductedQty: 0), making Task Management think stock was never pulled
+  // for products that already had tasks deducting against them — even though nothing about
+  // them actually changed. Carry the prior value forward by orderItemKey; raising an order's
+  // qty here no longer deducts anything itself (that only happens when a task is assigned for
+  // the increase), so there's no separate "qty increase" case to handle below.
+  // The same hazard applies to the packing-material bookkeeping fields added for the
+  // "Use Existing" (hotel reserved stock) flow: materialDeductedQty/From record what the
+  // generic pool gave a line, and packingFromExistingStock/packingExistingStockQty/At/By
+  // record that Operations sourced it from the hotel's own reserved stock. The Sales edit
+  // form doesn't carry them, so without this a plain price edit would reset them — making
+  // Operations re-offer "Use Existing" (double-drawing the hotel's reserved rows) and
+  // flipping the checklist packing gate. Carry them forward by the same orderItemKey.
   if (Array.isArray(req.body.items)) {
-    const oldDeductedByKey = new Map(
-      (existingForQtyCheck.items || []).map((it) => [orderItemKey(it), Number(it.deductedQty) || 0])
+    const oldByKey = new Map(
+      (existingForQtyCheck.items || []).map((it) => [orderItemKey(it), it])
     );
+    const carry = (it, field, dflt) => {
+      if (it[field] !== undefined) return it[field];
+      const prev = oldByKey.get(orderItemKey(it));
+      return prev && prev[field] !== undefined ? prev[field] : dflt;
+    };
     req.body.items = req.body.items.map((it) => ({
       ...it,
-      deductedQty: it.deductedQty !== undefined ? it.deductedQty : (oldDeductedByKey.get(orderItemKey(it)) || 0),
+      deductedQty: carry(it, 'deductedQty', 0),
+      materialDeductedQty: carry(it, 'materialDeductedQty', 0),
+      materialDeductedFrom: carry(it, 'materialDeductedFrom', ''),
+      packingFromExistingStock: carry(it, 'packingFromExistingStock', false),
+      packingExistingStockQty: carry(it, 'packingExistingStockQty', 0),
+      packingExistingStockAt: carry(it, 'packingExistingStockAt', undefined),
+      packingExistingStockBy: carry(it, 'packingExistingStockBy', undefined),
     }));
   }
 
@@ -1280,17 +1428,10 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
     await syncDispatchRecordQuantities(order._id, existingForQtyCheck, req.body).catch((err) => {
       console.error(`Dispatch qty resync failed for order ${order.orderCode}:`, err.message);
     });
-    // Inventory/material stock is only ever deducted ONCE, in full, at order creation
-    // (deductInventoryForOrder/deductMaterialStockForOrder) — raising a qty afterward
-    // previously left the increase completely undeducted. Uses the freshly-saved `order`
-    // (not req.body) as the "new" side so every field the qty formula needs (orderCategory,
-    // kitOverallQty, etc.) is guaranteed present even if the patch didn't include it.
-    await deductInventoryDeltaForOrder(existingForQtyCheck, order, req.user._id).catch((err) => {
-      console.error(`Inventory delta deduction failed for order ${order.orderCode}:`, err.message);
-    });
-    await deductMaterialStockDeltaForOrder(existingForQtyCheck, order).catch((err) => {
-      console.error(`Material stock delta deduction failed for order ${order.orderCode}:`, err.message);
-    });
+    // Inventory/Material Stock are no longer deducted on a qty raise here — deduction only
+    // happens per task, at assignment time (see convertToOrder's comment above). Raising the
+    // qty just raises the ceiling utils/taskQuantity.js's checkTaskQuantityOverflow validates
+    // future task assignments against.
   }
   // If this update recorded a payment (paidAmount / balance / paymentCollection),
   // keep any linked Billing invoice's advance/balance in sync too. Sales's quick

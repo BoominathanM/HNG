@@ -11,7 +11,7 @@ const { notifyRoles } = require('../../utils/notify');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
 const { computeRecordBuckets, computeCompositionGrandTotal, r2 } = require('../../utils/orderCalc');
 const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
-const { syncDispatchRecordQuantities, deductInventoryDeltaForOrder, deductMaterialStockDeltaForOrder } = require('../sales/sales.controller');
+const { syncDispatchRecordQuantities } = require('../sales/sales.controller');
 const Kit = require('../../models/Kit');
 const InventoryItem = require('../../models/InventoryItem');
 const DamageLog = require('../../models/DamageLog');
@@ -261,17 +261,10 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     await syncDispatchRecordQuantities(order._id, existingPlain, { items: order.items, kitOrders: order.kitOrders }).catch((err) => {
       console.error(`Dispatch qty resync failed for order ${order.orderCode}:`, err.message);
     });
-    // Inventory/material stock is only ever deducted ONCE, in full, at order creation — raising
-    // a qty afterward (here, via Billing) previously left the increase completely undeducted,
-    // same gap sales.controller.js's own updateOrder had until it got the identical fix. Only
-    // the DELTA is deducted (neither function has an "already deducted" flag to guard a re-run
-    // of the full amount).
-    await deductInventoryDeltaForOrder(existingPlain, order, user._id).catch((err) => {
-      console.error(`Inventory delta deduction failed for order ${order.orderCode}:`, err.message);
-    });
-    await deductMaterialStockDeltaForOrder(existingPlain, order).catch((err) => {
-      console.error(`Material stock delta deduction failed for order ${order.orderCode}:`, err.message);
-    });
+    // Inventory/Material Stock are no longer deducted on a qty raise here — deduction only
+    // happens per task, at assignment time (see sales.controller.js's convertToOrder comment).
+    // Raising the qty just raises the ceiling checkTaskQuantityOverflow validates future task
+    // assignments against.
   }
 
   return { buckets, grandTotal, editedByKey, itemChanges, priceChanged, qtyChanged, gstChanged, qtyReduced, reductions };

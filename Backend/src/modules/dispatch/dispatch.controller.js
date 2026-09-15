@@ -333,9 +333,44 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
 
   const orderDoc = dispatch.orderId && (dispatch.orderId._id ? dispatch.orderId : await Order.findById(dispatch.orderId));
 
-  // Inventory is already deducted once, in full, when the order is created
-  // (deductInventoryForOrder in sales.controller.js) — that's the point stock is considered
-  // "committed". Dispatch only ships what was already committed, so it must NOT deduct
+  // Both Confirm Partial Dispatch and Confirm Full Dispatch require Operations sign-off
+  // first (see requestDispatchApproval above / decideDispatchApproval in
+  // operations.controller.js) — enforced here too, not just via the disabled button on
+  // the frontend, so the gate can't be bypassed with a direct API call.
+  if (!orderDoc || orderDoc.dispatchApprovalStatus !== 'approved') {
+    return next(new AppError('Operations approval is required before confirming dispatch. Click "Send Approval" and wait for Operations to approve.', 403));
+  }
+  // Archive this round's approval into history (so it keeps showing on the Approval
+  // Report after the live gate below resets) and re-lock the gate for the NEXT round —
+  // a later Partial/Full confirm on this same order needs its own fresh approval.
+  const dispatchApprovalArchiveEntry = {
+    status: 'approved',
+    requestedBy: orderDoc.dispatchApprovalRequestedBy,
+    requestedByName: orderDoc.dispatchApprovalRequestedByName || '',
+    requestedByRole: orderDoc.dispatchApprovalRequestedByRole || '',
+    requestedAt: orderDoc.dispatchApprovalRequestedAt,
+    decidedBy: orderDoc.dispatchApprovalDecidedBy,
+    decidedByName: orderDoc.dispatchApprovalDecidedByName || '',
+    decidedAt: orderDoc.dispatchApprovalDecidedAt,
+  };
+  const resetDispatchApprovalGate = () => Order.findByIdAndUpdate(orderDoc._id, {
+    $push: { dispatchApprovalHistory: dispatchApprovalArchiveEntry },
+    $set: {
+      dispatchApprovalStatus: 'none',
+      dispatchApprovalRequestedBy: null,
+      dispatchApprovalRequestedByName: null,
+      dispatchApprovalRequestedByRole: null,
+      dispatchApprovalRequestedAt: null,
+      dispatchApprovalDecidedBy: null,
+      dispatchApprovalDecidedByName: null,
+      dispatchApprovalDecidedAt: null,
+    },
+  });
+
+  // Inventory is already deducted per task, as each product's task is assigned in Task
+  // Management (utils/taskQuantity.js's deductStockForTask) — that's the point stock is
+  // considered "committed"; a product can't reach Dispatch without a task having been
+  // created for it. Dispatch only ships what was already committed, so it must NOT deduct
   // again here; a prior version called InventoryItem/StockMovement updates on every confirm
   // round, silently double-decrementing stock on partial (and full) dispatch.
 
@@ -511,6 +546,7 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
     dispatch.partialWeight = dispatch.weight;
     dispatch.partialBoxes = dispatch.boxes;
     await dispatch.save({ validateBeforeSave: false });
+    await resetDispatchApprovalGate();
     return res.status(200).json({ success: true, data: dispatch, partial: true });
   }
 
@@ -527,6 +563,7 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
       orderUpdate.forwardingChargeAmount = Number(req.body.forwardingChargeAmount) || 0;
     }
     await Order.findByIdAndUpdate(orderDoc._id, orderUpdate);
+    await resetDispatchApprovalGate();
     if (orderDoc.leadId) {
       await Lead.findByIdAndUpdate(orderDoc.leadId, { status: 'Dispatched' });
     }
@@ -840,6 +877,40 @@ exports.requestInvoiceMismatchApproval = asyncHandler(async (req, res, next) => 
 
   const msg = `Order ${o.orderCode || dispatch.dispatchCode}: the dispatch team flagged a mismatch on the scanned invoice/lorry receipt. Reason given: "${reason.trim()}". Please review and approve or reject.`;
   await notifyMany([{ userId: o.assignedTo, type: 'dispatch', title: 'Invoice Mismatch — Review Needed', message: msg }]);
+
+  res.status(200).json({ success: true });
+});
+
+// PATCH /api/dispatch/:id/approval-request — dispatcher's "Send Approval" button. Required
+// once per confirm round before either "Confirm Partial Dispatch" or "Confirm Full
+// Dispatch" can be used (see the disabled gate on those buttons in DispatchDetail.jsx, and
+// the server-side enforcement in confirmDispatch below) — a single Operations sign-off, no
+// Sales side (see decideDispatchApproval in operations.controller.js and the "Dispatch
+// Approve" row action on Operations > Order Management). confirmDispatch resets this back
+// to 'none' after each round is confirmed, so the next round needs its own fresh approval.
+exports.requestDispatchApproval = asyncHandler(async (req, res, next) => {
+  const dispatch = await DispatchRecord.findById(req.params.id).populate('orderId', 'orderCode dispatchCode clientName assignedTo');
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  const o = dispatch.orderId;
+  if (!o) return next(new AppError('Order not linked to this dispatch', 404));
+
+  await Order.findByIdAndUpdate(o._id, {
+    dispatchApprovalStatus: 'pending',
+    dispatchApprovalRequestedBy: req.user._id,
+    dispatchApprovalRequestedByName: req.user.fullName || req.user.name || '',
+    dispatchApprovalRequestedByRole: req.user.role || '',
+    dispatchApprovalRequestedAt: Date.now(),
+    dispatchApprovalDecidedBy: null,
+    dispatchApprovalDecidedByName: null,
+    dispatchApprovalDecidedAt: null,
+  });
+
+  await notifyRoles({
+    modules: ['Operations'],
+    type: 'dispatch',
+    title: 'Dispatch Approval Needed',
+    message: `Order ${o.orderCode || dispatch.dispatchCode}: Dispatch is requesting approval before confirming dispatch. Please review and approve.`,
+  });
 
   res.status(200).json({ success: true });
 });

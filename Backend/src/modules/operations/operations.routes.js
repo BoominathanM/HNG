@@ -15,8 +15,10 @@ router.post('/orders/:id/assign-task', ctrl.assignTask);
 router.post('/orders/:id/assign-tasks-per-product', ctrl.assignTasksPerProduct);
 router.patch('/orders/:id/emergency', ctrl.setOrderEmergency);
 router.patch('/orders/:id/lr-mismatch-decision', ctrl.decideLrMismatchOps);
+router.patch('/orders/:id/dispatch-approval-decision', ctrl.decideDispatchApproval);
 router.patch('/orders/:id/items/:itemKey/printing-status', ctrl.updateItemPrintingStatus);
 router.post('/orders/:id/partial-split', ctrl.splitPartialDelivery);
+router.post('/orders/:id/use-existing-stock', ctrl.useExistingMaterialStock);
 
 router.get('/stickers', ctrl.getStickerRequests);
 router.post('/stickers', ctrl.createStickerRequest);

@@ -28,6 +28,15 @@ const taskSchema = new mongoose.Schema({
     enum: ['Pending', 'In Progress', 'Paused', 'Done', 'Emergency'],
     default: 'Pending',
   },
+  // Exact record of what this task deducted from Inventory/Material Stock at assignment
+  // time (see utils/taskQuantity.js's deductStockForTask), so deleteTask can credit the
+  // exact same units back rather than re-deriving an amount to reverse.
+  stockDeductions: [{
+    pool: { type: String, enum: ['inventory', 'materialStock'] },
+    refId: mongoose.Schema.Types.ObjectId, // InventoryItem or MaterialStock _id
+    qtyDeducted: Number,
+    productIndex: Number, // which order.items[] row's deductedQty/materialDeductedQty this came from
+  }],
   // sub-task breakdown by quantity (Assign Task modal)
   subTasks: [{
     label: String,
