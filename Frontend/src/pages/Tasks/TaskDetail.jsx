@@ -38,7 +38,7 @@ export default function TaskDetail() {
   const isDark = useSelector((s) => s.theme.isDark);
 
   const { data: taskData, isLoading } = useGetTaskQuery(id);
-  const { data: allTasksData } = useGetTasksQuery();
+  const { data: allTasksData } = useGetTasksQuery({ limit: 1000 });
 
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();

@@ -63,7 +63,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
   // Live badge counts
   const { data: pendingTasksData } = useGetTasksQuery({ status: 'Pending' }, { pollingInterval: 60000 });
   const { data: notifData } = useGetNotificationsQuery({ limit: 10 }, { pollingInterval: 30000 });
-  const pendingTaskCount = pendingTasksData?.data?.length || 0;
+  const pendingTaskCount = pendingTasksData?.total || 0;
   const unreadNotifCount = notifData?.unreadCount || 0;
 
   const getBadge = (key) => {

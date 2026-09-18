@@ -181,7 +181,7 @@ export default function Purchase() {
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
 
   // ── Data from RTK Query ─────────────────────────────────────────────────
-  const { data: vendorData } = useGetVendorsQuery({ type: 'raw_material' });
+  const { data: vendorData } = useGetVendorsQuery({ type: 'raw_material', limit: 500 });
   const { data: itemsData } = useGetItemsQuery({ limit: 1000 });
   const { data: requestsData } = useGetRequestsQuery({ limit: 500 });
   const { data: purchaseOrdersData } = useGetPurchaseOrdersQuery({ limit: 500 });
@@ -208,7 +208,7 @@ export default function Purchase() {
   const [createLocalPurchaseMutation] = useCreateLocalPurchaseMutation();
   const [scanLocalPurchaseInvoice] = useScanLocalPurchaseInvoiceMutation();
   const [createVendorMutation] = useCreateVendorMutation();
-  const { data: allVendorData } = useGetVendorsQuery();
+  const { data: allVendorData } = useGetVendorsQuery({ limit: 500 });
   const { data: purchasePersonsData } = useGetPurchasePersonsQuery();
   const [createPurchasePersonMutation] = useCreatePurchasePersonMutation();
 
@@ -676,7 +676,7 @@ export default function Purchase() {
   // 'Partially Received' orders stay in this fetch (not just 'In Transit') so the
   // Missing/Short-Received table and the attach-to-upcoming banner keep working after
   // a partial receipt is confirmed — a plain 'Received' order still rolls off.
-  const { data: dispatchTrackingData } = useGetPurchaseOrdersQuery({ dispatchStatus: 'In Transit,Partially Received' });
+  const { data: dispatchTrackingData } = useGetPurchaseOrdersQuery({ dispatchStatus: 'In Transit,Partially Received', limit: 500 });
   // Pickup Order Taken Status (set by the dispatch person in Dispatch → Pickup Order tab)
   // drives the pre-received delivery status shown here — 'Pickups' tag is invalidated on
   // every updatePickupOrder call, so this stays live without any extra plumbing.

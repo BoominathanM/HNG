@@ -283,7 +283,7 @@ export default function Inventory() {
 
   const { data: invData, isLoading: invLoading } = useGetItemsQuery({ limit: 1000 });
   const { data: approvalsData } = useGetStockApprovalsQuery();
-  const { data: suppliersData } = useGetVendorsQuery({ type: 'raw_material' });
+  const { data: suppliersData } = useGetVendorsQuery({ type: 'raw_material', limit: 500 });
   const { data: inventoryUsersData } = useGetUsersQuery({ limit: 1000 });
   const [createItemMutation] = useCreateItemMutation();
   const [updateItemMutation] = useUpdateItemMutation();
@@ -301,7 +301,7 @@ export default function Inventory() {
   const printingSuppliers = useMemo(() => (inventoryUsersData?.data || [])
     .filter(u => u.department === 'Vendors' && ['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(u.role))
     .map(u => ({ name: u.fullName, role: u.role })), [inventoryUsersData]);
-  const { data: customersData } = useGetVendorsQuery({ type: 'customer' });
+  const { data: customersData } = useGetVendorsQuery({ type: 'customer', limit: 500 });
   const [createVendorMutation] = useCreateVendorMutation();
   const vendorsList = useMemo(() => (customersData?.data || []).map((v) => ({
     id: v._id, name: v.name, phone: v.phone, email: v.email, address: v.address,

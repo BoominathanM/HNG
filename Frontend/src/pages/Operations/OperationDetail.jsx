@@ -151,7 +151,7 @@ export default function OperationDetail() {
   const { data: stickerData } = useGetStickerRequestsQuery();
   const stickerRequests = stickerData?.data || [];
   const { data: invData } = useGetItemsQuery({ limit: 1000 });
-  const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
+  const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing', limit: 500 });
   const { data: packingConfigRaw } = useGetPackingConfigQuery();
   const { data: timeConfigData } = useGetTaskTimeConfigsQuery();
   const timeConfigs = useMemo(() => timeConfigData?.data || [], [timeConfigData]);
@@ -201,7 +201,7 @@ export default function OperationDetail() {
     [ordersData, id]
   );
   // Fetch existing tasks for this order to detect already-assigned products
-  const { data: orderTasksData } = useGetTasksQuery({ orderId: orderMongoId }, { skip: !orderMongoId });
+  const { data: orderTasksData } = useGetTasksQuery({ orderId: orderMongoId, limit: 500 }, { skip: !orderMongoId });
   // Per-component printing/sticker readiness (Received/Closed) for the print/sticker gate on
   // Kit Packing Task Assignment below — same source Tasks/index.jsx's Today's Checklist reads.
   const { data: suggestedData } = useGetSuggestedTasksQuery();

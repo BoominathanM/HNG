@@ -53,7 +53,7 @@ export default function Expenses() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form] = Form.useForm();
 
-  const { data: expData, isLoading: expLoading } = useGetExpensesQuery();
+  const { data: expData, isLoading: expLoading } = useGetExpensesQuery({ limit: 1000 });
   const [createExpense] = useCreateExpenseMutation();
   const [updateExpense] = useUpdateExpenseMutation();
   const [deleteExpense] = useDeleteExpenseMutation();

@@ -3453,7 +3453,7 @@ export default function Sales() {
     ...(complaintSearchText ? { search: complaintSearchText } : {}),
     ...(complaintDateRange ? { startDate: complaintDateRange[0], endDate: complaintDateRange[1] } : {}),
   });
-  const { data: partiesRaw } = useGetPartiesQuery();
+  const { data: partiesRaw } = useGetPartiesQuery({ limit: 1000 });
   const { data: forecastRaw } = useGetConsumptionForecastQuery();
   const { data: remindersRaw } = useGetRemindersQuery();
   // Scoped to the selected Category so the "Old Hotel/Hospital" name list only ever

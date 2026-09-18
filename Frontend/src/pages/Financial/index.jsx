@@ -84,7 +84,7 @@ export default function Financial() {
   const { data: lrPaymentsData } = useGetLrPaymentsQuery({ page: lrPayPage, limit: lrPayPageSize, ...(lrPayFilter ? { paymentStatus: lrPayFilter } : {}) });
   const [payLrPayment] = usePayLrPaymentMutation();
   const [addPurchaseNote] = useAddPurchaseNoteMutation();
-  const { data: vendorData } = useGetVendorsQuery();
+  const { data: vendorData } = useGetVendorsQuery({ limit: 500 });
 
   const raisedRequests = useMemo(() => (pendingReqData?.data || []).map((r) => ({
     ...r,

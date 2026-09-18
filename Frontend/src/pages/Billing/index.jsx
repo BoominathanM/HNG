@@ -208,7 +208,7 @@ export default function Billing() {
   // Data — RTK Query
   const { data: invoicesData } = useGetInvoicesQuery({ page: invoicesPage, limit: invoicesPageSize, ...(invoiceStatusFilter ? { status: invoiceStatusFilter } : {}) });
   const { data: quotationsData } = useGetQuotationsInProcessQuery();
-  const { data: partiesData } = useGetBillingPartiesQuery();
+  const { data: partiesData } = useGetBillingPartiesQuery({ limit: 500 });
   const { data: companySettingsData } = useGetCompanySettingsQuery();
   const { data: salesOrdersRaw } = useGetSalesOrdersQuery({ limit: 1000 });
   const { data: kitsRaw } = useGetKitsQuery();

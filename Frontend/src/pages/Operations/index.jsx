@@ -318,7 +318,7 @@ export default function Operations() {
   };
 
   // Printing vendors from Vendors & Suppliers module (vendorType = 'printing')
-  const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing' });
+  const { data: printingVendorData } = useGetVendorsQuery({ type: 'printing', limit: 500 });
 
   // Vendor users from Settings (department = Vendors, role = Sticker/Box/Ziplock)
   const { data: usersData } = useGetUsersQuery({ limit: 1000 });
