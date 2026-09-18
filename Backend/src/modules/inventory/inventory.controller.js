@@ -327,12 +327,15 @@ exports.fillStock = asyncHandler(async (req, res, next) => {
 
   let runningAfter = bulkQtyBefore;
   for (const seg of segments) {
-    runningAfter -= seg.qty;
+    // round6 here too (not just on the authoritative bulk.currentStock above) — otherwise
+    // qtyBefore/qtyAfter written to this movement drift from the item's real stock by
+    // floating-point noise (e.g. 0.005000000000002558) across multiple FIFO segments.
+    runningAfter = round6(runningAfter - seg.qty);
     await StockMovement.create({
       itemId: bulk._id,
       movementType: 'OUT',
       qty: seg.qty,
-      qtyBefore: runningAfter + seg.qty,
+      qtyBefore: round6(runningAfter + seg.qty),
       qtyAfter: Math.max(0, runningAfter),
       referenceType: 'Manual',
       reason: `Filled into ${item.itemName} (${fillQty} ${item.unit})`,
@@ -352,7 +355,7 @@ exports.fillStock = asyncHandler(async (req, res, next) => {
   // Credit the filled item — from here on it's a normal stocked item with its own batch.
   const itemQtyBefore = item.currentStock;
   const fillVendorName = bulk.vendorId ? (await Vendor.findById(bulk.vendorId))?.name : undefined;
-  item.currentStock = itemQtyBefore + fillQty;
+  item.currentStock = round6(itemQtyBefore + fillQty);
   item.purchaseBatches.push({
     vendorId: bulk.vendorId || undefined,
     vendorName: fillVendorName,

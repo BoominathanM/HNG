@@ -749,18 +749,24 @@ export default function Inventory() {
     });
   }, [materialStocksList, materialStockSearch, materialStockDateRange]);
 
-  // Vendor dropdown for the "Add Purchase" (Material Stock) modal — Material Stocks tracks
-  // packing material (Box/Ziplock/Sticker/etc.) purchases, so the dropdown lists Printing
-  // Suppliers rather than raw-material vendors. Keeps the currently-edited record's vendor
-  // selectable even if it doesn't match an existing supplier name (legacy free-text entries).
+  // Vendor dropdown for the "Add Purchase" (Material Stock) modal — combines raw-material
+  // Vendors (Vendors & Suppliers > Vendors) with Printing Suppliers (Vendors & Suppliers >
+  // Printing Suppliers) so any registered vendor/supplier can be picked. Keeps the
+  // currently-edited record's vendor selectable even if it doesn't match either list
+  // (legacy free-text entries).
   const materialStockVendorOptions = useMemo(() => {
-    const opts = printingSuppliers.map((v) => ({ label: `${v.name} (${v.role})`, value: v.name }));
+    const opts = [
+      ...suppliers.map((v) => ({ label: v.name, value: v.name })),
+      ...printingSuppliers.map((v) => ({ label: `${v.name} (${v.role})`, value: v.name })),
+    ];
+    const seen = new Set();
+    const deduped = opts.filter((o) => (seen.has(o.value) ? false : (seen.add(o.value), true)));
     const currentVendor = editingMaterialStock?.vendor;
-    if (currentVendor && !opts.some((o) => o.value === currentVendor)) {
-      opts.push({ label: currentVendor, value: currentVendor });
+    if (currentVendor && !deduped.some((o) => o.value === currentVendor)) {
+      deduped.push({ label: currentVendor, value: currentVendor });
     }
-    return opts;
-  }, [printingSuppliers, editingMaterialStock]);
+    return deduped;
+  }, [suppliers, printingSuppliers, editingMaterialStock]);
 
   // Category → hotel/hospital name picker for the Material Stock modal. Same source the Sales
   // Lead form uses: category options from the shared DropdownOption store (+ Hotel/Hospital
@@ -850,7 +856,7 @@ export default function Inventory() {
   /* ── Active tab ── */
   const [activeInvTab, setActiveInvTab] = useState('stock');
   const { filterTabs, activeKeyFor } = useTabAccess('Inventory');
-  const { requireAccess } = usePageAccess('Inventory');
+  const { requireAccess, canDelete } = usePageAccess('Inventory');
 
   /* ── Dynamic product attribute fields (Add Item modal) ── */
   const watchedItemName = Form.useWatch('name', addItemForm);
@@ -864,6 +870,18 @@ export default function Inventory() {
   const watchedItemType = Form.useWatch('itemType', addItemForm) || 'standard';
   const watchedBulkSourceItemId = Form.useWatch('bulkSourceItemId', addItemForm);
   const watchedMergeItemCode = Form.useWatch('mergeItemCode', addItemForm);
+  // Bulk Raw Material items are purchased in containers (e.g. 10 drums) each holding a fixed
+  // quantity (e.g. 5 Litres) — "Unit Value" here doubles as that per-container quantity, so the
+  // actual stock total (and the Min Stock alert threshold) is containers × Unit Value, not the
+  // container count alone. Left at 1 whenever Unit Value is blank/0 so existing bulk items that
+  // never used this field keep behaving exactly as before (Opening Bulk Stock == total stock).
+  const watchedBulkUnitValue = Form.useWatch('unitValue', addItemForm);
+  const watchedBulkOpening = Form.useWatch('current', addItemForm);
+  const watchedBulkAddStock = Form.useWatch('addStockQty', addItemForm);
+  const watchedBulkMinStock = Form.useWatch('min', addItemForm);
+  const watchedBulkUnit = Form.useWatch('unit', addItemForm);
+  const bulkStockMultiplier = watchedItemType === 'bulk' && Number(watchedBulkUnitValue) > 0 ? Number(watchedBulkUnitValue) : 1;
+  const bulkUnitLabel = watchedBulkUnit || 'units';
 
   // Fill Unit options follow whichever bulk item is selected — its metric sub-unit for
   // small per-piece fills (Litres→ml, Kg→gram) or the bulk unit itself for large per-piece
@@ -981,10 +999,13 @@ export default function Inventory() {
     return matchSearch && matchType && matchStatus && matchDate;
   });
 
-  // Stock History tab main view — one row per item (not one per movement), so an item's name
-  // never repeats; click a row to open its full Stock In/Out history.
+  // Stock History tab main view — one row per item, click a row to open its full Stock In/Out
+  // history. A Bulk raw-material item and its linked Filled (per-piece) item are two separate
+  // stock pools that can legitimately share the same Item Name (e.g. both named "Shampoo") —
+  // itemType is carried through so the table can tag them apart instead of looking like an
+  // unexplained duplicate.
   const historyItemRows = useMemo(() => inventoryList.map((i) => ({
-    key: i.key, itemId: i.key, item: i.name, code: i.code, category: i.category, current: i.current, unit: i.unit,
+    key: i.key, itemId: i.key, item: i.name, code: i.code, category: i.category, current: i.current, unit: i.unit, itemType: i.itemType,
   })), [inventoryList]);
 
   const lowStock = inventoryList.filter((i) => i.status === 'Low' || i.status === 'Out');
@@ -1072,12 +1093,19 @@ export default function Inventory() {
         Object.entries(rawAttrs).filter(([, v]) => v !== undefined && v !== null && !(Array.isArray(v) && v.length === 0))
       );
       const itemType = vals.itemType || 'standard';
+      // Bulk Raw Material: Opening Bulk Stock / Add Stock (Qty) / Min Stock are entered as
+      // container counts (e.g. 10 drums) — multiply by Qty per Container ("Unit Value", e.g. 5
+      // Litres/drum) to store the actual total in the item's tracked unit (Litres/Kg), so 10
+      // drums x 5 Litres correctly becomes 50 Litres of stock instead of just "10". Multiplier
+      // stays 1 (no-op) whenever Unit Value is left blank/0, so bulk items that don't use this
+      // field — and the standard/filled item flows, which never hit this branch — are unaffected.
+      const bulkMultiplier = itemType === 'bulk' && Number(vals.unitValue) > 0 ? Number(vals.unitValue) : 1;
       const payload = {
         itemName: vals.name,
         category: vals.category || '',
         unit: vals.unit || 'Pcs',
         unitValue: Number(vals.unitValue) || 0,
-        minStock: Number(vals.min) || 0,
+        minStock: (Number(vals.min) || 0) * bulkMultiplier,
         purchasePrice: Number(String(vals.purchase_price ?? '').replace(/[^0-9.]/g, '')) || 0,
         marginAmount: Number(String(vals.margin_amount ?? '').replace(/[^0-9.]/g, '')) || 0,
         sellingPrice: Number(String(vals.selling_price ?? '').replace(/[^0-9.]/g, '')) || 0,
@@ -1091,8 +1119,9 @@ export default function Inventory() {
         fillWastagePercent: itemType === 'filled' ? (Number(vals.fillWastagePercent) || 0) : undefined,
       };
       if (editingItem) {
-        await updateItemMutation({ id: editingItem.key, ...payload, addStockQty: Number(vals.addStockQty) || 0 }).unwrap();
-        enqueueSnackbar(Number(vals.addStockQty) > 0 ? `Item updated — ${vals.addStockQty} units added to stock` : 'Item updated', { variant: 'success' });
+        const addQty = (Number(vals.addStockQty) || 0) * bulkMultiplier;
+        await updateItemMutation({ id: editingItem.key, ...payload, addStockQty: addQty }).unwrap();
+        enqueueSnackbar(addQty > 0 ? `Item updated — ${formatQty(addQty)} ${vals.unit || ''} added to stock` : 'Item updated', { variant: 'success' });
         addItemForm.resetFields();
         setEditingItem(null);
         setAddItemModal(false);
@@ -1101,14 +1130,14 @@ export default function Inventory() {
 
       // New item — confirm the merge-vs-new decision before it's committed, since it can't
       // be easily undone once stock has been merged into another item or a duplicate created.
-      const opening = Number(vals.current) || 0;
+      const opening = (Number(vals.current) || 0) * bulkMultiplier;
       const mergeCode = String(vals.mergeItemCode || '').trim().toUpperCase() || undefined;
       const matched = mergeCode ? inventoryList.find((i) => i.code === mergeCode) : null;
 
       Modal.confirm({
         title: mergeCode ? 'Merge into existing item?' : 'Add as new item?',
         content: mergeCode
-          ? `Merge ${opening} ${vals.unit || ''} into existing item "${matched?.name || mergeCode}" (${mergeCode})${matched ? ` — current stock: ${matched.current} ${matched.unit}` : ''}?`
+          ? `Merge ${formatQty(opening)} ${vals.unit || ''} into existing item "${matched?.name || mergeCode}" (${mergeCode})${matched ? ` — current stock: ${matched.current} ${matched.unit}` : ''}?`
           : `No item code entered — add "${vals.name}" as a NEW inventory item?`,
         okText: mergeCode ? 'Merge' : 'Add as New',
         onOk: async () => {
@@ -1407,13 +1436,13 @@ export default function Inventory() {
         <Col xs={12} sm={8}>
           <Card size="small" style={{ borderRadius: 12, border: '1px solid #52c41a33', background: isDark ? '#12241a' : '#f6ffed' }}>
             <Text type="secondary" style={{ fontSize: 12 }}>Total Stock In</Text>
-            <div style={{ fontSize: 22, fontWeight: 700, color: '#52c41a' }}>+{itemHistoryInTotal}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#52c41a' }}>+{formatQty(itemHistoryInTotal)}</div>
           </Card>
         </Col>
         <Col xs={12} sm={8}>
           <Card size="small" style={{ borderRadius: 12, border: '1px solid #ff4d4f33', background: isDark ? '#2a1315' : '#fff1f0' }}>
             <Text type="secondary" style={{ fontSize: 12 }}>Total Stock Out</Text>
-            <div style={{ fontSize: 22, fontWeight: 700, color: '#ff4d4f' }}>-{itemHistoryOutTotal}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#ff4d4f' }}>-{formatQty(itemHistoryOutTotal)}</div>
           </Card>
         </Col>
       </Row>
@@ -1445,8 +1474,8 @@ export default function Inventory() {
               title: 'Action', dataIndex: 'action', key: 'action',
               render: (v, r) => <Tag color={r.isIn ? 'success' : 'error'} style={{ borderRadius: 12 }}>{v}</Tag>
             },
-            { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.isIn ? '#52c41a' : '#ff4d4f' }}>{r.isIn ? '+' : '-'}{r.qty} {r.unit}</Text> },
-            { title: 'Before → After', key: 'ba', render: (_, r) => <Text type="secondary" style={{ fontSize: 12 }}>{r.qtyBefore} → {r.qtyAfter}</Text> },
+            { title: 'Qty', key: 'qty', render: (_, r) => <Text strong style={{ color: r.isIn ? '#52c41a' : '#ff4d4f' }}>{r.isIn ? '+' : '-'}{formatQty(r.qty)} {r.unit}</Text> },
+            { title: 'Before → After', key: 'ba', render: (_, r) => <Text type="secondary" style={{ fontSize: 12 }}>{formatQty(r.qtyBefore)} → {formatQty(r.qtyAfter)}</Text> },
             { title: 'Vendor', dataIndex: 'vendor', key: 'vendor', render: v => v && v !== '—' ? <Tag color="geekblue" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text> },
             { title: 'Source / Entity', dataIndex: 'source', key: 'source', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600 }}>{v}</Text> },
             { title: 'Hotel / Party', dataIndex: 'hotel', key: 'hotel', render: v => v && v !== '—' ? <Tag color="purple" style={{ borderRadius: 10 }}>{v}</Tag> : <Text type="secondary">—</Text> },
@@ -1761,7 +1790,16 @@ export default function Inventory() {
                     style: { cursor: 'pointer' },
                   })}
                   columns={[
-                    { title: 'Item Name', dataIndex: 'item', key: 'item', sorter: (a, b) => a.item.localeCompare(b.item), render: v => <Text strong style={{ color: '#B11E6A', textDecoration: 'underline', cursor: 'pointer' }}>{v}</Text> },
+                    {
+                      title: 'Item Name', dataIndex: 'item', key: 'item', sorter: (a, b) => a.item.localeCompare(b.item),
+                      render: (v, r) => (
+                        <Space size={4}>
+                          <Text strong style={{ color: '#B11E6A', textDecoration: 'underline', cursor: 'pointer' }}>{v}</Text>
+                          {r.itemType === 'bulk' && <Tag color="blue" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Bulk</Tag>}
+                          {r.itemType === 'filled' && <Tag color="purple" style={{ borderRadius: 8, fontSize: 10, margin: 0 }}>Filled</Tag>}
+                        </Space>
+                      ),
+                    },
                     { title: 'Code', dataIndex: 'code', key: 'code', render: v => <Text style={{ color: '#B11E6A', fontWeight: 600, fontSize: 12 }}>{v}</Text> },
                     { title: 'Category', dataIndex: 'category', key: 'category', render: v => v ? <Tag style={{ borderRadius: 20, fontSize: 11, background: '#B11E6A22', color: '#B11E6A', border: '1px solid #B11E6A44' }}>{v}</Tag> : <Text type="secondary">—</Text> },
                     { title: 'Current Stock', key: 'current', render: (_, r) => <Text strong>{formatQty(r.current)} {r.unit}</Text> },
@@ -2091,7 +2129,9 @@ export default function Inventory() {
                           {/* Actions */}
                           <Space onClick={(e) => e.stopPropagation()}>
                             <Button type="text" size="small" icon={<EyeOutlined />} style={{ color: '#B11E6A' }} onClick={() => openAddKit(kit)} />
-                            <Button type="text" size="small" danger icon={<CloseOutlined />} onClick={() => handleDeleteKit(kit)} />
+                            {canDelete && (
+                              <Button type="text" size="small" danger icon={<CloseOutlined />} onClick={() => handleDeleteKit(kit)} />
+                            )}
                           </Space>
 
                           {/* Chevron */}
@@ -2244,7 +2284,9 @@ export default function Inventory() {
                         render: (_, row) => (
                           <Space size={6}>
                             <Button size="small" icon={<EditOutlined />} onClick={() => openMaterialStockModal(row)} />
-                            <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteMaterialStock(row._id)} />
+                            {canDelete && (
+                              <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleDeleteMaterialStock(row._id)} />
+                            )}
                           </Space>
                         ),
                       },
@@ -2340,10 +2382,12 @@ export default function Inventory() {
                         render: (_, row) => (
                           <Space size={6}>
                             <Button size="small" icon={<EditOutlined />} onClick={() => openPackingConfigModal('displayUnit', row)} />
-                            <Button
-                              size="small" danger icon={<DeleteOutlined />}
-                              onClick={() => handleDeletePackingConfig(row._id)}
-                            />
+                            {canDelete && (
+                              <Button
+                                size="small" danger icon={<DeleteOutlined />}
+                                onClick={() => handleDeletePackingConfig(row._id)}
+                              />
+                            )}
                           </Space>
                         ),
                       },
@@ -2423,7 +2467,7 @@ export default function Inventory() {
               placeholder="Select vendor / supplier"
               style={{ borderRadius: 8 }}
               options={materialStockVendorOptions}
-              notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No printing suppliers yet — add one in Vendors & Suppliers</span>}
+              notFoundContent={<span style={{ fontSize: 12, color: '#aaa' }}>No vendors or suppliers yet — add one in Vendors & Suppliers</span>}
             />
           </Form.Item>
           <Row gutter={12}>
@@ -2836,17 +2880,20 @@ export default function Inventory() {
             {/* Recent history for this item */}
             <Card style={sectionCard} styles={{ body: { padding: '14px 16px' } }}>
               <Text strong style={{ color: textColor, display: 'block', marginBottom: 10 }}>Recent Stock History</Text>
-              {stockHistory.filter(h => h.item === detailItem.name).slice(0, 4).length === 0 && (
+              {/* Match by itemId, not name — a Bulk item and its linked Filled item can share the
+                  exact same Item Name (e.g. both "Shampoo"), and matching by name here would mix
+                  the bulk source's movements into the filled item's card (and vice versa). */}
+              {stockHistory.filter(h => h.itemId === detailItem.key).slice(0, 4).length === 0 && (
                 <Text type="secondary" style={{ fontSize: 13 }}>No history yet</Text>
               )}
-              {stockHistory.filter(h => h.item === detailItem.name).slice(0, 4).map(h => (
+              {stockHistory.filter(h => h.itemId === detailItem.key).slice(0, 4).map(h => (
                 <div key={h.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: `1px solid ${borderColor}` }}>
                   <Space>
                     <Tag color={h.action === 'Stock Added' ? 'success' : 'error'} style={{ borderRadius: 12, fontSize: 11 }}>{h.action}</Tag>
                     <Text style={{ fontSize: 12, color: '#aaa' }}>{h.date}</Text>
                   </Space>
                   <Text strong style={{ color: h.action === 'Stock Added' ? '#52c41a' : '#ff4d4f', fontSize: 13 }}>
-                    {h.action === 'Stock Added' ? '+' : '-'}{h.qty} units
+                    {h.action === 'Stock Added' ? '+' : '-'}{formatQty(h.qty)} units
                   </Text>
                 </div>
               ))}
@@ -3109,7 +3156,27 @@ export default function Inventory() {
             </Col>
           </Row>
           <Row gutter={16}>
-            <Col xs={24} sm={12}><Form.Item label="Item Name" name="name" rules={[{ required: true }]}><Input /></Form.Item></Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                label="Item Name"
+                name="name"
+                rules={[
+                  { required: true },
+                  {
+                    validator: (_, val) => {
+                      if (watchedItemType !== 'filled' || !watchedBulkSourceItemId) return Promise.resolve();
+                      const src = bulkItems.find((b) => b.key === watchedBulkSourceItemId);
+                      if (src && String(val || '').trim().toLowerCase() === String(src.name || '').trim().toLowerCase()) {
+                        return Promise.reject(new Error(`Give this filled item a different name from its bulk source "${src.name}" (e.g. add the fill size) — Stock History lists both by name and an identical pair looks like a duplicate.`));
+                      }
+                      return Promise.resolve();
+                    },
+                  },
+                ]}
+              >
+                <Input />
+              </Form.Item>
+            </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Category" name="category">
                 <SelectWithAdd
@@ -3121,11 +3188,15 @@ export default function Inventory() {
             </Col>
             <Col xs={24} sm={12}>
               <Form.Item
-                label={watchedItemType === 'filled' ? 'Fill Size' : 'Unit Value'}
+                label={watchedItemType === 'filled' ? 'Fill Size' : watchedItemType === 'bulk' ? 'Qty per Container' : 'Unit Value'}
                 name="unitValue"
-                tooltip={watchedItemType === 'filled' ? "How much bulk material one piece uses — e.g. 10 for a 10ml bottle." : "Quantity per unit — e.g. 500 for a 500 gram pack."}
+                tooltip={
+                  watchedItemType === 'filled' ? "How much bulk material one piece uses — e.g. 10 for a 10ml bottle."
+                    : watchedItemType === 'bulk' ? "How much each container/drum holds, in the Bulk Unit selected — e.g. 5 for a 5 Litre drum. Multiplied by Opening Bulk Stock (container count) to get the total stock. Leave blank if Opening Bulk Stock is already the total."
+                    : "Quantity per unit — e.g. 500 for a 500 gram pack."
+                }
               >
-                <InputNumber style={{ width: '100%' }} min={0} placeholder={watchedItemType === 'filled' ? 'e.g. 10' : 'e.g. 500'} />
+                <InputNumber style={{ width: '100%' }} min={0} placeholder={watchedItemType === 'filled' ? 'e.g. 10' : watchedItemType === 'bulk' ? 'e.g. 5' : 'e.g. 500'} />
               </Form.Item>
             </Col>
             <Col xs={24} sm={12}>
@@ -3163,11 +3234,33 @@ export default function Inventory() {
                 </Col>
               </>
             )}
-            {!editingItem && watchedItemType !== 'filled' && <Col xs={24} sm={12}><Form.Item label={watchedItemType === 'bulk' ? 'Opening Bulk Stock' : 'Opening Stock'} name="current"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>}
+            {!editingItem && watchedItemType !== 'filled' && (
+              <Col xs={24} sm={12}>
+                <Form.Item
+                  label={watchedItemType === 'bulk' ? 'Opening Bulk Stock' : 'Opening Stock'}
+                  name="current"
+                  tooltip={watchedItemType === 'bulk' ? 'Number of containers/drums purchased — multiplied by Qty per Container above to get the total stock.' : undefined}
+                  extra={watchedItemType === 'bulk' && bulkStockMultiplier > 1 && Number(watchedBulkOpening) > 0
+                    ? <Text style={{ fontSize: 12, color: '#B11E6A' }}>{`= ${formatQty((Number(watchedBulkOpening) || 0) * bulkStockMultiplier)} ${bulkUnitLabel} total`}</Text>
+                    : undefined}
+                >
+                  <InputNumber style={{ width: '100%' }} min={0} placeholder={watchedItemType === 'bulk' ? 'e.g. 10 (containers)' : undefined} />
+                </Form.Item>
+              </Col>
+            )}
             {editingItem && watchedItemType !== 'filled' && (
               <Col xs={24} sm={12}>
-                <Form.Item label="Add Stock (Qty)" name="addStockQty" tooltip="Bought more of this same product? Enter the quantity here — it's added on top of the current stock as a new purchase batch under the Vendor + Purchase Date selected above.">
-                  <InputNumber style={{ width: '100%' }} min={0} placeholder="0" />
+                <Form.Item
+                  label="Add Stock (Qty)"
+                  name="addStockQty"
+                  tooltip={watchedItemType === 'bulk'
+                    ? "Bought more containers of this bulk material? Enter the container count here — it's multiplied by Qty per Container and added on top of the current stock as a new purchase batch under the Vendor + Purchase Date selected above."
+                    : "Bought more of this same product? Enter the quantity here — it's added on top of the current stock as a new purchase batch under the Vendor + Purchase Date selected above."}
+                  extra={watchedItemType === 'bulk' && bulkStockMultiplier > 1 && Number(watchedBulkAddStock) > 0
+                    ? <Text style={{ fontSize: 12, color: '#B11E6A' }}>{`= ${formatQty((Number(watchedBulkAddStock) || 0) * bulkStockMultiplier)} ${bulkUnitLabel} added`}</Text>
+                    : undefined}
+                >
+                  <InputNumber style={{ width: '100%' }} min={0} placeholder={watchedItemType === 'bulk' ? 'e.g. 10 (containers)' : '0'} />
                 </Form.Item>
               </Col>
             )}
@@ -3176,7 +3269,18 @@ export default function Inventory() {
                 <Text type="secondary" style={{ fontSize: 12 }}>Stock for filled items is added via "Fill Stock" on the item's row, not here.</Text>
               </Col>
             )}
-            <Col xs={24} sm={12}><Form.Item label="Min Stock" name="min"><InputNumber style={{ width: '100%' }} min={0} /></Form.Item></Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                label="Min Stock"
+                name="min"
+                tooltip={watchedItemType === 'bulk' ? 'Alert threshold in containers/drums — multiplied by Qty per Container to get the actual low-stock threshold.' : undefined}
+                extra={watchedItemType === 'bulk' && bulkStockMultiplier > 1 && Number(watchedBulkMinStock) > 0
+                  ? <Text style={{ fontSize: 12, color: '#B11E6A' }}>{`= ${formatQty((Number(watchedBulkMinStock) || 0) * bulkStockMultiplier)} ${bulkUnitLabel} threshold`}</Text>
+                  : undefined}
+              >
+                <InputNumber style={{ width: '100%' }} min={0} placeholder={watchedItemType === 'bulk' ? 'e.g. 2 (containers)' : undefined} />
+              </Form.Item>
+            </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Purchase Price" name="purchase_price">
                 <Input prefix="₹" addonAfter={<Form.Item name="purchase_price_tax" noStyle initialValue="without_gst"><Select style={{ width: 120 }}><Option value="with_gst">With GST</Option><Option value="without_gst">Without GST</Option></Select></Form.Item>} />

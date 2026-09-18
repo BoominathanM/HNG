@@ -18,6 +18,11 @@ const BANK = {
 
 const DEFAULT_LOGO = '/hnglogonew.png';
 
+// Brand primary color (theme.js colorPrimary) — used for the company name in every
+// invoice/quotation regardless of the selected invoice theme's own accent color, so the
+// name never renders in the (near-black) 'classic' theme's accent.
+const PRIMARY_COLOR = '#B11E6A';
+
 // When true, the per-line AMOUNT values inside each category section (kit-level,
 // component, and product line rows) are hidden in quotations & invoices. Only the
 // section header total, "Total (A/B/C)" footer, and the document subtotal/total
@@ -648,7 +653,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
           ? `<img src="${cfg.signatureUrl}" alt="signature" style="height:56px;max-width:180px;object-fit:contain;margin-bottom:8px;"/>`
           : `<div style="height:56px;border-bottom:1px solid #ccc;margin-bottom:8px;"></div>`}
         <div style="font-weight:700;font-size:11px;color:#333;">AUTHORISED SIGNATORY FOR</div>
-        <div style="font-weight:700;font-size:11px;color:${ACCENT};">${cfg.company.name}</div>
+        <div style="font-weight:700;font-size:11px;color:${PRIMARY_COLOR};">${cfg.company.name}</div>
       </div>
     </div>` : '';
 
@@ -752,7 +757,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
     <div style="display:flex;padding:16px 20px 16px 8px;border-bottom:2px solid ${ACCENT};align-items:center;gap:16px;">
       ${logoHtml}
       <div style="flex:1;text-align:center;">
-        <div style="font-size:22px;font-weight:900;color:${ACCENT};letter-spacing:0.5px;">${cfg.company.name}</div>
+        <div style="font-size:22px;font-weight:900;color:${PRIMARY_COLOR};letter-spacing:0.5px;">${cfg.company.name}</div>
       </div>
       <div style="text-align:right;font-size:11px;color:#333;line-height:1.8;">
         <div style="white-space:pre-wrap;">${cfg.company.address}</div>
@@ -1074,7 +1079,7 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
           </div>
         )}
         <div style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 22, fontWeight: 900, color: ACCENT, letterSpacing: 0.5 }}>{cfg.company.name}</div>
+          <div style={{ fontSize: 22, fontWeight: 900, color: PRIMARY_COLOR, letterSpacing: 0.5 }}>{cfg.company.name}</div>
         </div>
         <div style={{ textAlign: 'right', fontSize: 11, color: '#333', lineHeight: 1.8 }}>
           <div style={{ whiteSpace: 'pre-wrap' }}>{cfg.company.address}</div>
@@ -1277,7 +1282,7 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
                     <div style={{ height: 56, borderBottom: '1px solid #ccc', marginBottom: 8 }} />
                   )}
                   <div style={{ fontWeight: 700, fontSize: 11, color: '#333' }}>AUTHORISED SIGNATORY FOR</div>
-                  <div style={{ fontWeight: 700, fontSize: 11, color: ACCENT }}>{cfg.company.name}</div>
+                  <div style={{ fontWeight: 700, fontSize: 11, color: PRIMARY_COLOR }}>{cfg.company.name}</div>
                 </div>
               </div>
             )}

@@ -2259,6 +2259,12 @@ export default function Sales() {
   const isDark = useSelector((s) => s.theme.isDark);
   const currentUser = useSelector((s) => s.auth?.user);
   const isSalesExec = currentUser?.role === 'Sales Executive';
+  // Once a lead exists, its Hotel/Company Info, Billing & Address, and Shipping Address
+  // are core record data — no Sales-department login (Executive, Manager, Head, or any
+  // custom Sales role) may edit them, only Admin/Management/Super Admin can.
+  const isAdminOverrideUser = currentUser?.department === 'Admin' || currentUser?.department === 'Management'
+    || currentUser?.role === 'Admin' || currentUser?.role === 'Super Admin';
+  const lockCoreLeadFields = currentUser?.department === 'Sales' && !isAdminOverrideUser;
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
   const borderColor = isDark ? '#2a2a3a' : '#f0f0f0';
@@ -2270,7 +2276,7 @@ export default function Sales() {
   const [ordersData, setOrdersData] = useState([]);
   const [activeTab, setActiveTab] = useState('performance');
   const { filterTabs, activeKeyFor } = useTabAccess('Sales Team');
-  const { requireAccess } = usePageAccess('Sales Team');
+  const { requireAccess, canDelete } = usePageAccess('Sales Team');
   const [searchText, setSearchText] = useState('');
   const [dateRange, setDateRange] = useState(null);
   const [leadStatusFilter, setLeadStatusFilter] = useState(null);
@@ -3666,24 +3672,28 @@ export default function Sales() {
   // kept there) and can be brought back at any time via Restore, nothing is ever
   // permanently removed from here.
   const handleDeleteLead = async (record) => {
+    if (!requireAccess('delete')) return;
     try {
       await deleteLeadMutation(record._id || record.key).unwrap();
       enqueueSnackbar(`Lead "${record.hotelName || ''}" moved to Deleted Records`, { variant: 'success' });
     } catch { enqueueSnackbar('Failed to delete lead', { variant: 'error' }); }
   };
   const handleDeleteQuotation = async (record) => {
+    if (!requireAccess('delete')) return;
     try {
       await deleteSalesQuotationMutation(record._id || record.key).unwrap();
       enqueueSnackbar(`Quotation ${record.qid || ''} moved to Deleted Records`, { variant: 'success' });
     } catch { enqueueSnackbar('Failed to delete quotation', { variant: 'error' }); }
   };
   const handleDeleteNegotiation = async (record) => {
+    if (!requireAccess('delete')) return;
     try {
       await deleteNegotiationMutation(record._id || record.key).unwrap();
       enqueueSnackbar(`Negotiation ${record.nid || ''} moved to Deleted Records`, { variant: 'success' });
     } catch { enqueueSnackbar('Failed to delete negotiation', { variant: 'error' }); }
   };
   const handleDeleteOrder = async (record) => {
+    if (!requireAccess('delete')) return;
     try {
       await deleteSalesOrderMutation(record._id || record.key).unwrap();
       enqueueSnackbar(`Order ${record.oid || ''} moved to Deleted Records`, { variant: 'success' });
@@ -6448,17 +6458,19 @@ export default function Sales() {
               </>
             );
           })()}
-          <Popconfirm
-            title="Delete this lead?"
-            description="It will move to Settings → Deleted Records and can be restored anytime."
-            onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteLead(r); }}
-            onCancel={(e) => e?.stopPropagation?.()}
-            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
-          >
-            <Tooltip title="Delete">
-              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
-            </Tooltip>
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm
+              title="Delete this lead?"
+              description="It will move to Settings → Deleted Records and can be restored anytime."
+              onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteLead(r); }}
+              onCancel={(e) => e?.stopPropagation?.()}
+              okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+            >
+              <Tooltip title="Delete">
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+              </Tooltip>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -6540,17 +6552,19 @@ export default function Sales() {
               → Order
             </Button>
           </Tooltip>
-          <Popconfirm
-            title="Delete this negotiation?"
-            description="It will move to Settings → Deleted Records and can be restored anytime."
-            onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteNegotiation(r); }}
-            onCancel={(e) => e?.stopPropagation?.()}
-            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
-          >
-            <Tooltip title="Delete">
-              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
-            </Tooltip>
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm
+              title="Delete this negotiation?"
+              description="It will move to Settings → Deleted Records and can be restored anytime."
+              onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteNegotiation(r); }}
+              onCancel={(e) => e?.stopPropagation?.()}
+              okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+            >
+              <Tooltip title="Delete">
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+              </Tooltip>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -6634,17 +6648,19 @@ export default function Sales() {
               → Order
             </Button>
           </Tooltip>
-          <Popconfirm
-            title="Delete this quotation?"
-            description="It will move to Settings → Deleted Records and can be restored anytime."
-            onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteQuotation(r); }}
-            onCancel={(e) => e?.stopPropagation?.()}
-            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
-          >
-            <Tooltip title="Delete">
-              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
-            </Tooltip>
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm
+              title="Delete this quotation?"
+              description="It will move to Settings → Deleted Records and can be restored anytime."
+              onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteQuotation(r); }}
+              onCancel={(e) => e?.stopPropagation?.()}
+              okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+            >
+              <Tooltip title="Delete">
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+              </Tooltip>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -6902,17 +6918,19 @@ export default function Sales() {
           {r.invoiceMismatchStatus === 'rejected' && (
             <Tag color="error" style={{ fontSize: 11, margin: 0 }}>Invoice Mismatch Rejected</Tag>
           )}
-          <Popconfirm
-            title="Delete this order?"
-            description="It will move to Settings → Deleted Records and can be restored anytime."
-            onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteOrder(r); }}
-            onCancel={(e) => e?.stopPropagation?.()}
-            okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
-          >
-            <Tooltip title="Delete">
-              <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
-            </Tooltip>
-          </Popconfirm>
+          {canDelete && (
+            <Popconfirm
+              title="Delete this order?"
+              description="It will move to Settings → Deleted Records and can be restored anytime."
+              onConfirm={(e) => { e?.stopPropagation?.(); handleDeleteOrder(r); }}
+              onCancel={(e) => e?.stopPropagation?.()}
+              okText="Delete" okButtonProps={{ danger: true }} cancelText="Cancel"
+            >
+              <Tooltip title="Delete">
+                <Button size="small" danger icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
+              </Tooltip>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -12237,7 +12255,7 @@ export default function Sales() {
                     <span>Hotel / Company Information</span>
                   </Space>
                 }
-                extra={usePerCardEdit && !isSalesExec && (
+                extra={usePerCardEdit && !lockCoreLeadFields && (
                   editingSection === 'hotel' ? (
                     <Space size="small">
                       <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('hotel')} style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -12517,7 +12535,7 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#52c41a' }} /><span>Billing & Address</span></Space>}
-                    extra={usePerCardEdit && !isSalesExec && (
+                    extra={usePerCardEdit && !lockCoreLeadFields && (
                       editingSection === 'billing' ? (
                         <Space size="small">
                           <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('billing')} style={{ background: '#52c41a', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -12688,7 +12706,7 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#1677ff', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#1677ff' }} /><span>Shipping Address</span></Space>}
-                    extra={usePerCardEdit && !isSalesExec && (
+                    extra={usePerCardEdit && !lockCoreLeadFields && (
                       editingSection === 'shipping' ? (
                         <Space size="small">
                           <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('shipping')} style={{ background: '#1677ff', border: 'none', borderRadius: 6 }}>Save</Button>

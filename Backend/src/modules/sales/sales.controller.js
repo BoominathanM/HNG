@@ -656,15 +656,19 @@ async function recomputeOrderStockPendingFlag(order) {
 // exact (case-insensitive) itemName match. Factored out of deductInventoryQty so the
 // task-time live-availability check (utils/taskQuantity.js) resolves the exact same row a
 // deduction would hit — "is this in stock" can never disagree with what actually deducts.
+// 'bulk' raw-material items are never directly sellable — only their linked 'filled' items
+// are (see Sales/index.jsx's own itemType!=='bulk' picker filter) — so they're excluded here
+// too, server-side, so an order line can never draw down the same pool /fill already deducts
+// from, regardless of which UI/API path created the line.
 async function findInventoryItemForLine(it) {
   if (it.itemId) {
-    const item = await InventoryItem.findOne({ _id: it.itemId, deletedAt: null });
+    const item = await InventoryItem.findOne({ _id: it.itemId, deletedAt: null, itemType: { $ne: 'bulk' } });
     if (item) return item;
   }
   const name = it.itemName || it.name;
   if (!name) return null;
   const escaped = name.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null });
+  return InventoryItem.findOne({ itemName: new RegExp(`^${escaped}$`, 'i'), deletedAt: null, itemType: { $ne: 'bulk' } });
 }
 
 // Read-only: how many units of `it`'s InventoryItem are actually on the shelf right now, for

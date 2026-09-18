@@ -371,6 +371,27 @@ body.dark-mode {
 }
 
 /* =============================================
+   DISPATCH PROGRESS STEPS — NEVER LETTER-WRAP
+   Narrow host columns (e.g. the Dispatch Details left card) shrink each
+   step below its title's word width; antd's own `word-break: break-word`
+   then splits the word itself instead of just overflowing. Force the
+   title onto one line and let the whole bar scroll instead.
+   ============================================= */
+
+.dispatch-progress-steps.ant-steps-horizontal {
+  overflow-x: auto;
+  flex-wrap: nowrap;
+}
+.dispatch-progress-steps .ant-steps-item {
+  min-width: 78px;
+  flex-shrink: 0;
+}
+.dispatch-progress-steps .ant-steps-item-title {
+  white-space: nowrap;
+  word-break: normal;
+}
+
+/* =============================================
    BUTTONS — MOBILE
    ============================================= */
 

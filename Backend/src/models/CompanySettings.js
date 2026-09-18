@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 
 const companySettingsSchema = new mongoose.Schema({
-  companyName: { type: String, default: 'Heal N Glow' },
+  companyName: { type: String, default: 'Heal N Glow Pvt Ltd' },
   logoUrl: String,
   currency: { type: String, default: 'INR' },
   dateFormat: { type: String, default: 'DD/MM/YYYY' },

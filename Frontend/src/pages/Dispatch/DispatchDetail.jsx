@@ -983,7 +983,9 @@ export default function DispatchDetail() {
     const printPhone = selectedContacts.length
       ? selectedContacts.map((c) => `${c.label}: ${c.value || '—'}`).join('<br/>')
       : (order.phone || '—');
-    const win = window.open('', '_blank', 'width=600,height=800');
+    // No window-feature string (width/height/etc.) — passing one forces Chrome to open
+    // a separate popup window instead of a normal browser tab.
+    const win = window.open('', '_blank');
     win.document.write(`<!DOCTYPE html><html><head><title>Dispatch Details — ${order.id}</title>
 <style>
   body { font-family: Arial, sans-serif; margin: 0; padding: 32px; font-size: 13px; color: #111; }
@@ -1761,7 +1763,7 @@ export default function DispatchDetail() {
 
               <div style={{ marginTop: 20, padding: '12px 0', borderTop: `1px solid ${borderColor}` }}>
                 <Text style={{ fontSize: 11, color: '#999', display: 'block', marginBottom: 12, textTransform: 'uppercase', letterSpacing: 1 }}>Dispatch Progress</Text>
-                <Steps size="small" current={dispatched ? 3 : stepIndex(order.status)}
+                <Steps size="small" className="dispatch-progress-steps" current={dispatched ? 3 : stepIndex(order.status)}
                   items={[
                     { title: 'Packing' },
                     { title: order.isSample ? 'Payment (N/A)' : 'Payment' },

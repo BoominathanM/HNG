@@ -236,12 +236,14 @@ export default function Billing() {
   // Soft-delete only — moves to Settings → Deleted Records (full snapshot kept) and can
   // be restored anytime; nothing is permanently removed from either action.
   const handleDeleteInvoice = async (record) => {
+    if (!requireAccess('delete')) return;
     try {
       await deleteInvoiceMutation(record.key).unwrap();
       enqueueSnackbar(`Invoice ${record.inv || ''} moved to Deleted Records`, { variant: 'success' });
     } catch { enqueueSnackbar('Failed to delete invoice', { variant: 'error' }); }
   };
   const handleDeleteQuotationInProcess = async (record) => {
+    if (!requireAccess('delete')) return;
     try {
       await deleteSalesQuotationMutation(record.key).unwrap();
       enqueueSnackbar(`Quotation ${record.quot || ''} moved to Deleted Records`, { variant: 'success' });
@@ -680,7 +682,7 @@ export default function Billing() {
 
   const [activeTab, setActiveTab] = useState('quotation-in-process');
   const { filterTabs, activeKeyFor } = useTabAccess('Billing');
-  const { requireAccess } = usePageAccess('Billing');
+  const { requireAccess, canDelete } = usePageAccess('Billing');
 
   // View invoice / quotation
   const [viewModal, setViewModal] = useState(false);
@@ -1617,16 +1619,18 @@ export default function Billing() {
         const moreItems = [
           { key: 'edit', icon: <EditOutlined />, label: 'Edit Pricing', onClick: () => openPriceEdit(r) },
           { key: 'logs', icon: <HistoryOutlined />, label: 'Price Edit Logs', onClick: () => openPriceLogs(r) },
-          { type: 'divider' },
-          {
-            key: 'del', icon: <DeleteOutlined />, label: 'Delete', danger: true,
-            onClick: () => Modal.confirm({
-              title: 'Delete this invoice?',
-              content: 'It will move to Settings → Deleted Records and can be restored anytime.',
-              okText: 'Delete', okButtonProps: { danger: true }, cancelText: 'Cancel',
-              onOk: () => handleDeleteInvoice(r),
-            }),
-          },
+          ...(canDelete ? [
+            { type: 'divider' },
+            {
+              key: 'del', icon: <DeleteOutlined />, label: 'Delete', danger: true,
+              onClick: () => Modal.confirm({
+                title: 'Delete this invoice?',
+                content: 'It will move to Settings → Deleted Records and can be restored anytime.',
+                okText: 'Delete', okButtonProps: { danger: true }, cancelText: 'Cancel',
+                onOk: () => handleDeleteInvoice(r),
+              }),
+            },
+          ] : []),
         ];
         return (
           <Space size={4} wrap onClick={(e) => e.stopPropagation()}>
@@ -1689,7 +1693,7 @@ export default function Billing() {
             );
           }
         }
-        if (!isOrder) {
+        if (!isOrder && canDelete) {
           if (moreItems.length) moreItems.push({ type: 'divider' });
           moreItems.push({
             key: 'del', icon: <DeleteOutlined />, label: 'Delete', danger: true,

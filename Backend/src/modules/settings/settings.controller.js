@@ -104,7 +104,7 @@ exports.getPublicBranding = asyncHandler(async (req, res) => {
     success: true,
     data: {
       logoUrl: settings?.logoUrl || null,
-      companyName: settings?.companyName || 'Heal N Glow',
+      companyName: settings?.companyName || 'Heal N Glow Pvt Ltd',
     },
   });
 });

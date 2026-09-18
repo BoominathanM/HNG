@@ -614,7 +614,7 @@ export default function Tasks() {
   const [currentTaskDateRange, setCurrentTaskDateRange] = useState(null);
   const [mainTab, setMainTab] = useState('suggested');
   const { filterTabs, activeKeyFor } = useTabAccess('Task Management');
-  const { requireAccess } = usePageAccess('Task Management');
+  const { requireAccess, canDelete } = usePageAccess('Task Management');
   const [view, setView] = useState('table');
   const [modalOpen, setModalOpen] = useState(false);
   const [form] = Form.useForm();
@@ -2807,7 +2807,9 @@ export default function Tasks() {
                         render: (_, r) => (
                           <Space>
                             <Button size="small" type="text" icon={<EditOutlined />} onClick={() => openConfigModal(r)} />
-                            <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeConfig(r)} />
+                            {canDelete && (
+                              <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeConfig(r)} />
+                            )}
                           </Space>
                         ),
                       },
