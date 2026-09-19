@@ -3,6 +3,10 @@ const PurchaseOrder = require('../../models/PurchaseOrder');
 const LocalPurchase = require('../../models/LocalPurchase');
 const PickupOrder = require('../../models/PickupOrder');
 const Expense = require('../../models/Expense');
+const Vendor = require('../../models/Vendor');
+const User = require('../../models/User');
+const InventoryItem = require('../../models/InventoryItem');
+const escapeRegex = require('../../utils/escapeRegex');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -15,8 +19,18 @@ exports.getPendingRequests = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
   if (req.query.search) {
-    const re = new RegExp(req.query.search, 'i');
-    filter.$or = [{ itemName: re }];
+    const re = new RegExp(escapeRegex(req.query.search), 'i');
+    // The table shows the live InventoryItem name (itemId.itemName) ahead of the request's own
+    // itemName snapshot, so match both to keep search parity with what's displayed.
+    const [matchingVendors, matchingItems] = await Promise.all([
+      Vendor.find({ name: re }).select('_id'),
+      InventoryItem.find({ itemName: re }).select('_id'),
+    ]);
+    filter.$or = [
+      { itemName: re },
+      ...(matchingVendors.length ? [{ vendorId: { $in: matchingVendors.map((v) => v._id) } }] : []),
+      ...(matchingItems.length ? [{ itemId: { $in: matchingItems.map((i) => i._id) } }] : []),
+    ];
   }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
@@ -177,6 +191,10 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
 exports.getExpensePayments = asyncHandler(async (req, res) => {
   const filter = { expenseSource: 'manual' };
   if (req.query.status) filter.paymentStatus = req.query.status;
+  if (req.query.search) {
+    const re = new RegExp(escapeRegex(req.query.search), 'i');
+    filter.$or = [{ description: re }, { expenseCode: re }, { vendorPayee: re }];
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [expenses, total] = await Promise.all([
@@ -222,6 +240,14 @@ exports.payExpense = asyncHandler(async (req, res, next) => {
 exports.getPickupExpenses = asyncHandler(async (req, res) => {
   const filter = { paymentBy: 'Pickup Team' };
   if (req.query.paymentStatus) filter.reimbursementStatus = req.query.paymentStatus;
+  if (req.query.search) {
+    const re = new RegExp(escapeRegex(req.query.search), 'i');
+    const matchingUsers = await User.find({ fullName: re }).select('_id');
+    filter.$or = [
+      { orderCode: re }, { clientName: re }, { pickupPersonName: re },
+      ...(matchingUsers.length ? [{ pickupEmpId: { $in: matchingUsers.map((u) => u._id) } }] : []),
+    ];
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [records, total] = await Promise.all([
@@ -281,6 +307,10 @@ exports.getLocalPurchaseExpenses = asyncHandler(async (req, res) => {
   // Pending and need Finance to settle via the Pay Now action.
   const filter = {};
   if (req.query.paymentStatus) filter.paymentStatus = req.query.paymentStatus;
+  if (req.query.search) {
+    const re = new RegExp(escapeRegex(req.query.search), 'i');
+    filter.$or = [{ vendorName: re }, { invoiceNo: re }, { 'items.itemName': re }];
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [localPurchases, total] = await Promise.all([
@@ -342,6 +372,14 @@ exports.payLocalPurchase = asyncHandler(async (req, res, next) => {
 exports.getLrPayments = asyncHandler(async (req, res) => {
   const filter = { lrPaymentStatus: { $ne: null } };
   if (req.query.paymentStatus) filter.lrPaymentStatus = req.query.paymentStatus;
+  if (req.query.search) {
+    const re = new RegExp(escapeRegex(req.query.search), 'i');
+    const matchingVendors = await Vendor.find({ name: re }).select('_id');
+    filter.$or = [
+      { poCode: re }, { itemName: re }, { lrNumber: re }, { 'items.itemName': re },
+      ...(matchingVendors.length ? [{ vendorId: { $in: matchingVendors.map((v) => v._id) } }] : []),
+    ];
+  }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [records, total] = await Promise.all([

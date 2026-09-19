@@ -13,6 +13,7 @@ const Task = require('../../models/Task');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const escapeRegex = require('../../utils/escapeRegex');
 const { cloudinary } = require('../../config/cloudinary');
 const { notifyRoles } = require('../../utils/notify');
 const {
@@ -66,8 +67,8 @@ exports.getLeads = asyncHandler(async (req, res) => {
     if (cm.$or) andConds.push(cm); else Object.assign(filter, cm);
   }
   if (req.query.search) {
-    const re = new RegExp(req.query.search, 'i');
-    andConds.push({ $or: [{ hotelName: re }, { phone: re }, { locationCity: re }] });
+    const re = new RegExp(escapeRegex(req.query.search), 'i');
+    andConds.push({ $or: [{ hotelName: re }, { phone: re }, { locationCity: re }, { location: re }, { salesPerson: re }] });
   }
   // Visibility scoping:
   // - Admin / Super Admin: all leads

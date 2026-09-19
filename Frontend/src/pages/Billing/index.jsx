@@ -24,6 +24,7 @@ import { computeRecordBuckets, computeRecordGrandTotal, kitOrderValue } from '..
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
+import useDebouncedValue from '../../hooks/useDebouncedValue';
 import {
   useGetInvoicesQuery,
   useGetQuotationsInProcessQuery,
@@ -204,9 +205,17 @@ export default function Billing() {
   const [invoiceStatusFilter, setInvoiceStatusFilter] = useState(null);
   const [invoicesPage, setInvoicesPage] = useState(1);
   const [invoicesPageSize, setInvoicesPageSize] = useState(10);
+  const [invoiceSearch, setInvoiceSearch] = useState('');
+  const debouncedInvoiceSearch = useDebouncedValue(invoiceSearch.trim());
+  const [editReportOpen, setEditReportOpen] = useState(false);
 
   // Data — RTK Query
-  const { data: invoicesData } = useGetInvoicesQuery({ page: invoicesPage, limit: invoicesPageSize, ...(invoiceStatusFilter ? { status: invoiceStatusFilter } : {}) });
+  const { data: invoicesData } = useGetInvoicesQuery({ page: invoicesPage, limit: invoicesPageSize, ...(invoiceStatusFilter ? { status: invoiceStatusFilter } : {}), ...(debouncedInvoiceSearch ? { search: debouncedInvoiceSearch } : {}) });
+  // Separate unpaginated fetch for the "Edited Invoice & Quotation Report" — that report
+  // must cover every invoice's edit history, not just whichever page the Invoices tab has
+  // loaded via invoicesData above. Heavy (populated invoices), so only fetched once the
+  // report is actually opened.
+  const { data: allInvoicesRaw, isFetching: allInvoicesFetching } = useGetInvoicesQuery({ limit: 2000 }, { skip: !editReportOpen });
   const { data: quotationsData } = useGetQuotationsInProcessQuery();
   const { data: partiesData } = useGetBillingPartiesQuery({ limit: 500 });
   const { data: companySettingsData } = useGetCompanySettingsQuery();
@@ -710,7 +719,6 @@ export default function Billing() {
   const [quotStatusFilter, setQuotStatusFilter] = useState('all');
   const [quotSearch, setQuotSearch] = useState('');
   const [quotDateRange, setQuotDateRange] = useState(null);
-  const [invoiceSearch, setInvoiceSearch] = useState('');
   const [invoiceDateRange, setInvoiceDateRange] = useState(null);
   const [ledgerSearch, setLedgerSearch] = useState('');
   const [ledgerTypeFilter, setLedgerTypeFilter] = useState(null);
@@ -793,7 +801,6 @@ export default function Billing() {
   // quotation-in-process (not just one record) into a single flat, searchable audit report.
   // Openable both as a global "Edited Records Report" button on each tab, and from inside the
   // single-record Price Edit Logs modal above via "View Full Report".
-  const [editReportOpen, setEditReportOpen] = useState(false);
   const [editReportSearch, setEditReportSearch] = useState('');
 
   const billingPartiesData = Object.values(
@@ -1742,14 +1749,23 @@ export default function Billing() {
   // newest first — the data source for the "Edited Invoice & Quotation Report".
   const editedRecordsReport = useMemo(() => {
     const rows = [];
-    invoiceList.forEach((inv) => {
-      (inv.priceEditHistory || []).forEach((h, i) => {
+    (allInvoicesRaw?.data || []).forEach((inv) => {
+      if (!(inv.priceEditHistory || []).length) return;
+      // Same order-code resolution as invoiceList's `order` column (linked order, or the
+      // lead's richest order via orderByLead) so this report's Order No. matches the table.
+      const linkedOrder = inv.orderId && typeof inv.orderId === 'object' ? inv.orderId : null;
+      const linkedLead = linkedOrder?.leadId && typeof linkedOrder.leadId === 'object' ? linkedOrder.leadId : null;
+      const linkedQuotation = inv.quotationId && typeof inv.quotationId === 'object' ? inv.quotationId : null;
+      const quotationLead = linkedQuotation?.leadId && typeof linkedQuotation.leadId === 'object' ? linkedQuotation.leadId : null;
+      const leadId = linkedLead?._id || linkedOrder?.leadId || quotationLead?._id || linkedQuotation?.leadId;
+      const fullOrder = (leadId && orderByLead[String(leadId)]) || linkedOrder;
+      inv.priceEditHistory.forEach((h, i) => {
         rows.push({
-          key: `inv-${inv.key}-${i}`,
+          key: `inv-${inv._id}-${i}`,
           docType: 'Invoice',
-          number: inv.inv,
-          orderNumber: inv.order,
-          client: inv.client,
+          number: inv.invoiceNumber,
+          orderNumber: fullOrder?.orderCode || linkedOrder?.orderCode || '—',
+          client: inv.partyId?.name || '—',
           ...h,
         });
       });
@@ -1768,7 +1784,7 @@ export default function Billing() {
       });
     });
     return rows.sort((a, b) => new Date(b.changedAt || 0) - new Date(a.changedAt || 0));
-  }, [invoiceList, quotationList]);
+  }, [allInvoicesRaw, quotationList, orderByLead]);
 
   const editReportFiltered = editedRecordsReport.filter((r) => {
     const s = editReportSearch.trim().toLowerCase();
@@ -1879,7 +1895,7 @@ export default function Billing() {
             children: (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 0 } }}>
                 <div style={{ padding: '10px 16px 8px', display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', borderBottom: `1px solid ${borderColor}` }}>
-                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client, order..." allowClear value={invoiceSearch} onChange={(e) => setInvoiceSearch(e.target.value)} style={{ flex: '1 1 200px', minWidth: 0, maxWidth: 260, borderRadius: 8 }} />
+                  <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search invoice, client, order..." allowClear value={invoiceSearch} onChange={(e) => { setInvoiceSearch(e.target.value); setInvoicesPage(1); }} style={{ flex: '1 1 200px', minWidth: 0, maxWidth: 260, borderRadius: 8 }} />
                   <Select allowClear placeholder="Status" value={invoiceStatusFilter} onChange={(val) => { setInvoiceStatusFilter(val); setInvoicesPage(1); }} style={{ flex: '0 1 170px', minWidth: 140, borderRadius: 8 }}>
                     <Option value="Paid">Paid</Option>
                     <Option value="Pending">Pending</Option>
@@ -1898,8 +1914,8 @@ export default function Billing() {
                 <div style={{ overflowX: 'auto', width: '100%' }}>
                   <Table
                     dataSource={invoiceList.filter((inv) => {
-                      const q = invoiceSearch.toLowerCase();
-                      if (q && !((inv.inv || '').toLowerCase().includes(q) || (inv.client || '').toLowerCase().includes(q) || (inv.order || '').toLowerCase().includes(q))) return false;
+                      // invoiceSearch is sent to useGetInvoicesQuery as a `search` param and
+                      // filtered server-side (across ALL invoices, not just this page).
                       if (invoiceDateRange) {
                         const d = inv.rawDate ? dayjs(inv.rawDate).format('YYYY-MM-DD') : '';
                         if (d < invoiceDateRange[0] || d > invoiceDateRange[1]) return false;
@@ -2798,13 +2814,14 @@ export default function Billing() {
             Export CSV
           </Button>
         </div>
-        {editedRecordsReport.length === 0 ? (
+        {editedRecordsReport.length === 0 && !allInvoicesFetching ? (
           <div style={{ padding: '24px 0', textAlign: 'center' }}>
             <Text type="secondary">No invoices or quotations have been modified yet.</Text>
           </div>
         ) : (
           <Table
             size="small"
+            loading={allInvoicesFetching}
             pagination={{ pageSize: 10, size: 'small', showSizeChanger: true, pageSizeOptions: ['10', '20', '50'] }}
             rowKey="key"
             dataSource={editReportFiltered}

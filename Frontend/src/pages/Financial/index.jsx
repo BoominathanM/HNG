@@ -17,6 +17,7 @@ import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
+import useDebouncedValue from '../../hooks/useDebouncedValue';
 import {
   useGetPendingRequestsQuery,
   useApproveFinancialRequestMutation,
@@ -54,34 +55,46 @@ export default function Financial() {
   const [purchaseReqStatusFilter, setPurchaseReqStatusFilter] = useState(null);
   const [reqPage, setReqPage] = useState(1);
   const [reqPageSize, setReqPageSize] = useState(10);
+  const [purchaseReqSearch, setPurchaseReqSearch] = useState('');
   const [expStatusFilter, setExpStatusFilter] = useState(null);
   const [expPage, setExpPage] = useState(1);
   const [expPageSize, setExpPageSize] = useState(10);
+  const [expSearch, setExpSearch] = useState('');
   const [pickupPayFilter, setPickupPayFilter] = useState(null);
   const [pickupPage, setPickupPage] = useState(1);
   const [pickupPageSize, setPickupPageSize] = useState(10);
+  const [pickupSearch, setPickupSearch] = useState('');
   const [localExpPayFilter, setLocalExpPayFilter] = useState(null);
   const [localExpPage, setLocalExpPage] = useState(1);
   const [localExpPageSize, setLocalExpPageSize] = useState(10);
+  const [localExpSearch, setLocalExpSearch] = useState('');
   const [lrPayFilter, setLrPayFilter] = useState(null);
   const [lrPayPage, setLrPayPage] = useState(1);
   const [lrPayPageSize, setLrPayPageSize] = useState(10);
+  const [lrPaySearch, setLrPaySearch] = useState('');
+  // Search terms are sent to the server (across ALL records) — debounced so typing fires one
+  // request per pause instead of one per keystroke.
+  const dPurchaseReqSearch = useDebouncedValue(purchaseReqSearch.trim());
+  const dExpSearch = useDebouncedValue(expSearch.trim());
+  const dPickupSearch = useDebouncedValue(pickupSearch.trim());
+  const dLocalExpSearch = useDebouncedValue(localExpSearch.trim());
+  const dLrPaySearch = useDebouncedValue(lrPaySearch.trim());
 
   // RTK Query data
-  const { data: pendingReqData } = useGetPendingRequestsQuery({ page: reqPage, limit: reqPageSize, ...(purchaseReqStatusFilter ? { status: purchaseReqStatusFilter } : {}) });
+  const { data: pendingReqData } = useGetPendingRequestsQuery({ page: reqPage, limit: reqPageSize, ...(purchaseReqStatusFilter ? { status: purchaseReqStatusFilter } : {}), ...(dPurchaseReqSearch ? { search: dPurchaseReqSearch } : {}) });
   const [approveReq] = useApproveFinancialRequestMutation();
   const [batchApproveReqs] = useBatchApproveRequestsMutation();
   const [rejectReq] = useRejectFinancialRequestMutation();
   const [updateQuotation] = useUpdateFinancialQuotationMutation();
   const [requestModification] = useRequestQuotationModificationMutation();
   const [payOrder] = usePayPurchaseOrderMutation();
-  const { data: expensePaymentsData } = useGetExpensePaymentsQuery({ page: expPage, limit: expPageSize, ...(expStatusFilter ? { status: expStatusFilter } : {}) });
+  const { data: expensePaymentsData } = useGetExpensePaymentsQuery({ page: expPage, limit: expPageSize, ...(expStatusFilter ? { status: expStatusFilter } : {}), ...(dExpSearch ? { search: dExpSearch } : {}) });
   const [payExpense] = usePayExpenseMutation();
-  const { data: pickupExpData } = useGetPickupExpensesQuery({ page: pickupPage, limit: pickupPageSize, ...(pickupPayFilter ? { paymentStatus: pickupPayFilter } : {}) });
+  const { data: pickupExpData } = useGetPickupExpensesQuery({ page: pickupPage, limit: pickupPageSize, ...(pickupPayFilter ? { paymentStatus: pickupPayFilter } : {}), ...(dPickupSearch ? { search: dPickupSearch } : {}) });
   const [payPickup] = usePayPickupExpenseMutation();
-  const { data: localPurchaseExpData } = useGetLocalPurchaseExpensesQuery({ page: localExpPage, limit: localExpPageSize, ...(localExpPayFilter ? { paymentStatus: localExpPayFilter } : {}) });
+  const { data: localPurchaseExpData } = useGetLocalPurchaseExpensesQuery({ page: localExpPage, limit: localExpPageSize, ...(localExpPayFilter ? { paymentStatus: localExpPayFilter } : {}), ...(dLocalExpSearch ? { search: dLocalExpSearch } : {}) });
   const [payLocalPurchase] = usePayLocalPurchaseExpenseMutation();
-  const { data: lrPaymentsData } = useGetLrPaymentsQuery({ page: lrPayPage, limit: lrPayPageSize, ...(lrPayFilter ? { paymentStatus: lrPayFilter } : {}) });
+  const { data: lrPaymentsData } = useGetLrPaymentsQuery({ page: lrPayPage, limit: lrPayPageSize, ...(lrPayFilter ? { paymentStatus: lrPayFilter } : {}), ...(dLrPaySearch ? { search: dLrPaySearch } : {}) });
   const [payLrPayment] = usePayLrPaymentMutation();
   const [addPurchaseNote] = useAddPurchaseNoteMutation();
   const { data: vendorData } = useGetVendorsQuery({ limit: 500 });
@@ -324,13 +337,6 @@ export default function Financial() {
     setReimbPayTarget(null);
     reimbPayForm.resetFields();
   };
-
-  // ── Filter state ──
-  const [purchaseReqSearch, setPurchaseReqSearch] = useState('');
-  const [expSearch, setExpSearch] = useState('');
-  const [pickupSearch, setPickupSearch] = useState('');
-  const [localExpSearch, setLocalExpSearch] = useState('');
-  const [lrPaySearch, setLrPaySearch] = useState('');
 
   // ── Date-range filter state (per table) ──
   const [purchaseReqDateRange, setPurchaseReqDateRange] = useState(null);
@@ -756,7 +762,7 @@ export default function Financial() {
                       placeholder="Search item, supplier..."
                       allowClear
                       value={purchaseReqSearch}
-                      onChange={(e) => setPurchaseReqSearch(e.target.value)}
+                      onChange={(e) => { setPurchaseReqSearch(e.target.value); setReqPage(1); }}
                       style={{ width: 220, borderRadius: 8 }}
                     />
                     <Select
@@ -780,8 +786,8 @@ export default function Financial() {
                   <Table
                     size="small"
                     dataSource={groupRequestsByBatch(raisedRequests.filter((r) => {
-                      const q = purchaseReqSearch.toLowerCase();
-                      if (q && !((r.item || '').toLowerCase().includes(q) || (r.supplier || '').toLowerCase().includes(q))) return false;
+                      // purchaseReqSearch is sent to useGetPendingRequestsQuery as a `search`
+                      // param and filtered server-side (across ALL requests, not just this page).
                       if (purchaseReqDateRange) {
                         const d = r.date || '';
                         if (d < purchaseReqDateRange[0] || d > purchaseReqDateRange[1]) return false;
@@ -922,7 +928,7 @@ export default function Financial() {
                       placeholder="Search description, bill no, vendor..."
                       allowClear
                       value={expSearch}
-                      onChange={(e) => setExpSearch(e.target.value)}
+                      onChange={(e) => { setExpSearch(e.target.value); setExpPage(1); }}
                       style={{ width: 260, borderRadius: 8 }}
                     />
                     <Select
@@ -945,8 +951,8 @@ export default function Financial() {
                   <Table
                     size="small"
                     dataSource={expenseRequests.filter((e) => {
-                      const q = expSearch.toLowerCase();
-                      if (q && !((e.desc || '').toLowerCase().includes(q) || (e.bill_no || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q))) return false;
+                      // expSearch is sent to useGetExpensePaymentsQuery as a `search` param
+                      // and filtered server-side (across ALL expenses, not just this page).
                       if (expDateRange) {
                         const d = e.date || '';
                         if (d < expDateRange[0] || d > expDateRange[1]) return false;
@@ -992,7 +998,7 @@ export default function Financial() {
                                 placeholder="Search order, supplier, employee..."
                                 allowClear
                                 value={pickupSearch}
-                                onChange={(e) => setPickupSearch(e.target.value)}
+                                onChange={(e) => { setPickupSearch(e.target.value); setPickupPage(1); }}
                                 style={{ width: 250, borderRadius: 8 }}
                               />
                               <Select
@@ -1021,8 +1027,8 @@ export default function Financial() {
                               <Table
                                 size="small"
                                 dataSource={reimbursementExpenses.filter((r) => {
-                                  const q = pickupSearch.toLowerCase();
-                                  if (q && !((r.orderId || '').toLowerCase().includes(q) || (r.vendor || '').toLowerCase().includes(q) || (r.pickupEmpName || '').toLowerCase().includes(q))) return false;
+                                  // pickupSearch is sent to useGetPickupExpensesQuery as a
+                                  // `search` param, filtered server-side across ALL records.
                                   if (pickupDateRange) {
                                     const d = r.date || '';
                                     if (d < pickupDateRange[0] || d > pickupDateRange[1]) return false;
@@ -1114,7 +1120,7 @@ export default function Financial() {
                                 placeholder="Search PO, item, vendor, LR number..."
                                 allowClear
                                 value={lrPaySearch}
-                                onChange={(e) => setLrPaySearch(e.target.value)}
+                                onChange={(e) => { setLrPaySearch(e.target.value); setLrPayPage(1); }}
                                 style={{ width: 260, borderRadius: 8 }}
                               />
                               <Select
@@ -1144,8 +1150,8 @@ export default function Financial() {
                               <Table
                                 size="small"
                                 dataSource={lrPayments.filter((r) => {
-                                  const q = lrPaySearch.toLowerCase();
-                                  if (q && !((r.poCode || '').toLowerCase().includes(q) || (r.item || '').toLowerCase().includes(q) || (r.vendorName || '').toLowerCase().includes(q) || (r.lrNumber || '').toLowerCase().includes(q) || (r.items || []).some((it) => (it.itemName || '').toLowerCase().includes(q)))) return false;
+                                  // lrPaySearch is sent to useGetLrPaymentsQuery as a `search`
+                                  // param, filtered server-side across ALL LR payments.
                                   if (lrPayDateRange) {
                                     const d = r.expectedDeliveryDate || '';
                                     if (d < lrPayDateRange[0] || d > lrPayDateRange[1]) return false;
@@ -1273,7 +1279,7 @@ export default function Financial() {
                                 placeholder="Search vendor, invoice, item..."
                                 allowClear
                                 value={localExpSearch}
-                                onChange={(e) => setLocalExpSearch(e.target.value)}
+                                onChange={(e) => { setLocalExpSearch(e.target.value); setLocalExpPage(1); }}
                                 style={{ width: 240, borderRadius: 8 }}
                               />
                               <Select
@@ -1302,8 +1308,8 @@ export default function Financial() {
                               <Table
                                 size="small"
                                 dataSource={localPurchaseExpenses.filter((lp) => {
-                                  const q = localExpSearch.toLowerCase();
-                                  if (q && !((lp.vendorName || '').toLowerCase().includes(q) || (lp.invoiceNo || '').toLowerCase().includes(q) || (lp.items || []).some(i => (i.name || '').toLowerCase().includes(q)))) return false;
+                                  // localExpSearch is sent to useGetLocalPurchaseExpensesQuery
+                                  // as a `search` param, filtered server-side across ALL records.
                                   if (localExpDateRange) {
                                     const d = lp.date || '';
                                     if (d < localExpDateRange[0] || d > localExpDateRange[1]) return false;

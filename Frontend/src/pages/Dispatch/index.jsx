@@ -20,6 +20,7 @@ import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
+import useDebouncedValue from '../../hooks/useDebouncedValue';
 import { buildDispatchGroupedProducts, summarizeDispatchVerification } from '../../utils/dispatchGrouping';
 import {
   useGetDispatchesQuery,
@@ -343,7 +344,13 @@ export default function Dispatch() {
   const dispatchStatusParams = dispatchStatusFilter === 'Payment Pending'
     ? { paymentStatus: 'Pending' }
     : (dispatchStatusFilter ? { status: dispatchStatusFilter } : {});
-  const { data: dispatchData } = useGetDispatchesQuery({ page: dispatchPage, limit: dispatchPageSize, ...dispatchStatusParams });
+  // searchText is shared with the "Today's Dispatch Order" sub-tab (which filters its own
+  // fully-loaded list client-side), so only send it to the server while the paginated "All
+  // Orders" list is the one on screen — typing on the other sub-tab must not refetch this
+  // list or shift the stat cards derived from it.
+  const debouncedSearchText = useDebouncedValue(searchText.trim());
+  const dispatchServerSearch = dispatchSubTab === 'all' ? debouncedSearchText : '';
+  const { data: dispatchData } = useGetDispatchesQuery({ page: dispatchPage, limit: dispatchPageSize, ...dispatchStatusParams, ...(dispatchServerSearch ? { search: dispatchServerSearch } : {}) });
   const { data: todaysDispatchData } = useGetTodaysDispatchesQuery();
   // Orders with at least one confirmed dispatch round that's still 'Partial Dispatch' —
   // i.e. some kit/product quantity was left undispatched. Resolved server-side (not just
@@ -1086,8 +1093,13 @@ export default function Dispatch() {
     { title: 'Finance Proof', dataIndex: 'reimbursementProofUrl', width: 130, render: v => v ? <Button size="small" icon={<FileTextOutlined />} onClick={() => window.open(v, '_blank')} style={{ fontSize: 12, color: '#52c41a', borderColor: '#52c41a' }}>View Proof</Button> : <Tag color="default" style={{ borderRadius: 8, fontSize: 11 }}>Not Yet Paid</Tag> },
   ];
 
-  const applyFilters = (orders) => orders.filter((o) => {
-    const s = !searchText || (o.id || '').toLowerCase().includes(searchText.toLowerCase()) || (o.client || '').toLowerCase().includes(searchText.toLowerCase()) || (o.address || '').toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
+  // skipSearch: the "All Orders" dispatch list (dispatchOrders) already has searchText sent
+  // to useGetDispatchesQuery as a `search` param and matched server-side against the order's
+  // full field set (including address fields this client-side check can't see) — re-checking
+  // it here would only ever narrow, never restore, so it's skipped for that dataset. Today's
+  // Dispatch (todayDispatchOrders) is fetched unfiltered, so it still needs this client check.
+  const applyFilters = (orders, { skipSearch = false } = {}) => orders.filter((o) => {
+    const s = skipSearch || !searchText || (o.id || '').toLowerCase().includes(searchText.toLowerCase()) || (o.client || '').toLowerCase().includes(searchText.toLowerCase()) || (o.address || '').toLowerCase().includes(searchText.toLowerCase()) || (o.destination || '').toLowerCase().includes(searchText.toLowerCase());
     const p = paymentFilter === 'All' || o.payment === paymentFilter;
     if (dispatchDateRange) {
       const d = o.createdAt ? o.createdAt.slice(0, 10) : '';
@@ -1101,7 +1113,7 @@ export default function Dispatch() {
   // within the emergency and non-emergency buckets.
   const sortEmergencyFirst = (arr) => [...arr].sort((a, b) => ((b.isEmergency || b.emergencyApproved) ? 1 : 0) - ((a.isEmergency || a.emergencyApproved) ? 1 : 0));
 
-  const filteredOrders = sortEmergencyFirst(applyFilters(dispatchOrders));
+  const filteredOrders = sortEmergencyFirst(applyFilters(dispatchOrders, { skipSearch: true }));
   // Today's Dispatch Order — sourced from the backend's dedicated /dispatch/today
   // endpoint, which filters on the order's tentative delivery date (expectedDeliveryDate).
   const todayOrders = sortEmergencyFirst(applyFilters(todayDispatchOrders));
@@ -1131,7 +1143,7 @@ export default function Dispatch() {
         prefix={<SearchOutlined />}
         placeholder="Search orders, clients, destinations..."
         value={searchText}
-        onChange={(e) => setSearchText(e.target.value)}
+        onChange={(e) => { setSearchText(e.target.value); setDispatchPage(1); }}
         allowClear
         style={{ flex: 1, minWidth: 200, borderRadius: 8 }}
       />

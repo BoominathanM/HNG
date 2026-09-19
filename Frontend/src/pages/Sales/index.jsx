@@ -27,6 +27,7 @@ import { buildDocComposition } from '../../utils/docComposition';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
+import useDebouncedValue from '../../hooks/useDebouncedValue';
 import {
   useGetLeadsQuery,
   useGetOptionsQuery,
@@ -3438,7 +3439,8 @@ export default function Sales() {
     }
   };
 
-  const { data: leadsRaw } = useGetLeadsQuery({ page: leadsPage, limit: leadsPageSize, ...(leadStatusFilter ? { status: leadStatusFilter } : {}), ...(leadCategoryFilter ? { category: leadCategoryFilter } : {}) });
+  const debouncedLeadSearch = useDebouncedValue(leadSearchText.trim());
+  const { data: leadsRaw } = useGetLeadsQuery({ page: leadsPage, limit: leadsPageSize, ...(leadStatusFilter ? { status: leadStatusFilter } : {}), ...(leadCategoryFilter ? { category: leadCategoryFilter } : {}), ...(debouncedLeadSearch ? { search: debouncedLeadSearch } : {}) });
   const { data: quotationsRaw } = useGetSalesQuotationsQuery();
   const { data: negotiationsRaw } = useGetNegotiationsQuery();
   const { data: ordersRaw } = useGetSalesOrdersQuery({ limit: 500 });
@@ -15658,10 +15660,9 @@ export default function Sales() {
                         (o.leadId && String(o.leadId._id || o.leadId) === String(r.key))
                       );
                       if (hasOrder) return false;
-                      if (leadSearchText) {
-                        const q = leadSearchText.toLowerCase();
-                        if (!['hotelName', 'location', 'salesPerson'].some(k => (r[k] || '').toLowerCase().includes(q))) return false;
-                      }
+                      // leadSearchText is sent to useGetLeadsQuery as a `search` param and
+                      // filtered server-side (across ALL leads, not just this page) — see
+                      // the getLeads controller's `search` handling.
                       if (leadDateRange) {
                         const d = r.createdAt ? r.createdAt.slice(0, 10) : '';
                         if (d < leadDateRange[0] || d > leadDateRange[1]) return false;

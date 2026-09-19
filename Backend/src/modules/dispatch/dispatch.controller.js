@@ -12,6 +12,7 @@ const PurchaseOrder = require('../../models/PurchaseOrder');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const escapeRegex = require('../../utils/escapeRegex');
 const { notifyMany, notifyRoles } = require('../../utils/notify');
 const { sendMessage } = require('../../services/whatsAppService');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
@@ -120,7 +121,25 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status && STATUS_LABEL_TO_DB[req.query.status]) filter.status = STATUS_LABEL_TO_DB[req.query.status];
   const visibleIds = await visibleOrderIds(req.user);
-  if (visibleIds) filter.orderId = { $in: visibleIds };
+  let orderIdScope = visibleIds;
+  // Search matches on the linked Order's fields (orderCode/clientName/destination/address),
+  // not on DispatchRecord itself — resolve matching order ids first, then intersect with
+  // the visibility scope above so search never widens what a non-admin can see.
+  if (req.query.search) {
+    const re = new RegExp(escapeRegex(req.query.search), 'i');
+    const matchingOrderIds = await Order.distinct('_id', {
+      $or: [
+        { orderCode: re }, { clientName: re }, { destination: re },
+        { detailedAddress: re }, { shippingAddress: re },
+        { city: re }, { state: re }, { shippingCity: re }, { shippingState: re },
+      ],
+    });
+    const matchingSet = new Set(matchingOrderIds.map(String));
+    orderIdScope = orderIdScope
+      ? orderIdScope.filter((id) => matchingSet.has(String(id)))
+      : matchingOrderIds;
+  }
+  if (orderIdScope) filter.orderId = { $in: orderIdScope };
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
 

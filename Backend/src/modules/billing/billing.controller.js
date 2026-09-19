@@ -7,6 +7,7 @@ const Order = require('../../models/Order');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
+const escapeRegex = require('../../utils/escapeRegex');
 const { notifyRoles } = require('../../utils/notify');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
 const { computeRecordBuckets, computeCompositionGrandTotal, r2 } = require('../../utils/orderCalc');
@@ -538,8 +539,16 @@ exports.getInvoices = asyncHandler(async (req, res) => {
   if (req.query.partyId) filter.partyId = req.query.partyId;
   if (req.query.orderId) filter.orderId = req.query.orderId;
   if (req.query.search) {
-    const re = new RegExp(req.query.search, 'i');
-    filter.$or = [{ invoiceNumber: re }];
+    const re = new RegExp(escapeRegex(req.query.search), 'i');
+    const [matchingParties, matchingOrders] = await Promise.all([
+      Party.find({ name: re }).select('_id'),
+      Order.find({ orderCode: re }).select('_id'),
+    ]);
+    filter.$or = [
+      { invoiceNumber: re },
+      ...(matchingParties.length ? [{ partyId: { $in: matchingParties.map((p) => p._id) } }] : []),
+      ...(matchingOrders.length ? [{ orderId: { $in: matchingOrders.map((o) => o._id) } }] : []),
+    ];
   }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
