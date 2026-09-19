@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
   Typography, Space, Divider, InputNumber, Tabs, Tooltip, Modal, DatePicker, Upload, Checkbox, Radio,
-  Dropdown,
+  Dropdown, Switch,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -142,6 +142,33 @@ const sumPaid = (...sources) => {
     maxPaid = Math.max(maxPaid, coll, stored);
   }
   return r2(maxPaid);
+};
+
+// What one "Record Payment In" save actually books, given the Paid/Unpaid switches of the courier
+// charge and of the round off.
+//  - Paid (or not used): unchanged — money received = Amount + courier + the signed round off.
+//  - Unpaid round off / Unpaid courier: a pure adjustment of the document total (a courier charge and
+//    an Addition raise it, a Discount lowers it). NOTHING is received for it, so it adds nothing to
+//    the money booked. And because the Amount field is pre-filled with the balance, leaving that
+//    default in place would settle the record — exactly what "Unpaid" is meant to prevent — so a save
+//    that only adjusts the total ignores the Amount: any Unpaid round off, or an Unpaid courier with
+//    no Paid round off alongside (a Paid round off is money received in this save, so the Amount it
+//    is measured against stays). `courierPaid` defaults to Paid so callers that don't send it behave
+//    exactly as before the courier switch existed.
+// Single source of truth for the drawer preview, the footer and the saved entry.
+const resolvePaymentAmounts = ({ amount, courier, roundOff, roundOffPaid, courierPaid = true }) => {
+  const unpaidRoundOff = roundOff !== 0 && !roundOffPaid;
+  const unpaidCourier = courier !== 0 && !courierPaid;
+  const paidRoundOff = roundOff !== 0 && !!roundOffPaid;
+  const amountIgnored = unpaidRoundOff || (unpaidCourier && !paidRoundOff);
+  const baseAmount = amountIgnored ? 0 : (Number(amount) || 0);
+  return {
+    unpaidRoundOff,
+    unpaidCourier,
+    amountIgnored,
+    baseAmount,
+    net: r2(baseAmount + (courierPaid ? courier : 0) + (roundOffPaid ? roundOff : 0)),
+  };
 };
 
 const statusColor = { Paid: '#6b1240', Pending: '#C94F8A', 'Partially Paid': '#B11E6A', Overdue: '#8a1652' };
@@ -474,10 +501,21 @@ export default function Billing() {
     // so courier/round-off (which live only inside paymentCollection entries) aren't silently
     // dropped from the total when one linked record falls behind another (e.g. a sync gap).
     const collSum = (c) => (c || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+    // On equal paid sums, the collection carrying more round-off / Unpaid-courier entries wins: an
+    // Unpaid round off or courier charge is an entry with paidAmount 0, so it never raises the sum —
+    // without this tie-break it could never be picked and it would silently vanish from the total.
+    // It only ever decides between collections that differ in such entries (only an explicit
+    // `courierPaid:false` counts, so every courier entry saved before the switch is ignored here), so
+    // with no round off / Unpaid courier recorded anywhere the pick is exactly what it was before.
+    const adjustmentEntries = (c) => c.filter((e) => Number(e?.roundOff) || (Number(e?.courierCharge) && e?.courierPaid === false)).length;
     const paymentCollection = [linkedOrder, lead, q]
       .filter(Boolean)
       .map((src) => src.paymentCollection || [])
-      .reduce((best, c) => (collSum(c) > collSum(best) ? c : best), []);
+      .reduce((best, c) => {
+        const cSum = collSum(c);
+        const bestSum = collSum(best);
+        return cSum > bestSum || (cSum === bestSum && adjustmentEntries(c) > adjustmentEntries(best)) ? c : best;
+      }, []);
     const sourceRec = {
       products: lProds,
       kitOrders: lKitOrders,
@@ -726,9 +764,17 @@ export default function Billing() {
   const [payNoteVisible, setPayNoteVisible] = useState(false);
   const [payCourierVisible, setPayCourierVisible] = useState(false);
   const [payCourierAmount, setPayCourierAmount] = useState(0);
+  // Paid / Unpaid switch for the courier charge — same idea as the round off's below. Paid: the courier
+  // is collected with this payment (counted as received). Unpaid (default): it only raises the total —
+  // nothing is credited as paid for it, so it stays due until a later payment.
+  const [payCourierPaid, setPayCourierPaid] = useState(false);
   const [payRoundOffVisible, setPayRoundOffVisible] = useState(false);
   const [payRoundOffAmount, setPayRoundOffAmount] = useState(0);
   const [payRoundOffType, setPayRoundOffType] = useState('addition'); // 'addition' | 'discount'
+  // Paid / Unpaid switch. Paid: the round off is counted as received, so it never moves the
+  // balance (the original behaviour). Unpaid (default): it only adjusts the total — nothing is
+  // credited as paid for it, so an Addition leaves that much still due and a Discount shrinks it.
+  const [payRoundOffPaid, setPayRoundOffPaid] = useState(false);
   // Signed round-off value: Addition grows the payable total, Discount shrinks it.
   // Kept signed so every downstream sum (net payable, invoice total, saved entry) can
   // keep doing plain addition without knowing about the Addition/Discount choice.
@@ -835,21 +881,28 @@ export default function Billing() {
     setPayNoteVisible(false);
     setPayCourierVisible(false);
     setPayCourierAmount(0);
+    setPayCourierPaid(false);
     setPayRoundOffVisible(false);
     setPayRoundOffAmount(0);
     setPayRoundOffType('addition');
+    setPayRoundOffPaid(false);
     setRecordPayOpen(true);
   };
 
-  // Net amount actually credited toward the invoice/quotation balance:
-  // + courier/shipping charge collected on top of the amount
-  // + round off (the paise-level gap the business forgives — counts as paid)
-  const computeNetPayable = () =>
-    r2(
-      (Number(payAmount) || 0)
-      + (payCourierVisible ? Number(payCourierAmount) || 0 : 0)
-      + (payRoundOffVisible ? signedRoundOff : 0)
-    );
+  // Money this save records (see resolvePaymentAmounts): Amount + the courier and the round off when
+  // each is Paid — an Unpaid one only moves the document total (see the courier/roundOffTotal sums).
+  const paymentAmounts = () => resolvePaymentAmounts({
+    amount: payAmount,
+    courier: payCourierVisible ? Number(payCourierAmount) || 0 : 0,
+    courierPaid: payCourierPaid,
+    roundOff: payRoundOffVisible ? signedRoundOff : 0,
+    roundOffPaid: payRoundOffPaid,
+  });
+  // Net amount actually credited toward the invoice/quotation balance.
+  const computeNetPayable = () => paymentAmounts().net;
+  // True while a real (non-zero) Unpaid courier / round off makes this save a pure adjustment of the
+  // total — the Amount is then not recorded.
+  const amountIgnoredActive = paymentAmounts().amountIgnored;
 
   // Propagate a new paidAmount to every linked record in the lead→quotation→negotiation→order chain.
   // Also appends a paymentCollection entry to the linked ORDER so Sales' combinedPaymentCollection
@@ -858,7 +911,15 @@ export default function Billing() {
   // itself (recordPayment / updateQuotation both do this now) — avoids double-appending
   // the same paymentCollection entry to the order from both sides.
   const syncBillingChain = async (sourceDoc, newPaid, paymentEntry, skipOrderSync = false) => {
-    if (!newPaid) return;
+    // An adjustment-only entry (an Unpaid round off and/or Unpaid courier charge with nothing collected
+    // alongside it) changes the record's TOTAL without adding any money, so newPaid doesn't move.
+    // Every linked record's total reads its round off / courier from its own paymentCollection, so
+    // such an entry still has to be appended there — see syncIfHigher. Every other entry follows the
+    // original rules untouched.
+    const isAdjustmentOnly = !!paymentEntry
+      && ((Number(paymentEntry.roundOff) || 0) !== 0 || (Number(paymentEntry.courierCharge) || 0) !== 0)
+      && (Number(paymentEntry.paidAmount) || 0) === 0;
+    if (!newPaid && !isAdjustmentOnly) return;
     const scalarPatch = { paidAmount: newPaid, advancePaid: newPaid };
     const allLeads = leadsRaw?.data || [];
     const allQuots = quotationsData?.data || [];
@@ -878,6 +939,13 @@ export default function Billing() {
       if (!recId || recId === String(sourceDoc._id || sourceDoc.key || '')) return;
       if (newPaid > Number(record.paidAmount || 0)) {
         await mutFn({ id: recId, ...scalarPatch, ...(extraPatch || {}) }).unwrap().catch(() => {});
+      } else if (isAdjustmentOnly && extraPatch?.paymentCollection) {
+        // No money moved, so the paid scalars stay untouched — but the round off / courier still has
+        // to land in this record's collection (once: skip if a same-entry copy is already there).
+        const alreadyThere = (record.paymentCollection || []).some(
+          (e) => e?.recordedAt === paymentEntry.recordedAt && Number(e?.paidAmount || 0) === Number(paymentEntry.paidAmount || 0)
+        );
+        if (!alreadyThere) await mutFn({ id: recId, ...extraPatch }).unwrap().catch(() => {});
       }
     };
 
@@ -936,11 +1004,29 @@ export default function Billing() {
     if (!recordPayInv?.key) { enqueueSnackbar('No invoice selected', { variant: 'error' }); return; }
     const courierCharge = payCourierVisible ? Number(payCourierAmount) || 0 : 0;
     const roundOff = payRoundOffVisible ? signedRoundOff : 0;
+    // The Paid/Unpaid switches only matter when a courier charge / round off is actually being recorded.
+    const courierPaid = courierCharge !== 0 ? payCourierPaid : true;
+    const roundOffPaid = roundOff !== 0 ? payRoundOffPaid : true;
+    // What this save really books: for an Unpaid courier / round off that is no money at all (baseAmount
+    // and net stay 0 whatever the pre-filled Amount says) — they only move the record's total.
+    const { baseAmount, net } = paymentAmounts();
+    // A Paid Discount bigger than the money received would book a NEGATIVE payment (it happened:
+    // a −₹0.33 "payment" on an order). The round off can't be paid out of nothing — raise the
+    // Amount, or mark the round off Unpaid so it only lowers the total.
+    if (net < 0) {
+      enqueueSnackbar(
+        `A Paid round-off discount of ₹${Math.abs(roundOff).toLocaleString()} is more than the amount received. Raise the Amount, or switch Round Off to Unpaid.`,
+        { variant: 'error' },
+      );
+      return;
+    }
     const newEntry = {
-      paidAmount: computeNetPayable(),
-      baseAmount: Number(payAmount) || 0,
+      paidAmount: net,
+      baseAmount,
       courierCharge,
+      courierPaid,
       roundOff,
+      roundOffPaid,
       paymentMode: payMode || 'Cash',
       paymentMethod: payMode || 'Cash',
       note: payNote || '',
@@ -951,14 +1037,24 @@ export default function Billing() {
       recordedBy: currentUser?._id || currentUser?.id,
       recordedByName: currentUserName,
     };
-    const net = newEntry.paidAmount;
+    const unpaidCourier = !courierPaid && courierCharge !== 0;
+    const unpaidRoundOff = !roundOffPaid && roundOff !== 0;
+    const adjustmentOnly = (unpaidCourier || unpaidRoundOff) && net === 0;
+    // The record's total once this entry lands. An Unpaid round off / courier charge moves the total
+    // (a courier charge and an Addition raise it, a Discount lowers it) without adding anything to
+    // what's paid, so the stored balance/status below must be measured against THIS total —
+    // `recordPayInv.total` is the pre-entry figure and would leave the stored balance off by that
+    // amount. Every other entry (no round off/courier, or Paid ones) is measured exactly as before.
+    const totalAfterEntry = unpaidCourier || unpaidRoundOff
+      ? r2((recordPayInv.total || 0) + courierCharge + roundOff)
+      : (recordPayInv.total || 0);
     try {
       if (recordPayInv.docType === 'Order') {
         // Direct order payment (record on Sales Order)
         const existing = recordPayInv.paymentCollection || [];
         const newPaid = existing.reduce((s, e) => s + Number(e.paidAmount || 0), 0) + net;
-        const newBalance = Math.max(0, (recordPayInv.total || 0) - newPaid);
-        const newStatus = (recordPayInv.total || 0) > 0 && newPaid >= (recordPayInv.total || 0) ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Unpaid';
+        const newBalance = r2(Math.max(0, totalAfterEntry - newPaid));
+        const newStatus = totalAfterEntry > 0 && r2(newPaid) >= totalAfterEntry ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Unpaid';
         await updateSalesOrderMutation({
           id: recordPayInv.key,
           paidAmount: newPaid,
@@ -979,8 +1075,8 @@ export default function Billing() {
           Number(recordPayInv.advance || recordPayInv.paidAmount || 0)
         );
         const newPaid = priorPaid + net;
-        const newBalance = Math.max(0, (recordPayInv.total || 0) - newPaid);
-        const newStatus = (recordPayInv.total || 0) > 0 && newPaid >= (recordPayInv.total || 0) ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Unpaid';
+        const newBalance = r2(Math.max(0, totalAfterEntry - newPaid));
+        const newStatus = totalAfterEntry > 0 && r2(newPaid) >= totalAfterEntry ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Unpaid';
         await updateSalesQuotationMutation({
           id: recordPayInv.key,
           paidAmount: newPaid,
@@ -1001,9 +1097,11 @@ export default function Billing() {
         // Invoice payment (formal invoice via Billing module)
         await recordPaymentMutation({
           id: recordPayInv.key,
-          amount: Number(payAmount) || 0,
+          amount: baseAmount,
           courierCharge,
+          courierPaid,
           roundOff,
+          roundOffPaid,
           paymentMode: payMode === 'Net Banking' ? 'Bank Transfer' : (payMode || 'Cash'),
           note: payNote || '',
           // Shared with the paymentCollection entry syncBillingChain appends to the linked
@@ -1030,7 +1128,16 @@ export default function Billing() {
           await syncBillingChain(recordPayInv, newPaid, newEntry, true);
         }
       }
-      enqueueSnackbar(`Payment of ₹${net.toLocaleString()} recorded successfully`, { variant: 'success' });
+      const unpaidDesc = [
+        unpaidCourier && `Courier charge of ₹${courierCharge.toLocaleString()}`,
+        unpaidRoundOff && `${unpaidCourier ? 'round off' : 'Round off'} of ${roundOff < 0 ? '−' : '+'}₹${Math.abs(roundOff).toLocaleString()}`,
+      ].filter(Boolean).join(' and ');
+      enqueueSnackbar(
+        adjustmentOnly
+          ? `${unpaidDesc} recorded as unpaid — total updated`
+          : `Payment of ₹${net.toLocaleString()} recorded successfully`,
+        { variant: 'success' },
+      );
       setRecordPayOpen(false);
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to record payment', { variant: 'error' });
@@ -2059,21 +2166,34 @@ export default function Billing() {
                 AMOUNT <span style={{ color: '#e53935' }}>*</span>
               </Text>
             </div>
+            {/* While a round off / courier charge is Unpaid, no money is recorded — show 0 and lock the
+                field. The typed Amount is kept in state, so it comes back if the adjustment is unticked
+                or set to Paid. */}
             <InputNumber
               prefix={<Text style={{ color: '#555', fontSize: 16, marginRight: 4 }}>₹</Text>}
-              value={payAmount}
+              value={amountIgnoredActive ? 0 : payAmount}
               onChange={(v) => setPayAmount(v || 0)}
               min={0}
+              disabled={amountIgnoredActive}
               style={{ width: '100%', height: 50, borderRadius: 8, fontSize: 18 }}
               controls={false}
             />
+            {amountIgnoredActive && (() => {
+              const { unpaidRoundOff: uRO, unpaidCourier: uC } = paymentAmounts();
+              const what = [uC && 'Courier Charge', uRO && 'Round Off'].filter(Boolean).join(' and ');
+              return (
+                <Text style={{ fontSize: 12, color: '#d46b08', display: 'block', marginTop: 4 }}>
+                  {what} {uC && uRO ? 'are' : 'is'} Unpaid — no payment is recorded, only the total changes. Switch {uRO ? 'Round Off' : 'Courier Charge'} to Paid to record the amount.
+                </Text>
+              );
+            })()}
             <Divider style={{ margin: '14px 0' }} />
 
             {/* ── Courier Charge ── */}
             <div style={{ marginBottom: payCourierVisible ? 10 : 0 }}>
               <Checkbox
                 checked={payCourierVisible}
-                onChange={(e) => { setPayCourierVisible(e.target.checked); if (!e.target.checked) setPayCourierAmount(0); }}
+                onChange={(e) => { setPayCourierVisible(e.target.checked); if (!e.target.checked) { setPayCourierAmount(0); setPayCourierPaid(false); } }}
               >
                 <Text style={{ fontSize: 13, fontWeight: 500 }}>Courier Charge</Text>
               </Checkbox>
@@ -2088,6 +2208,26 @@ export default function Billing() {
                     style={{ width: '100%', borderRadius: 8 }}
                     controls={false}
                   />
+                  <Text style={{ fontSize: 12, color: '#16a34a', display: 'block', marginTop: 4 }}>
+                    {`+ ₹${(Number(payCourierAmount) || 0).toLocaleString()} will be added to the total`}
+                  </Text>
+                  {/* Paid / Unpaid — whether the courier charge also counts as money received */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, padding: '8px 10px', borderRadius: 8, background: '#f7f7fb', border: '1px solid #ececf3' }}>
+                    <div style={{ paddingRight: 10 }}>
+                      <Text style={{ fontSize: 13, fontWeight: 500, display: 'block' }}>Courier Status</Text>
+                      <Text style={{ fontSize: 12, color: '#888' }}>
+                        {payCourierPaid
+                          ? 'Paid — collected now, counted as received.'
+                          : 'Unpaid — added to the total only; not counted as received.'}
+                      </Text>
+                    </div>
+                    <Switch
+                      checked={payCourierPaid}
+                      onChange={setPayCourierPaid}
+                      checkedChildren="Paid"
+                      unCheckedChildren="Unpaid"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -2097,7 +2237,7 @@ export default function Billing() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Checkbox
                   checked={payRoundOffVisible}
-                  onChange={(e) => { setPayRoundOffVisible(e.target.checked); if (!e.target.checked) { setPayRoundOffAmount(0); setPayRoundOffType('addition'); } }}
+                  onChange={(e) => { setPayRoundOffVisible(e.target.checked); if (!e.target.checked) { setPayRoundOffAmount(0); setPayRoundOffType('addition'); setPayRoundOffPaid(false); } }}
                 >
                   <Text style={{ fontSize: 13, fontWeight: 500 }}>Round Off</Text>
                 </Checkbox>
@@ -2132,6 +2272,23 @@ export default function Billing() {
                       ? `− ₹${(Number(payRoundOffAmount) || 0).toLocaleString()} will be subtracted from the total`
                       : `+ ₹${(Number(payRoundOffAmount) || 0).toLocaleString()} will be added to the total`}
                   </Text>
+                  {/* Paid / Unpaid — whether the round off also counts as money received */}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, padding: '8px 10px', borderRadius: 8, background: '#f7f7fb', border: '1px solid #ececf3' }}>
+                    <div style={{ paddingRight: 10 }}>
+                      <Text style={{ fontSize: 13, fontWeight: 500, display: 'block' }}>Round Off Status</Text>
+                      <Text style={{ fontSize: 12, color: '#888' }}>
+                        {payRoundOffPaid
+                          ? 'Paid — counted as received; the balance stays the same.'
+                          : 'Unpaid — only the total changes; no payment is recorded.'}
+                      </Text>
+                    </div>
+                    <Switch
+                      checked={payRoundOffPaid}
+                      onChange={setPayRoundOffPaid}
+                      checkedChildren="Paid"
+                      unCheckedChildren="Unpaid"
+                    />
+                  </div>
                 </div>
               )}
             </div>
@@ -2152,7 +2309,15 @@ export default function Billing() {
               const courier = payCourierVisible ? Number(payCourierAmount) || 0 : 0;
               const roundOffAmt = payRoundOffVisible ? signedRoundOff : 0;
               const invBalanceWithExtras = r2(inv.balance + courier + roundOffAmt);
-              const settled = Math.min(computeNetPayable(), invBalanceWithExtras);
+              const netPayable = computeNetPayable();
+              const settled = Math.min(netPayable, invBalanceWithExtras);
+              // Live read-out of what this entry does to the document total / balance. Only shown
+              // while a round off or an Unpaid courier charge is being recorded, so the drawer is
+              // unchanged otherwise.
+              const showRoundOffEffect = (payRoundOffVisible && roundOffAmt !== 0) || paymentAmounts().unpaidCourier;
+              const totalBefore = r2(Number(inv.total) || 0);
+              const totalAfter = r2(totalBefore + courier + roundOffAmt);
+              const balanceAfter = r2(Math.max(0, invBalanceWithExtras - netPayable));
               return (
                 <div key={inv.key} style={{ padding: '12px 0', borderBottom: '1px solid #f0f0f0' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
@@ -2163,14 +2328,28 @@ export default function Billing() {
                           Inv Amt: {invBalanceWithExtras.toLocaleString()} • {dayjs(inv.date?.split(' ')[0] || undefined).format('D MMM YYYY')}
                         </Text>
                       </div>
+                      {showRoundOffEffect && (
+                        <div>
+                          <Text style={{ fontSize: 12, color: '#888' }}>
+                            Total: ₹{totalBefore.toLocaleString()} → <Text strong style={{ fontSize: 12 }}>₹{totalAfter.toLocaleString()}</Text>
+                          </Text>
+                        </div>
+                      )}
                     </div>
                     <div style={{ textAlign: 'right' }}>
                       <Text style={{ fontSize: 15, color: '#1a1a2e' }}>₹ {invBalanceWithExtras.toLocaleString()}</Text>
                       <div>
                         <Text style={{ fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
-                          ₹{settled.toLocaleString()} Settled <CheckCircleOutlined />
+                          ₹{settled.toLocaleString()} Settled {(settled > 0 || !showRoundOffEffect) && <CheckCircleOutlined />}
                         </Text>
                       </div>
+                      {showRoundOffEffect && (
+                        <div>
+                          <Text style={{ fontSize: 12, color: balanceAfter > 0 ? '#B11E6A' : '#16a34a' }}>
+                            Balance after: ₹{balanceAfter.toLocaleString()}
+                          </Text>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2342,7 +2521,9 @@ export default function Billing() {
                 mode: p.paymentMode,
                 amount: p.amount,
                 courierCharge: p.courierCharge,
+                courierPaid: p.courierPaid,
                 roundOff: p.roundOff,
+                roundOffPaid: p.roundOffPaid,
                 net: p.netAmount,
                 by: p.createdBy?.fullName || p.createdBy?.name || p.createdBy?.email || '—',
                 note: p.note,
@@ -2353,7 +2534,9 @@ export default function Billing() {
                 mode: e.paymentMode || e.paymentMethod,
                 amount: e.baseAmount != null ? e.baseAmount : e.paidAmount,
                 courierCharge: e.courierCharge,
+                courierPaid: e.courierPaid,
                 roundOff: e.roundOff,
+                roundOffPaid: e.roundOffPaid,
                 net: e.paidAmount,
                 by: e.recordedByName || '—',
                 note: e.note || e.notes,
@@ -2374,8 +2557,32 @@ export default function Billing() {
                   { title: 'Date & Time', dataIndex: 'when', width: 160, render: (v) => v ? dayjs(v).format('D MMM YYYY, h:mm A') : '—' },
                   { title: 'Mode', dataIndex: 'mode', width: 100 },
                   { title: 'Amount', dataIndex: 'amount', width: 100, render: (v) => v != null ? `₹${Number(v).toLocaleString()}` : '—' },
-                  { title: 'Courier Charge', dataIndex: 'courierCharge', width: 120, render: (v) => v ? `₹${Number(v).toLocaleString()}` : '—' },
-                  { title: 'Round Off', dataIndex: 'roundOff', width: 100, render: (v) => v ? `${Number(v) < 0 ? '− ' : ''}₹${Math.abs(Number(v)).toLocaleString()}` : '—' },
+                  {
+                    title: 'Courier Charge', dataIndex: 'courierCharge', width: 150,
+                    // Same rule as the round off below: entries saved before the courier Paid/Unpaid
+                    // switch have no flag and were always counted as paid.
+                    render: (v, row) => v ? (
+                      <Space size={4}>
+                        <span>{`₹${Number(v).toLocaleString()}`}</span>
+                        <Tag color={row.courierPaid === false ? 'orange' : 'green'} style={{ margin: 0, fontSize: 11 }}>
+                          {row.courierPaid === false ? 'Unpaid' : 'Paid'}
+                        </Tag>
+                      </Space>
+                    ) : '—',
+                  },
+                  {
+                    title: 'Round Off', dataIndex: 'roundOff', width: 150,
+                    // Entries saved before the Paid/Unpaid switch have no flag and were always
+                    // counted as paid, so only an explicit `false` reads as Unpaid.
+                    render: (v, row) => v ? (
+                      <Space size={4}>
+                        <span>{`${Number(v) < 0 ? '− ' : ''}₹${Math.abs(Number(v)).toLocaleString()}`}</span>
+                        <Tag color={row.roundOffPaid === false ? 'orange' : 'green'} style={{ margin: 0, fontSize: 11 }}>
+                          {row.roundOffPaid === false ? 'Unpaid' : 'Paid'}
+                        </Tag>
+                      </Space>
+                    ) : '—',
+                  },
                   { title: 'Net Paid', dataIndex: 'net', width: 110, render: (v) => <Text strong style={{ color: '#16a34a' }}>₹{Number(v || 0).toLocaleString()}</Text> },
                   { title: 'Recorded By', dataIndex: 'by', width: 150, render: (v) => <Space size={4}><UserOutlined style={{ color: '#aaa' }} />{v}</Space> },
                   { title: 'Note', dataIndex: 'note', width: 150, render: (v) => v || '—' },

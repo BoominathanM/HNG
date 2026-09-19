@@ -905,28 +905,41 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
   if (!invoice) return next(new AppError('Invoice not found', 404));
 
   const payRef = await generateCode('REC');
-  // Courier charge and round off are both extra amounts owed on top of the invoice —
-  // each raises the invoice total, then is collected (credited) here too.
+  // Courier charge and round off both change what's owed on the invoice — each moves the
+  // invoice total (a Discount round off lowers it). Each is credited as received only when its own
+  // Paid/Unpaid switch is Paid — the default: anything but an explicit `false`, so callers that
+  // don't send a flag behave exactly as before. Unpaid: the charge/round off only moves the total,
+  // so an Addition or courier charge stays due and a Discount shrinks what's due.
   const courierCharge = Number(req.body.courierCharge) || 0;
   const roundOff = Number(req.body.roundOff) || 0;
-  const netAmount = (req.body.amount || 0) + courierCharge + roundOff;
+  const courierPaid = req.body.courierPaid !== false;
+  const roundOffPaid = req.body.roundOffPaid !== false;
+  const creditedCourier = courierPaid ? courierCharge : 0;
+  const creditedRoundOff = roundOffPaid ? roundOff : 0;
+  const netAmount = r2((Number(req.body.amount) || 0) + creditedCourier + creditedRoundOff);
+  const unpaidCourier = !courierPaid && courierCharge !== 0;
+  const unpaidRoundOff = !roundOffPaid && roundOff !== 0;
+  // An Unpaid courier charge / round off with nothing collected alongside it: an adjustment, not a payment.
+  const adjustmentOnly = (unpaidCourier || unpaidRoundOff) && netAmount === 0;
 
   const payment = await Payment.create({
     ...req.body,
     paymentRef: payRef,
+    courierPaid,
+    roundOffPaid,
     netAmount,
     invoiceId: invoice._id,
     createdBy: req.user._id,
   });
 
-  // Courier charge and round off both raise what's actually owed on the invoice before
+  // Courier charge and round off both change what's actually owed on the invoice before
   // we credit the payment against it.
-  if (courierCharge) invoice.total = (invoice.total || 0) + courierCharge;
-  if (roundOff) invoice.total = (invoice.total || 0) + roundOff;
+  if (courierCharge) invoice.total = r2((invoice.total || 0) + courierCharge);
+  if (roundOff) invoice.total = r2((invoice.total || 0) + roundOff);
 
   // Update invoice balance
-  invoice.advanceAmount = (invoice.advanceAmount || 0) + netAmount;
-  invoice.balanceDue = Math.max(0, invoice.total - invoice.advanceAmount);
+  invoice.advanceAmount = r2((invoice.advanceAmount || 0) + netAmount);
+  invoice.balanceDue = r2(Math.max(0, invoice.total - invoice.advanceAmount));
   if (invoice.balanceDue === 0) invoice.status = 'Paid';
   else if (invoice.advanceAmount > 0) invoice.status = 'Partially Paid';
   await invoice.save({ validateBeforeSave: false });
@@ -935,18 +948,55 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
   if (req.body.partyId || invoice.partyId) {
     const pId = req.body.partyId || invoice.partyId;
     const lastEntry = await LedgerEntry.findOne({ partyId: pId }).sort('-createdAt');
-    const prevBal = lastEntry ? lastEntry.balance : 0;
-    const newBalance = Math.max(0, prevBal - netAmount);
-    await LedgerEntry.create({
-      partyId: pId,
-      type: 'Payment',
-      docRef: payRef,
-      debit: 0,
-      credit: netAmount,
-      balance: newBalance,
-      createdBy: req.user._id,
-    });
-    await Party.findByIdAndUpdate(pId, { runningBalance: newBalance });
+    let runningBal = lastEntry ? lastEntry.balance : 0;
+
+    // An Unpaid courier charge raises what the party owes without any money moving — a debit.
+    // (A Paid courier needs no row of its own: it is netted into the Payment credit below, as ever.)
+    if (unpaidCourier) {
+      runningBal = Math.max(0, r2(runningBal + courierCharge));
+      await LedgerEntry.create({
+        partyId: pId,
+        type: 'Debit Note',
+        docRef: invoice.invoiceNumber,
+        debit: courierCharge,
+        credit: 0,
+        balance: runningBal,
+        note: `Unpaid courier charge — ${payRef}`,
+        createdBy: req.user._id,
+      });
+    }
+
+    // An Unpaid round off changes what the party owes without any money moving: an Addition is
+    // a debit (owes more), a Discount a credit (owes less). A Paid round off needs no row of its
+    // own — it is already netted into the Payment credit below, exactly as it always was.
+    if (!roundOffPaid && roundOff) {
+      runningBal = Math.max(0, r2(runningBal + roundOff));
+      await LedgerEntry.create({
+        partyId: pId,
+        type: roundOff > 0 ? 'Debit Note' : 'Credit Note',
+        docRef: invoice.invoiceNumber,
+        debit: roundOff > 0 ? roundOff : 0,
+        credit: roundOff < 0 ? -roundOff : 0,
+        balance: runningBal,
+        note: `Unpaid round off — ${payRef}`,
+        createdBy: req.user._id,
+      });
+    }
+
+    // Nothing was collected on an adjustment-only save, so there is no Payment row to post.
+    if (!adjustmentOnly) {
+      runningBal = Math.max(0, r2(runningBal - netAmount));
+      await LedgerEntry.create({
+        partyId: pId,
+        type: 'Payment',
+        docRef: payRef,
+        debit: 0,
+        credit: netAmount,
+        balance: runningBal,
+        createdBy: req.user._id,
+      });
+    }
+    await Party.findByIdAndUpdate(pId, { runningBalance: runningBal });
   }
 
   // Propagate the payment to the linked order — both its own paymentCollection (so
@@ -967,6 +1017,10 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
       // Operations) can fold this payment's courier charge into the order's grand total too.
       courierCharge,
       roundOff,
+      // Lets every reader of this entry (Payment History, Sales) tell an Unpaid courier charge /
+      // round off — which moved the total but is NOT part of paidAmount above — from a Paid one.
+      courierPaid,
+      roundOffPaid,
       note: req.body.note || '',
       notes: req.body.note || '',
       paymentDate: new Date().toISOString(),
@@ -985,7 +1039,21 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
   let taskPaymentStatus = null;
   if (orderId) taskPaymentStatus = await syncOrderTasksPayment(orderId).catch(() => null);
 
-  notifyRoles({ modules: ['Billing', 'Financial', 'Sales Team'], type: 'payment_due', title: 'Payment Received', message: `Payment of ₹${netAmount?.toLocaleString()} received — Invoice ${invoice.invoiceNumber} (Balance: ₹${invoice.balanceDue?.toLocaleString()})`, link: '/billing' }).catch(() => {});
+  const unpaidDesc = [
+    unpaidCourier && `courier charge of ₹${courierCharge.toLocaleString()}`,
+    unpaidRoundOff && `round off of ${roundOff < 0 ? '−' : '+'}₹${Math.abs(roundOff).toLocaleString()}`,
+  ].filter(Boolean).join(' and ');
+  notifyRoles({
+    modules: ['Billing', 'Financial', 'Sales Team'],
+    type: 'payment_due',
+    title: adjustmentOnly
+      ? (unpaidCourier && unpaidRoundOff ? 'Courier & Round Off Recorded' : unpaidCourier ? 'Courier Charge Recorded' : 'Round Off Recorded')
+      : 'Payment Received',
+    message: adjustmentOnly
+      ? `Unpaid ${unpaidDesc} recorded — Invoice ${invoice.invoiceNumber} (Balance: ₹${invoice.balanceDue?.toLocaleString()})`
+      : `Payment of ₹${netAmount?.toLocaleString()} received — Invoice ${invoice.invoiceNumber} (Balance: ₹${invoice.balanceDue?.toLocaleString()})`,
+    link: '/billing',
+  }).catch(() => {});
   if (taskPaymentStatus === 'Paid') {
     notifyRoles({ modules: ['Task Management', 'Dispatch Team', 'Operations'], type: 'task', title: 'Payment Cleared — Dispatch Unblocked', message: `Invoice ${invoice.invoiceNumber} fully paid — linked tasks marked Paid and cleared for dispatch`, link: '/tasks' }).catch(() => {});
   }

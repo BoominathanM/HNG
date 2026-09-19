@@ -1,5 +1,7 @@
 const cron = require('node-cron');
 const Lead = require('../models/Lead');
+const Kit = require('../models/Kit');
+const { storedTotalWithRoundOff } = require('./orderCalc');
 const WhatsAppEvent = require('../models/WhatsAppEvent');
 const WhatsAppEventMapping = require('../models/WhatsAppEventMapping');
 const { sendMessage } = require('../services/whatsAppService');
@@ -14,9 +16,19 @@ const TAG = 'payment-due';
 // Tracks "leadId:YYYY-MM-DD" pairs already sent today — prevents double-sends per lead.
 const guard = createDailyGuard();
 
-function formatAmount(lead) {
-  const total = Number(lead.totalAmount || lead.total || 0);
+function formatAmount(lead, kitsData = []) {
+  let total = Number(lead.totalAmount || lead.total || 0);
   if (!total) return '';
+  // Billing's Record Payment In logs a round off on the lead's paymentCollection but never
+  // rewrites its stored total, so the amount quoted to the customer here would miss it (an
+  // unpaid addition left out; a fully-paid discount still "owing" the discounted amount). Fold it
+  // in — only when the stored total demonstrably excludes it — so the message matches what
+  // Billing shows as due. On any problem the plain stored total is used, exactly as before.
+  try {
+    total = storedTotalWithRoundOff(total, lead, kitsData);
+  } catch (err) {
+    swarn(TAG, `round-off adjustment skipped for lead ${lead.leadCode || lead._id}: ${err.message}`);
+  }
   const due = Math.max(0, total - Number(lead.paidAmount || 0));
   return `Rs. ${due.toFixed(2)}`;
 }
@@ -51,13 +63,18 @@ async function sendRemindersForMapping(mapping) {
   const { name: templateName, language = 'en' } = mapping.templateId;
   const variables = mapping.variables || [];
   const today = todayKey();
+  // Only leads using "Select Kit(s) to Include" need the kit list for the round-off adjustment
+  // in formatAmount — fetched once here instead of per lead, and only when actually needed.
+  const kitsData = leads.some((l) => (l.packagingIncludes || []).length > 0)
+    ? await Kit.find().lean().catch(() => [])
+    : [];
 
   for (const lead of leads) {
     const salesperson = lead.createdBy;
 
     const fieldValues = {
       customerName:   lead.hotelName || lead.contactPerson || '',
-      amount:         formatAmount(lead),
+      amount:         formatAmount(lead, kitsData),
       dueDate:        formatDate(lead.paymentReminderDate),
       invoiceNumber:  lead.leadCode || '',
       companyName:    process.env.COMPANY_NAME || 'HNG',

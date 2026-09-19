@@ -89,6 +89,12 @@ function sumRoundOff(rec = {}) {
   return r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
 }
 
+// Courier charges recorded as Unpaid (explicit `courierPaid: false`) — they raise the total without
+// having been received. Entries saved before the Paid/Unpaid switch have no flag and count as Paid.
+function sumUnpaidCourier(rec = {}) {
+  return r2((rec.paymentCollection || []).reduce((s, e) => s + (e?.courierPaid === false ? (Number(e?.courierCharge) || 0) : 0), 0));
+}
+
 // Single source of truth for category buckets. rec accepts `products` (Sales/Order shape) or
 // `items` (Invoice/Quotation item shape) — whichever is populated.
 // Returns { personalized (A), separateKit (B), separateProduct (C), fwd, courier, roundOff,
@@ -258,6 +264,33 @@ function computeCompositionGrandTotal(rec = {}, kitsData = []) {
   return computeRecordGrandTotal(rec);
 }
 
+// A stored `total` scalar (Order / Negotiation / Lead) is only as fresh as the save that wrote it,
+// and Billing's Record Payment In never rewrites it: a round off (or an Unpaid courier charge) lands
+// in paymentCollection while the stored total keeps its pre-adjustment figure. This returns the
+// stored total moved by the collection's round off + Unpaid courier — but ONLY when the stored total
+// demonstrably EXCLUDES them, i.e. it sits closer to the composition total with them taken back out
+// than to the one with them in. A total that already includes them, or was hand-edited so it matches
+// neither, comes back exactly as given: never double counted, never overridden. A Paid courier
+// (and any entry saved before the courier switch existed) is left as it was.
+function storedTotalWithRoundOff(storedTotal, rec = {}, kitsData = []) {
+  const stored = Number(storedTotal) || 0;
+  const roundOff = sumRoundOff(rec);
+  const unpaidCourier = sumUnpaidCourier(rec);
+  const adjustment = r2(roundOff + unpaidCourier);
+  if (!adjustment || stored <= 0) return stored;
+
+  const derived = computeCompositionGrandTotal(rec, kitsData); // includes the round off and ALL courier
+  if (!(derived > 0)) return stored;
+
+  const paidCourier = r2(sumCourierCharges(rec) - unpaidCourier);
+  const distIncluded = Math.abs(stored - derived);
+  const distExcluded = Math.min(
+    Math.abs(stored - r2(derived - adjustment)), // excludes the adjustment (Paid courier as recorded)
+    Math.abs(stored - r2(derived - adjustment - paidCourier)) // excludes the adjustment and the Paid courier
+  );
+  return distExcluded <= 0.5 && distExcluded < distIncluded ? r2(stored + adjustment) : stored;
+}
+
 module.exports = {
   ORDER_CATEGORIES,
   r2,
@@ -265,8 +298,12 @@ module.exports = {
   koCategory,
   kitOrderValue,
   sumProductRows,
+  sumCourierCharges,
+  sumUnpaidCourier,
+  sumRoundOff,
   computeRecordBuckets,
   computeRecordGrandTotal,
   computePersonalizedComposition,
   computeCompositionGrandTotal,
+  storedTotalWithRoundOff,
 };

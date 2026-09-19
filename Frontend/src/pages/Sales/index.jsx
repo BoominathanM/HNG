@@ -24,6 +24,7 @@ import { useSelector } from 'react-redux';
 import html2pdf from 'html2pdf.js';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition } from '../../utils/docComposition';
+import { sumRoundOff, sumCourierCharges } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
@@ -700,6 +701,38 @@ function sumProductRows(rows = []) {
   return r2(sub + gst);
 }
 
+// Only the total-moving part of already-recorded payment entries: the round off, plus a courier
+// charge recorded as Unpaid. Sales forms and document builders hand the total calculators just the
+// values being edited (new entries only), so a total built from them silently drops a round off /
+// Unpaid courier recorded earlier in Billing. Passing this along keeps them in the total. A Paid
+// courier (and every courier entry saved before the courier Paid/Unpaid switch — no flag) keeps its
+// historical treatment there and is NOT carried.
+const roundOffEntriesOf = (coll = []) =>
+  (coll || [])
+    .filter((e) => Number(e?.roundOff) || (Number(e?.courierCharge) && e?.courierPaid === false))
+    .map((e) => ({ roundOff: Number(e.roundOff) || 0, courierCharge: e.courierPaid === false ? Number(e.courierCharge) || 0 : 0 }));
+
+// Chips for a payment entry that carries a Billing round off and/or courier charge. Without them an
+// unpaid, adjustment-only entry reads as a confusing "₹0" payment. Entries saved before the
+// Paid/Unpaid switches have no flag and were always counted as paid, so only an explicit `false`
+// reads as Unpaid.
+const RoundOffTag = ({ entry }) => {
+  const ro = Number(entry?.roundOff) || 0;
+  const cc = Number(entry?.courierCharge) || 0;
+  if (!ro && !cc) return null;
+  const chip = (unpaid, text) => (
+    <Tag color={unpaid ? 'orange' : 'green'} style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>
+      {text} · {unpaid ? 'Unpaid' : 'Paid'}
+    </Tag>
+  );
+  return (
+    <>
+      {cc ? chip(entry.courierPaid === false, `Courier +₹${cc.toLocaleString()}`) : null}
+      {ro ? chip(entry.roundOffPaid === false, `Round off ${ro < 0 ? '−' : '+'}₹${Math.abs(ro).toLocaleString()}`) : null}
+    </>
+  );
+};
+
 // Single source of truth for category buckets shown across detail/payment views.
 // Returns { personalized (A), separateKit (B), separateProduct (C), fwd, grand }.
 function computeRecordBuckets(rec = {}) {
@@ -732,8 +765,12 @@ function computeRecordBuckets(rec = {}) {
   // Courier/shipping charge recorded via Record Payment In (Billing) — extra amount owed
   // on top of the order, entered per-payment rather than stored on the record itself.
   const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
-  const grand = r2(personalized + separateKit + separateProduct + fwd + courier);
-  return { personalized, separateKit, separateProduct, fwd, courier, grand };
+  // Round off recorded via Record Payment In (Billing) — a signed adjustment (Addition raises
+  // the total, Discount lowers it), read off paymentCollection exactly like courier. Without it
+  // Sales disagreed with Billing/Parties/Reports: an Unpaid round off looked fully paid here.
+  const roundOff = sumRoundOff(rec);
+  const grand = r2(personalized + separateKit + separateProduct + fwd + courier + roundOff);
+  return { personalized, separateKit, separateProduct, fwd, courier, roundOff, grand };
 }
 
 // Backward-compatible scalar grand total (kept for existing call sites).
@@ -766,7 +803,7 @@ function computeCompositionGrandTotal(formData = {}, kitsData = []) {
     const courier = r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const B = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const C = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
-    return r2(comp.totalPersonalized + B + C + fwd + courier);
+    return r2(comp.totalPersonalized + B + C + fwd + courier + sumRoundOff(formData));
   }
   return computeRecordGrandTotal(formData);
 }
@@ -1026,17 +1063,18 @@ function PersonalizedCompositionPanel({ comp, isDark }) {
 // aware calculation (computePersonalizedComposition) is used instead of computeRecordBuckets,
 // which miscounts the A bucket when some kits/products are consumed inside the outer packaging.
 function CategoryTotalsBreakdown({ rec, isDark, kitsData = [] }) {
-  let personalized, separateKit, separateProduct, fwd, courier, grand;
+  let personalized, separateKit, separateProduct, fwd, courier, roundOff, grand;
   if ((rec.packagingIncludes || []).length > 0 && kitsData.length > 0) {
     const comp = computePersonalizedComposition(rec, kitsData);
     const B = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const C = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
     fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
     courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    roundOff = sumRoundOff(rec);
     personalized = comp.totalPersonalized;
     separateKit = B;
     separateProduct = C;
-    grand = r2(personalized + separateKit + separateProduct + fwd + courier);
+    grand = r2(personalized + separateKit + separateProduct + fwd + courier + roundOff);
   } else {
     const b = computeRecordBuckets(rec);
     personalized = b.personalized;
@@ -1044,6 +1082,7 @@ function CategoryTotalsBreakdown({ rec, isDark, kitsData = [] }) {
     separateProduct = b.separateProduct;
     fwd = b.fwd;
     courier = b.courier;
+    roundOff = b.roundOff;
     grand = b.grand;
   }
   const rows = [
@@ -1074,6 +1113,12 @@ function CategoryTotalsBreakdown({ rec, isDark, kitsData = [] }) {
       {courier > 0 && (
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, color: labelColor }}>
           <span>Courier Charge</span><span style={{ fontWeight: 600 }}>{fmtINR(courier)}</span>
+        </div>
+      )}
+      {roundOff !== 0 && (
+        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 0', fontSize: 13, color: labelColor }}>
+          <span>Round Off</span>
+          <span style={{ fontWeight: 600 }}>{roundOff < 0 ? '− ' : ''}{fmtINR(Math.abs(roundOff))}</span>
         </div>
       )}
       <div style={{ borderTop: border, marginTop: 6, paddingTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1153,7 +1198,7 @@ const YES_NO_ATTR_KEYS = new Set(['sticker', 'logo', 'printing', 'stickerPrintin
 const STICKER_LIKE_KEYS = new Set(['sticker', 'stickerPrinting']);
 // Internal per-packing-material sticker size keys stored on the inventory item — resolved into a
 // single "Sticker Size" field rather than shown as their own raw dropdowns (Inventory + Lead).
-const STICKER_SIZE_ATTR_KEYS = new Set(['boxStickerSize', 'ziplockStickerSize', 'butterPaperStickerSize', 'bottleStickerSize', 'packingSize', 'packingSizes', 'packingMaterialType']);
+const STICKER_SIZE_ATTR_KEYS = new Set(['boxStickerSize', 'ziplockStickerSize', 'butterPaperStickerSize', 'bottleStickerSize', 'bottleStickerSizes', 'packingSize', 'packingSizes', 'packingMaterialType']);
 
 // Per-product-type attribute fields — kept in sync with Inventory's PRODUCT_FIELD_DEFS so the
 // lead form shows exactly the attributes that inventory collects for each product type. The
@@ -1255,6 +1300,14 @@ const prettyAttrKeyLead = (k) =>
     .replace(/([a-z])([A-Z])/g, '$1 $2')
     .replace(/^./, (c) => c.toUpperCase());
 
+// A bottle-type product's Sticker Size is specific to the chosen Bottle Type (set per bottle type
+// on the Inventory item), so wherever a line's specs are listed show it as "<Bottle Type> Sticker
+// Size" (e.g. "Fliptop bottle Sticker Size"). Everything else keeps its plain pretty label.
+const specAttrLabelLead = (k, p) =>
+  (k === 'stickerSize' && p && typeof p.bottleType === 'string' && p.bottleType.trim())
+    ? `${p.bottleType.trim()} Sticker Size`
+    : prettyAttrKeyLead(k);
+
 const getLeadProductTypeKey = (name) => {
   const n = (name || '').toLowerCase().trim();
   if (n.includes('soap')) return 'soap';
@@ -1323,6 +1376,9 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const stickerPrintingVal = Form.useWatch([fieldName, name, 'stickerPrinting']);
   // Drives the auto-fetched "Sticker Size" value: which packing material the row currently has.
   const packingMaterialVal = Form.useWatch([fieldName, name, 'packingMaterial']);
+  // Bottle-type products (shampoo/moisturizer/shower gel): the chosen Bottle Type picks which of
+  // the inventory item's per-bottle-type sticker sizes is shown as "<Bottle Type> Sticker Size".
+  const bottleTypeVal = Form.useWatch([fieldName, name, 'bottleType']);
 
   const form = Form.useFormInstance();
   const selectedKitIds = Form.useWatch('selectedKits', form) || [];
@@ -1495,7 +1551,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   // (Box/Ziplock/Butter Paper) once Sticker is Yes — read-only, kept live as the packing
   // material or the selected inventory item changes. Bottle-type products (shampoo/
   // moisturizer/shower gel) have no packing material at all — their sticker toggle is
-  // Sticker Printing, and Bottle Sticker Size is resolved directly (not per packing material).
+  // Sticker Printing, and the size is resolved per chosen Bottle Type (not per packing material).
   const isBottleType = productTypeKey === 'shampoo' || productTypeKey === 'moisturizer' || productTypeKey === 'shower_gel';
   const activeStickerFlag = (productTypeKey === 'soap' || isBottleType) ? stickerPrintingVal : stickerVal;
   React.useEffect(() => {
@@ -1503,7 +1559,22 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     const attrs = invItem?.productAttributes || {};
     let resolved = '';
     if (isBottleType) {
-      resolved = attrs.bottleStickerSize;
+      // Size for the Bottle Type chosen on this line — productAttributes.bottleStickerSizes[<type>],
+      // entered per bottle type on the Add Item modal. Items saved before per-type sizes existed
+      // only carry one bottleStickerSize, still used as the fallback so they behave as before.
+      const sizes = (attrs.bottleStickerSizes && typeof attrs.bottleStickerSizes === 'object') ? attrs.bottleStickerSizes : {};
+      const sizeOf = (bt) => (typeof sizes[bt] === 'string' ? sizes[bt] : '');
+      const legacySize = attrs.bottleStickerSize || '';
+      const pickedBottle = Array.isArray(bottleTypeVal) ? bottleTypeVal[0] : bottleTypeVal;
+      if (pickedBottle) {
+        resolved = sizeOf(pickedBottle) || legacySize;
+      } else {
+        // No bottle type chosen yet: use the item's only configured size if it has just one; with
+        // several it's ambiguous, so leave whatever the line already holds rather than guess/clear.
+        const configured = Object.keys(sizes).map(sizeOf).filter(Boolean);
+        if (configured.length > 1) return;
+        resolved = configured[0] || legacySize;
+      }
     } else {
       // One size per packing material (Add Item > "<value> Size") now drives the sticker size
       // too. Fall back to the legacy per-category *StickerSize attrs for items that still have them.
@@ -1515,7 +1586,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
               : '');
     }
     form.setFieldValue([fieldName, name, 'stickerSize'], resolved || '');
-  }, [activeStickerFlag, isBottleType, packingMaterialVal, invItem, fieldName, name, form]);
+  }, [activeStickerFlag, isBottleType, bottleTypeVal, packingMaterialVal, invItem, fieldName, name, form]);
 
   // Auto-fill this line's Packing Size from the selected inventory item's per-packing-material
   // size (productAttributes.packingSizes[<chosen value>], entered on the Add Item modal). Kept
@@ -1893,14 +1964,31 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     ? () => {
                       form.setFieldValue([fieldName, name, 'packingSize'], '');
                     }
-                    : undefined;
+                    : (fd.key === 'bottleType' && isBottleType)
+                      // Same for Bottle Type → Sticker Size: clear it, the effect refills it from
+                      // the item's per-bottle-type size for the newly chosen bottle type.
+                      ? () => {
+                        form.setFieldValue([fieldName, name, 'stickerSize'], '');
+                      }
+                      : undefined;
+                // A bottle-type product's Sticker Size is labelled per chosen Bottle Type —
+                // "Fliptop bottle Sticker Size", "Screw type Sticker Size", … — see specAttrLabelLead.
+                const bottleSizeLabel = (fd.key === 'stickerSize' && isBottleType && typeof bottleTypeVal === 'string' && bottleTypeVal.trim())
+                  ? `${bottleTypeVal.trim()} Sticker Size`
+                  : null;
+                const fieldLabel = bottleSizeLabel || fd.label;
+                const readonlyPlaceholder = fd.key === 'packingSize'
+                  ? 'Set per packing material on the Inventory item'
+                  : (fd.key === 'stickerSize' && isBottleType && !bottleTypeVal)
+                    ? 'Select a bottle type'
+                    : 'Set on the Inventory item';
                 return (
                   <div key={fd.key} style={{ flex: '1 1 120px', minWidth: 100 }}>
-                    <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fd.label}</span>} style={{ marginBottom: 0 }}>
+                    <Form.Item {...rest} name={[name, fd.key]} label={<span style={{ fontSize: 11 }}>{fieldLabel}</span>} style={{ marginBottom: 0 }}>
                       {fd.inputType === 'text' ? (
                         <Input placeholder="e.g. 2.5cm x 2.5cm" disabled={isItemDisabled} size="small" />
                       ) : fd.inputType === 'readonly' ? (
-                        <Input readOnly size="small" placeholder={fd.key === 'packingSize' ? 'Set per packing material on the Inventory item' : 'Set on the Inventory item'} style={{ background: isDark ? 'rgba(255,255,255,0.04)' : '#f5f5f5', cursor: 'not-allowed' }} />
+                        <Input readOnly size="small" placeholder={readonlyPlaceholder} style={{ background: isDark ? 'rgba(255,255,255,0.04)' : '#f5f5f5', cursor: 'not-allowed' }} />
                       ) : (
                         // Spec values come purely from inventory — no inline "Add" option here.
                         // Yes/No toggles offer both choices; everything else lists only the values
@@ -2410,6 +2498,10 @@ export default function Sales() {
       packagingIncludesQty: src.packagingIncludesQty || order.packagingIncludesQty || {},
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
+      // Round off recorded via Billing lives on the order's payment entries. Carried into the
+      // total (and shown as its own row below) so this PDF matches the Billing invoice — before,
+      // it silently left round off out of both the rows and the total.
+      paymentCollection: roundOffEntriesOf(order.paymentCollection),
     };
     const composition = buildDocComposition(compRec, kits);
     const total = composition
@@ -2427,6 +2519,11 @@ export default function Sales() {
       sgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
+      // Only alongside the composition-derived total — the stored-total fallback isn't ours to adjust.
+      roundOff: composition ? sumRoundOff(compRec) : 0,
+      // compRec only carries a courier charge recorded as Unpaid (see roundOffEntriesOf) — shown as its
+      // own row and already inside `total`, so this PDF matches the Billing invoice.
+      courierCharge: composition ? sumCourierCharges(compRec) : 0,
       total,
       customer: {
         name: src.billingName || src.hotelName || src.clientName || '',
@@ -2488,6 +2585,8 @@ export default function Sales() {
       packagingIncludesQty: rec.packagingIncludesQty || {},
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
+      // Round off recorded via Billing (see handleDownloadQuotation) — same reasoning.
+      paymentCollection: roundOffEntriesOf(rec.paymentCollection),
     };
     const composition = buildDocComposition(compRec, kits);
     const data = {
@@ -2502,6 +2601,8 @@ export default function Sales() {
       sgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
       forwardingCharge: fwdEnabled,
       forwardingChargeAmount: fwdAmt,
+      roundOff: composition ? sumRoundOff(compRec) : 0,
+      courierCharge: composition ? sumCourierCharges(compRec) : 0,
       total: composition ? computeCompositionGrandTotal(compRec, kits) : (Number(rec.totalAmount) || 0),
       customer: {
         name: rec.billingName || rec.hotelName || rec.clientName || '',
@@ -3235,7 +3336,7 @@ export default function Sales() {
       if (v == null || v === '') return;
       if (typeof v === 'object' && !Array.isArray(v)) return;
       if (Array.isArray(v) && v.length === 0) return;
-      push(prettyAttrKeyLead(k), v);
+      push(specAttrLabelLead(k, p), v);
     });
     if (p.productAttributes && typeof p.productAttributes === 'object' && !Array.isArray(p.productAttributes)) {
       Object.entries(p.productAttributes).forEach(([k, v]) => {
@@ -4374,7 +4475,10 @@ export default function Sales() {
         const newSum = newEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
         const totalPaid = existingPrior + newSum;
         if (totalPaid > 0) {
-          const recordTotal = r2(computeCompositionGrandTotal({ ...values, products: srcProducts, kitOrders: srcKitOrders, kitPrice: pickKit('kitPrice'), kitOverallQty: pickKit('kitOverallQty'), packagingIncludes: srcPackagingIncludes, packagingIncludesQty: values.packagingIncludesQty ?? formStore.packagingIncludesQty, forwardingCharge: values.forwardingCharge ?? formStore.forwardingCharge, forwardingChargeAmount: values.forwardingChargeAmount ?? formStore.forwardingChargeAmount }, kits));
+          // `values.paymentCollection` holds only the entries being added now — carry over the
+          // round off recorded earlier (Billing) so a still-unpaid round off can't get this
+          // record labelled "Paid".
+          const recordTotal = r2(computeCompositionGrandTotal({ ...values, paymentCollection: [...roundOffEntriesOf(selectedRecord?.paymentCollection), ...(values.paymentCollection || [])], products: srcProducts, kitOrders: srcKitOrders, kitPrice: pickKit('kitPrice'), kitOverallQty: pickKit('kitOverallQty'), packagingIncludes: srcPackagingIncludes, packagingIncludesQty: values.packagingIncludesQty ?? formStore.packagingIncludesQty, forwardingCharge: values.forwardingCharge ?? formStore.forwardingCharge, forwardingChargeAmount: values.forwardingChargeAmount ?? formStore.forwardingChargeAmount }, kits));
           return recordTotal > 0 && totalPaid >= recordTotal ? 'Paid' : 'Partially Paid';
         }
         const proofs = paymentProofFiles.length ? paymentProofFiles : (values.paymentProofs || []);
@@ -5389,20 +5493,31 @@ export default function Sales() {
     const carriedPaid = collectedFromEntries > 0
       ? collectedFromEntries
       : (Number(q.paidAmount) || Number(q.advancePaid) || 0);
-    const carriedStatus = grandTotal > 0 && carriedPaid >= grandTotal
+    // Round off recorded via Billing travels with the carried entries and moves what's owed
+    // (Addition raises it, Discount lowers it). `grandTotal` above is built from the products
+    // alone, so it never contains it — fold it into the order's total/balance/status, otherwise
+    // an unpaid round off gets the new order labelled "Paid" and a Discount leaves it "owing".
+    // GST/amount are untouched (round off isn't taxable); identical to before when there is none.
+    // Same for a courier charge recorded as Unpaid (explicit courierPaid:false) — it raises what's owed
+    // without having been received. A Paid courier keeps its historical treatment (not added here).
+    const carriedRoundOff = sumRoundOff({ paymentCollection: carriedCollection });
+    const carriedUnpaidCourier = carriedCollection.reduce((sum, e) => sum + (e?.courierPaid === false ? Number(e.courierCharge) || 0 : 0), 0);
+    const carriedAdjustment = r2(carriedRoundOff + carriedUnpaidCourier);
+    const orderTotal = carriedAdjustment ? r2(grandTotal + carriedAdjustment) : grandTotal;
+    const carriedStatus = orderTotal > 0 && carriedPaid >= orderTotal
       ? 'Paid'
       : carriedPaid > 0 ? 'Partially Paid' : 'Unpaid';
     return {
       clientName: q.hotelName || q.billingName || q.clientName || 'Client',
       amount: subtotal,
       gstAmount,
-      total: grandTotal,
+      total: orderTotal,
       advancePaid: carriedPaid,
       advancePaidAmount: carriedPaid,
       paidAmount: carriedPaid,
       paymentCollection: carriedCollection,
       paymentStatus: carriedStatus,
-      balance: Math.max(0, grandTotal - carriedPaid),
+      balance: Math.max(0, orderTotal - carriedPaid),
       // Preserve the source links so the order stays connected to its quotation/lead
       quotationId: q.key || q._id,
       leadId: q.leadId,
@@ -6332,9 +6447,18 @@ export default function Sales() {
   // has the highest recorded-payments sum so courier/round-off entries aren't silently dropped
   // from the Leads tab total. Mirrors the same reconciliation Billing uses for its own totals.
   const leadCollSum = (c) => (c || []).reduce((s, e) => s + (Number(e?.paidAmount) || 0), 0);
+  // On equal paid sums the copy carrying more round-off entries wins: an Unpaid round off is an
+  // entry with paidAmount 0, so it never raises the sum — without this tie-break it could never be
+  // picked and the round off would silently vanish from the total (same fix as Billing's list).
+  // With no round off recorded anywhere the pick is exactly what it was before.
+  // (An Unpaid courier charge is the same kind of zero-paid entry — only an explicit courierPaid:false
+  // counts, so every courier entry saved before the courier switch is ignored here.)
+  const leadRoundOffEntries = (c) => (c || []).filter(e => Number(e?.roundOff) || (Number(e?.courierCharge) && e?.courierPaid === false)).length;
   const bestLeadPaymentCollection = (...sources) =>
     sources.filter(Boolean).map(src => src.paymentCollection || [])
-      .reduce((best, c) => (leadCollSum(c) > leadCollSum(best) ? c : best), []);
+      .reduce((best, c) => (
+        leadCollSum(c) > leadCollSum(best) || (leadCollSum(c) === leadCollSum(best) && leadRoundOffEntries(c) > leadRoundOffEntries(best)) ? c : best
+      ), []);
   const findLinkedLeadQuotation = (r) => quotationsData.find(q =>
     (q.leadId && String(q.leadId._id || q.leadId) === String(r.key)) || (q.leadCode && q.leadCode === r.leadId)
   );
@@ -7139,7 +7263,7 @@ export default function Sales() {
                   )}
                   {extraAttrs.map(([k, v]) => (
                     <Col xs={12} sm={8} key={k}>
-                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>{prettyAttrKeyLead(k)}</Text>
+                      <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 3 }}>{specAttrLabelLead(k, p)}</Text>
                       <Text strong style={{ fontSize: 12 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
                     </Col>
                   ))}
@@ -7731,6 +7855,7 @@ export default function Sales() {
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                   {entry._fromLead && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead</Tag>}
+                                  <RoundOffTag entry={entry} />
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -8352,6 +8477,7 @@ export default function Sales() {
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                   {entry._fromLinked && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead/Quotation</Tag>}
+                                  <RoundOffTag entry={entry} />
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -9406,6 +9532,7 @@ export default function Sales() {
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                   {entry._fromLinked && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead</Tag>}
+                                  <RoundOffTag entry={entry} />
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -10323,7 +10450,7 @@ export default function Sales() {
                     const _editRec0 = { ...orderEditTarget, products: prods, kitOrders: getFieldValue('kitOrders') || orderEditTarget?.kitOrders || [], kitPrice: getFieldValue('kitPrice') ?? orderEditTarget?.kitPrice, kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty, packagingIncludes: getFieldValue('packagingIncludes') || orderEditTarget?.packagingIncludes || [] };
                     const total = r2(computeCompositionGrandTotal(_editRec0, kits)) || r2(computeRecordGrandTotal(_editRec0));
                     if (total === 0) return null;
-                    const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount)||0) : 0));
+                    const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount)||0) : 0) - sumRoundOff(orderEditTarget || {}));
                     return (
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginTop: 8, flexWrap: 'wrap' }}>
                         {kitPortion > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Kit: <strong>₹{kitPortion.toLocaleString()}</strong></Text>}
@@ -10862,7 +10989,7 @@ export default function Sales() {
                           kitOverallQty: getFieldValue('kitOverallQty') ?? orderEditTarget?.kitOverallQty,
                         }));
                         if (total === 0) return null;
-                        const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount) || 0) : 0));
+                        const kitPortion = Math.max(0, total - r2(subtotal + gstAmt) - (orderEditTarget?.forwardingCharge ? r2(Number(orderEditTarget?.forwardingChargeAmount) || 0) : 0) - sumRoundOff(orderEditTarget || {}));
                         return (
                           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 16, padding: '6px 10px', background: 'rgba(177,30,106,0.04)', borderRadius: 6, marginBottom: 8, flexWrap: 'wrap' }}>
                             {kitPortion > 0 && <Text type="secondary" style={{ fontSize: 12 }}>Kit: <strong>₹{kitPortion.toLocaleString()}</strong></Text>}
@@ -12061,6 +12188,24 @@ export default function Sales() {
         !leadColl.some(le => le.recordedAt === xe.recordedAt && Number(le.paidAmount) === Number(xe.paidAmount))
       );
       return [...leadColl, ...extra.map(e => ({ ...e, _fromLinked: true }))];
+    })();
+    // What the Lead detail's TOTAL is computed from: the lead's own entries, plus any round off / Unpaid
+    // courier charge that only a linked record (order/quotation/negotiation) holds — e.g. a lead that has
+    // already shipped, which Billing's leads list omits so its entry never reached the lead's own copy.
+    // De-duplicated (the same entry usually sits on several linked records) so nothing is counted twice,
+    // and limited to entries that move the total without a payment: every other courier entry keeps its
+    // historical treatment (lead's own copy only), so nothing that worked before changes.
+    const leadTotalsPaymentCollection = (() => {
+      const seen = new Set();
+      const extras = leadCombinedPaymentCollection.filter((e) => {
+        if (!e._fromLinked) return false;
+        if (!(Number(e.roundOff) || (Number(e.courierCharge) && e.courierPaid === false))) return false;
+        const k = `${e.recordedAt}|${e.paidAmount}`;
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      return [...(record.paymentCollection || []), ...extras];
     })();
 
     const InfoRow = ({ label, value }) => (
@@ -13931,7 +14076,7 @@ export default function Sales() {
                                     )}
                                     {pExtraAttrs.map(([k, v]) => (
                                       <Col xs={12} sm={8} key={k}>
-                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>{prettyAttrKeyLead(k)}</Text>
+                                        <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>{specAttrLabelLead(k, p)}</Text>
                                         <Text strong style={{ fontSize: 13 }}>{Array.isArray(v) ? v.join(', ') : String(v)}</Text>
                                       </Col>
                                     ))}
@@ -14739,7 +14884,7 @@ export default function Sales() {
                             );
                           })()}
                           {(() => {
-                            const recTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || 0;
+                            const recTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits) || Number(record.totalAmount) || 0;
                             const recCollected = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
                             const recPaid = Math.max(recCollected, Number(record.paidAmount) || Number(record.advancePaid) || 0);
                             const recBalance = Math.max(0, recTotal - recPaid);
@@ -14790,6 +14935,7 @@ export default function Sales() {
                                         <DollarOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
                                         <Text style={{ fontSize: 13, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                         {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
+                                        <RoundOffTag entry={entry} />
                                         {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
                                       </div>
                                       <div style={{ paddingLeft: 24, marginTop: 3 }}>
@@ -14863,7 +15009,7 @@ export default function Sales() {
                             size="small"
                             style={{ color: '#B11E6A', borderColor: '#B11E6A55', borderRadius: 8 }}
                             onClick={() => {
-                              const viewTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || 0;
+                              const viewTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits) || Number(record.totalAmount) || 0;
                               const viewCollected = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
                               const viewPaid = Math.max(viewCollected, Number(record.paidAmount) || Number(record.advancePaid) || 0);
                               openPayEntry('lead', record, { precomputedTotal: viewTotal, precomputedPaid: viewPaid });
@@ -14891,6 +15037,7 @@ export default function Sales() {
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                   {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
+                                  <RoundOffTag entry={entry} />
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -14936,7 +15083,7 @@ export default function Sales() {
                             };
                             modalTotal = computeCompositionGrandTotal(enrichedForModal, kits) || Number(record.totalAmount) || Number(record.total) || 0;
                           } else {
-                            modalTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                            modalTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits) || Number(record.totalAmount) || Number(record.total) || 0;
                           }
                           const fromCollection = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
                           const existingColl = Math.max(fromCollection, Number(record.paidAmount) || Number(record.advancePaid) || 0);
@@ -14988,6 +15135,7 @@ export default function Sales() {
                                     {(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}
                                   </Text>
                                   {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
+                                  <RoundOffTag entry={entry} />
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 22, marginTop: 5, display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -15059,7 +15207,7 @@ export default function Sales() {
                       };
                       recordTotal = computeCompositionGrandTotal(totalFormData, kits) || Number(record.totalAmount) || Number(record.total) || 0;
                     } else {
-                      recordTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                      recordTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits) || Number(record.totalAmount) || Number(record.total) || 0;
                     }
                     const balance = Math.max(0, recordTotal - totalColl);
                     if (recordTotal === 0) return null;
@@ -15187,7 +15335,7 @@ export default function Sales() {
                       };
                       recordTotal = computeCompositionGrandTotal(totalFormData2, kits) || Number(record.totalAmount) || Number(record.total) || 0;
                     } else {
-                      recordTotal = computeCompositionGrandTotal(record, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                      recordTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits) || Number(record.totalAmount) || Number(record.total) || 0;
                     }
                     const balance = Math.max(0, recordTotal - totalColl);
                     const status = recordTotal > 0 && totalColl >= recordTotal ? 'Paid' : totalColl > 0 ? 'Partially Paid' : 'Unpaid';

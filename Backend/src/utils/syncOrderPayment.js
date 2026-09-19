@@ -1,6 +1,7 @@
 const Invoice = require('../models/Invoice');
 const Task = require('../models/Task');
 const Order = require('../models/Order');
+const { r2 } = require('./orderCalc');
 
 // Resolve an order's overall payment status.
 // Reconciles the order's OWN total/paid (kit-aware total is computed live in the
@@ -68,14 +69,39 @@ async function syncOrderPaymentCollection(orderId, entry) {
   // moment cumulative collection entries exceed it — add it once as a baseline instead,
   // then let the new entry add on top, mirroring the frontend's own extraAdvance logic.
   const extraAdvance = Math.max(0, (Number(order.paidAmount) || 0) - priorCollectionSum);
-  const paidAmount = priorCollectionSum + extraAdvance + Number(entry.paidAmount || 0);
-  const total = Number(order.total || order.amount || 0);
-  const balance = Math.max(0, total - paidAmount);
+  const paidAmount = r2(priorCollectionSum + extraAdvance + Number(entry.paidAmount || 0));
+
+  // A round off (Billing → Record Payment In, Paid OR Unpaid) moves what the order is worth
+  // (Addition raises it, Discount lowers it), exactly as it does on the quotation/invoice shown in
+  // Billing. Order.total is a stored scalar nothing else recomputes on a payment, and Operations,
+  // Task Management, Dispatch, Parties and Reports all read it — left alone it goes stale: a
+  // discounted order the client has fully paid still reads "Partial" (Dispatch stays blocked), and
+  // an Unpaid Addition would look fully paid while Billing still shows a balance due. This is the
+  // one place that adds the entry to the order, and the entry is new here, so the total cannot
+  // already contain it — adding it once is never a double count (a later Sales re-save recomputes
+  // the same figure from the record's composition + all round offs). Only applied when a real
+  // stored total exists; an order with no total (only `amount`) is left as it was.
+  //
+  // An UNPAID courier charge (Record Payment In's Courier Paid/Unpaid switch) is the same story: it
+  // raises the total without a payment, so the stored total has to rise with it or the order would
+  // read fully paid while Billing still shows the courier due. Only an explicit `courierPaid:false`
+  // is adjusted — a Paid courier (and every entry saved before the switch existed) keeps its
+  // original behaviour untouched.
+  const entryRoundOff = Number(entry.roundOff) || 0;
+  const entryUnpaidCourier = entry.courierPaid === false ? (Number(entry.courierCharge) || 0) : 0;
+  const entryAdjustment = r2(entryRoundOff + entryUnpaidCourier);
+  const storedTotal = Number(order.total) || 0;
+  const adjustedTotal = entryAdjustment && storedTotal > 0
+    ? r2(storedTotal + entryAdjustment)
+    : null;
+
+  const total = adjustedTotal ?? Number(order.total || order.amount || 0);
+  const balance = r2(Math.max(0, total - paidAmount));
   return Order.findByIdAndUpdate(
     orderId,
     {
       $push: { paymentCollection: entry },
-      $set: { paidAmount, advancePaid: paidAmount, balance },
+      $set: { paidAmount, advancePaid: paidAmount, balance, ...(adjustedTotal !== null ? { total: adjustedTotal } : {}) },
     },
     { new: true }
   );

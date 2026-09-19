@@ -122,7 +122,7 @@ const PRODUCT_FIELD_DEFS = {
     { key: 'printing', label: 'Printing', field: 'soap_printing', options: YES_NO },
   ],
   shampoo: [
-    { key: 'bottleType', label: 'Bottle Type', field: 'shampoo_bottleType', options: BOTTLE_TYPES },
+    { key: 'bottleType', label: 'Bottle Type', field: 'shampoo_bottleType', options: BOTTLE_TYPES, mode: 'multiple' },
     { key: 'capType', label: 'Cap Type', field: 'shampoo_capType', options: CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'shampoo_size', options: SIZES_LIQUID, mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'shampoo_fragrance', options: [], mode: 'multiple' },
@@ -130,7 +130,7 @@ const PRODUCT_FIELD_DEFS = {
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'shampoo_stickerPrinting', options: YES_NO },
   ],
   moisturizer: [
-    { key: 'bottleType', label: 'Bottle Type', field: 'moisturizer_bottleType', options: BOTTLE_TYPES },
+    { key: 'bottleType', label: 'Bottle Type', field: 'moisturizer_bottleType', options: BOTTLE_TYPES, mode: 'multiple' },
     { key: 'capType', label: 'Cap Type', field: 'moisturizer_capType', options: CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'moisturizer_size', options: SIZES_LIQUID, mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'moisturizer_fragrance', options: [], mode: 'multiple' },
@@ -138,7 +138,7 @@ const PRODUCT_FIELD_DEFS = {
     { key: 'stickerPrinting', label: 'Sticker Printing', field: 'moisturizer_stickerPrinting', options: YES_NO },
   ],
   shower_gel: [
-    { key: 'bottleType', label: 'Bottle Type', field: 'shower_gel_bottleType', options: BOTTLE_TYPES },
+    { key: 'bottleType', label: 'Bottle Type', field: 'shower_gel_bottleType', options: BOTTLE_TYPES, mode: 'multiple' },
     { key: 'capType', label: 'Cap Type', field: 'shower_gel_capType', options: CAP_TYPES },
     { key: 'size', label: 'Sizes (ml)', field: 'shower_gel_size', options: SIZES_LIQUID, mode: 'multiple' },
     { key: 'fragrance', label: 'Fragrance', field: 'shower_gel_fragrance', options: [], mode: 'multiple' },
@@ -229,6 +229,14 @@ const normalizeAttrsForEdit = (attrs, itemName) => {
       out[fd.key] = [out[fd.key]];
     }
   });
+  // Items saved before per-bottle-type sizes stored ONE bottleType + a single bottleStickerSize.
+  // When exactly one bottle type is set, carry that size into the new per-type map so it isn't
+  // lost the first time the item is re-saved. (No bottle type → the legacy size stays untouched
+  // and is preserved by a hidden field in the Add Item modal.)
+  if (out.bottleStickerSize && !out.bottleStickerSizes && Array.isArray(out.bottleType) && out.bottleType.length === 1) {
+    out.bottleStickerSizes = { [out.bottleType[0]]: out.bottleStickerSize };
+    delete out.bottleStickerSize;
+  }
   return out;
 };
 
@@ -864,9 +872,13 @@ export default function Inventory() {
   const productFieldDefs = PRODUCT_FIELD_DEFS[productTypeKey] || [];
   const watchedPackingMaterial = Form.useWatch(['productAttrs', 'packingMaterial'], addItemForm);
   // Bottle-type products (shampoo/moisturizer/shower gel) have no packingMaterial field —
-  // their sticker toggle is 'stickerPrinting' — so Bottle Sticker Size below is gated on
-  // this instead of showStickerSizeFor(packingMaterial) like Box/Ziplock/Butter Paper are.
+  // their sticker toggle is 'stickerPrinting' — so the per-bottle-type Sticker Size fields below
+  // are gated on this instead of showStickerSizeFor(packingMaterial) like Box/Ziplock/Butter Paper are.
   const watchedStickerPrinting = Form.useWatch(['productAttrs', 'stickerPrinting'], addItemForm);
+  // Bottle Type is multi-select — one "<Bottle Type> Sticker Size" field is rendered per selected value.
+  const watchedBottleType = Form.useWatch(['productAttrs', 'bottleType'], addItemForm);
+  // Pre-existing single bottleStickerSize (legacy items) — kept alive via a hidden field until migrated.
+  const watchedLegacyBottleSticker = Form.useWatch(['productAttrs', 'bottleStickerSize'], addItemForm);
   const watchedItemType = Form.useWatch('itemType', addItemForm) || 'standard';
   const watchedBulkSourceItemId = Form.useWatch('bulkSourceItemId', addItemForm);
   const watchedMergeItemCode = Form.useWatch('mergeItemCode', addItemForm);
@@ -1319,14 +1331,23 @@ export default function Inventory() {
   );
 
   // Render a productAttributes object as compact key:value tags.
+  // Map-valued attributes (packingSizes / bottleStickerSizes → { "<option>": "<size>" }) are shown
+  // as "<option>: <size>, …" instead of "[object Object]"; empty map entries are skipped.
+  const formatAttrValue = (v) => {
+    if (Array.isArray(v)) return v.join(', ');
+    if (v && typeof v === 'object') {
+      return Object.entries(v).filter(([, sv]) => sv != null && sv !== '').map(([sk, sv]) => `${sk}: ${sv}`).join(', ');
+    }
+    return String(v);
+  };
   const renderAttrTags = (attrs, maxWidth = 240) => {
-    const entries = attrEntries(attrs);
+    const entries = attrEntries(attrs).filter(([, v]) => formatAttrValue(v) !== '');
     if (entries.length === 0) return <Text type="secondary">—</Text>;
     return (
       <Space size={4} wrap style={{ maxWidth }}>
         {entries.map(([k, v]) => (
           <Tag key={k} style={{ borderRadius: 10, fontSize: 10, background: '#B11E6A10', color: '#B11E6A', border: '1px solid #B11E6A30', margin: 0 }}>
-            <span style={{ opacity: 0.75 }}>{prettyAttrKey(k)}:</span> {Array.isArray(v) ? v.join(', ') : String(v)}
+            <span style={{ opacity: 0.75 }}>{prettyAttrKey(k)}:</span> {formatAttrValue(v)}
           </Tag>
         ))}
       </Space>
@@ -3332,12 +3353,16 @@ export default function Inventory() {
             const selectedPackingMaterialValues = (Array.isArray(watchedPackingMaterial) ? watchedPackingMaterial : [watchedPackingMaterial])
               .filter(Boolean)
               .map((v) => String(v));
-            // Bottle types (shampoo/moisturizer/shower gel) — Sticker Printing = Yes shows
-            // Bottle Sticker Size, same pattern as Box/Ziplock/Butter Paper above.
+            // Bottle types (shampoo/moisturizer/shower gel) — Bottle Type is multi-select, and with
+            // Sticker Printing = Yes each selected bottle type gets its own "<Bottle Type> Sticker Size"
+            // field (e.g. "Fliptop bottle Sticker Size", "Screw type Sticker Size").
             // Gated on 'bottleType' (not just 'stickerPrinting') so soap — which also has a
             // Sticker Printing toggle but no Bottle Type field — doesn't show this.
             const hasBottleType = activeDefs.some((fd) => fd.key === 'bottleType');
             const showBottleStickerSize = hasBottleType && String(watchedStickerPrinting || '').toLowerCase() === 'yes';
+            const selectedBottleTypeValues = (Array.isArray(watchedBottleType) ? watchedBottleType : [watchedBottleType])
+              .filter(Boolean)
+              .map((v) => String(v));
             return (
               <>
                 <Divider style={{ margin: '4px 0 12px' }}>
@@ -3364,17 +3389,34 @@ export default function Inventory() {
                     </Col>
                     );
                   })}
-                  {/* Bottle-type products have no packing material — their label size is a
-                      standalone field. (Box/Ziplock/Butter Paper "Sticker Size" fields were
-                      removed: the single per-packing-material size below now drives both the
-                      Sales Sticker Size and Material Stock deduction.) */}
-                  {showBottleStickerSize && (
-                    <Col xs={24} sm={12}>
-                      <Form.Item label="Bottle Label Size" name={['productAttrs', 'bottleStickerSize']}>
+                  {/* Bottle-type products have no packing material — their sticker size is per
+                      selected bottle type, stored under productAttributes.bottleStickerSizes[<type>]
+                      (same shape as packingSizes below); the Sales product line reads the size for
+                      whichever Bottle Type the order picks. (Box/Ziplock/Butter Paper "Sticker Size"
+                      fields were removed: the single per-packing-material size below now drives both
+                      the Sales Sticker Size and Material Stock deduction.) */}
+                  {showBottleStickerSize && selectedBottleTypeValues.map((btv) => (
+                    <Col xs={24} sm={12} key={`bottlesticker-${btv}`}>
+                      <Form.Item
+                        label={`${btv} Sticker Size`}
+                        name={['productAttrs', 'bottleStickerSizes', btv]}
+                        tooltip={`Sticker/label size for "${btv}" — pre-fills the Sales product line when this bottle type is chosen.`}
+                      >
                         <Input placeholder="e.g. 3in x 2in" allowClear />
                       </Form.Item>
                     </Col>
+                  ))}
+                  {showBottleStickerSize && selectedBottleTypeValues.length === 0 && (
+                    <Col xs={24} sm={12}>
+                      <Text type="secondary" style={{ fontSize: 12 }}>Select one or more Bottle Types to enter their Sticker Sizes.</Text>
+                    </Col>
                   )}
+                  {/* Legacy items only: a single bottleStickerSize saved before per-type sizes existed and
+                      not yet carried into the map (no bottle type was selected) — keep it registered so
+                      re-saving the item never silently drops it. */}
+                  {hasBottleType && watchedLegacyBottleSticker ? (
+                    <Form.Item name={['productAttrs', 'bottleStickerSize']} hidden noStyle><Input /></Form.Item>
+                  ) : null}
                   {/* Per-packing-material size — one field per selected packing material value
                       (e.g. "White box Size", "Butter paper Size"). Stored under
                       productAttributes.packingSizes[<value>]; the Sales product line auto-fills

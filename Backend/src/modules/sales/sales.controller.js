@@ -20,6 +20,8 @@ const {
   resolveGenericStockForView, findReservedRowsForView, buildPackingRows, packagingViewOfItem,
 } = require('../../utils/materialStockMatch');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
+const { storedTotalWithRoundOff, r2 } = require('../../utils/orderCalc');
+const Kit = require('../../models/Kit');
 const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
 const { buildLeadEditHistory } = require('../../utils/leadEditHistory');
 
@@ -258,7 +260,16 @@ exports.getReminders = asyncHandler(async (req, res) => {
     const _subtotal = _items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0), 0);
     const _gstFromItems = _items.reduce((s, p) => s + (Number(p.qty) || 0) * (Number(p.price || p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
     const _gst = _gstFromItems > 0 ? _gstFromItems : (Number(o.gstAmount) || 0);
-    const orderTotal = _subtotal > 0 ? Math.round((_subtotal + _gst) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
+    // Round off recorded via Billing's Record Payment In moves what's owed (Addition raises it,
+    // Discount lowers it) — folded into the items-derived total only. The stored-total fallback
+    // below already includes it (syncOrderPaymentCollection keeps Order.total in step), so adding
+    // it there too would double count. Without this an Unpaid round off never showed as due, and
+    // a Discount left a permanent phantom "payment pending" for the discounted amount.
+    // Same for a courier charge recorded as Unpaid (explicit courierPaid:false): it raises what's
+    // owed without having been received. A Paid courier (and pre-switch entries) is left as it was.
+    const _roundOff = (o.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0);
+    const _unpaidCourier = (o.paymentCollection || []).reduce((s, e) => s + (e?.courierPaid === false ? (Number(e?.courierCharge) || 0) : 0), 0);
+    const orderTotal = _subtotal > 0 ? Math.round((_subtotal + _gst + _roundOff + _unpaidCourier) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
     const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const paidAmt = collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
     const liveBalance = Math.max(0, orderTotal - paidAmt);
@@ -369,7 +380,7 @@ exports.convertToNegotiation = asyncHandler(async (req, res, next) => {
   let lead = null;
   if (quotation.leadId) lead = await Lead.findById(quotation.leadId).lean();
   const resolveField = (...sources) => sources.find(v => v != null && v !== '');
-  const negotiation = await Negotiation.create({
+  let negotiation = await Negotiation.create({
     ...extraFields,
     negCode,
     quotationId: quotation._id,
@@ -402,6 +413,30 @@ exports.convertToNegotiation = asyncHandler(async (req, res, next) => {
     packagingIncludesQty: resolveField(qObj.packagingIncludesQty, lead?.packagingIncludesQty),
     createdBy: req.user._id,
   });
+  // Billing's Record Payment In may already have logged a round off against this quotation. Its
+  // payment entries are copied across above (extraFields), but the total sent/stored never
+  // contains the round off — so the new negotiation would start with a total that disagrees with
+  // its own payment entries. Same guarded correction as convertToOrder: only when the stored
+  // total demonstrably excludes the round off, so nothing is double counted; any failure just
+  // keeps the copied total, exactly as before.
+  // (An Unpaid courier charge — explicit courierPaid:false — moves the total the same way.)
+  if ((negotiation.paymentCollection || []).some((e) => Number(e?.roundOff) || (Number(e?.courierCharge) && e?.courierPaid === false))) {
+    try {
+      const plain = negotiation.toObject();
+      const oldTotal = Number(plain.total) || 0;
+      const kitsData = (plain.packagingIncludes || []).length > 0 ? await Kit.find().lean() : [];
+      const adjustedTotal = storedTotalWithRoundOff(oldTotal, plain, kitsData);
+      if (adjustedTotal !== oldTotal) {
+        const $set = { total: adjustedTotal, balance: r2(adjustedTotal - (Number(plain.advancePaid) || 0)) };
+        // Sales reads `totalAmount` before `total` when both exist — keep it in step, but only
+        // if it was a copy of the same figure (never rewrite one that already differs).
+        if (plain.totalAmount != null && Math.abs(Number(plain.totalAmount) - oldTotal) < 0.01) $set.totalAmount = adjustedTotal;
+        negotiation = await Negotiation.findByIdAndUpdate(negotiation._id, { $set }, { new: true }) || negotiation;
+      }
+    } catch (err) {
+      console.error(`Round-off total reconcile failed for negotiation ${negotiation.negCode}:`, err.message);
+    }
+  }
   res.status(201).json({ success: true, data: negotiation });
 });
 
@@ -996,7 +1031,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
   const orderCategory = resolveField(lead?.leadType, 'ORDER');
   const orderCode = await generateCode(orderCategory === 'SAMPLE' ? 'SAM' : 'ORD');
 
-  const order = await Order.create({
+  let order = await Order.create({
     orderCode,
     leadId: negotiation.leadId,
     negotiationId: negotiation._id,
@@ -1089,6 +1124,30 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
     statusHistory: [{ status: 'In Production', changedAt: new Date(), byName: req.user?.fullName || req.user?.name || 'System', note: 'Order created' }],
   });
+  // Billing's Record Payment In may already have logged a round off against this negotiation —
+  // synced onto its paymentCollection, which was carried onto the order above. The negotiation's
+  // stored total never contains it, so the new order's total/balance would start out stale
+  // (Task Management / Dispatch read Order.total, and would show a fully-paid discounted order as
+  // still owing, or an unpaid addition as settled). Only adjusts when the stored total
+  // demonstrably excludes the round off (storedTotalWithRoundOff), so nothing is double counted;
+  // any failure just keeps the copied total, exactly as before.
+  // (An Unpaid courier charge — explicit courierPaid:false — moves the total the same way.)
+  if ((order.paymentCollection || []).some((e) => Number(e?.roundOff) || (Number(e?.courierCharge) && e?.courierPaid === false))) {
+    try {
+      const plain = order.toObject();
+      const kitsData = (plain.packagingIncludes || []).length > 0 ? await Kit.find().lean() : [];
+      const adjustedTotal = storedTotalWithRoundOff(plain.total, plain, kitsData);
+      if (adjustedTotal !== Number(plain.total)) {
+        order = await Order.findByIdAndUpdate(
+          order._id,
+          { $set: { total: adjustedTotal, balance: r2(adjustedTotal - (Number(plain.paidAmount) || 0)) } },
+          { new: true }
+        ) || order;
+      }
+    } catch (err) {
+      console.error(`Round-off total reconcile failed for order ${order.orderCode}:`, err.message);
+    }
+  }
   if (negotiation.leadId) {
     await Lead.findByIdAndUpdate(negotiation.leadId, {
       $set: { status: 'Converted' },

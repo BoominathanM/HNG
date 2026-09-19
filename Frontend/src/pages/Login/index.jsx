@@ -169,7 +169,7 @@ export default function Login() {
         <div style={{ background: '#ffffff', borderRadius: 20, padding: 'clamp(20px, 5vw, 44px) clamp(16px, 7vw, 44px) clamp(20px, 5vw, 36px)', boxShadow: '0 24px 64px rgba(107,18,64,0.35)' }}>
           <div style={{ textAlign: 'center', marginBottom: 20 }}>
             <img src={logoSrc} alt={companyName} onError={(e) => { if (!e.target.src.endsWith(DEFAULT_LOGO)) e.target.src = DEFAULT_LOGO; }} style={{ height: 90, maxWidth: 240, objectFit: 'contain', display: 'block', margin: '0 auto' }} />
-            <Title level={4} style={{ margin: '4px 0 2px', color: '#1a1a2e', fontWeight: 700, lineHeight: 1.2 }}>Welcome Back</Title>
+            {/* <Title level={4} style={{ margin: '4px 0 2px', color: '#1a1a2e', fontWeight: 700, lineHeight: 1.2 }}>Welcome Back</Title> */}
             <Text style={{ color: '#888', fontSize: 13 }}>Sign in to your HNG CRM account</Text>
           </div>
 
