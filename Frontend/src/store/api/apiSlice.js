@@ -933,7 +933,10 @@ export const apiSlice = createApi({
     }),
     createTask: builder.mutation({
       query: (data) => ({ url: '/tasks', method: 'post', data }),
-      invalidatesTags: ['Tasks'],
+      // Stock (Inventory + Material Stock) is deducted per task at assignment time (see
+      // utils/taskQuantity.js's deductStockForTask) — without 'Inventory' here, the Inventory
+      // page kept showing pre-deduction stock counts until manually refreshed.
+      invalidatesTags: ['Tasks', 'Inventory'],
     }),
     updateTaskStatus: builder.mutation({
       query: ({ id, status, feedback }) => ({ url: `/tasks/${id}/status`, method: 'patch', data: { status, ...(feedback !== undefined ? { feedback } : {}) } }),
@@ -973,7 +976,10 @@ export const apiSlice = createApi({
     }),
     deleteTask: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}`, method: 'delete' }),
-      invalidatesTags: ['Tasks', 'DeletedRecords'],
+      // Deleting a not-yet-Done task credits its stock back (see taskQuantity.js's
+      // reverseStockForTask) — 'Inventory' must be invalidated too or the Inventory page
+      // keeps showing the pre-credit-back (lower) stock count until manually refreshed.
+      invalidatesTags: ['Tasks', 'Inventory', 'DeletedRecords'],
     }),
     // ── Task Time Management config ────────────────────────────────────────────
     getTaskTimeConfigs: builder.query({
@@ -1012,11 +1018,13 @@ export const apiSlice = createApi({
     }),
     assignTask: builder.mutation({
       query: ({ orderId, ...data }) => ({ url: `/operations/orders/${orderId}/assign-task`, method: 'post', data }),
-      invalidatesTags: ['Operations', 'Tasks'],
+      // Same per-task stock deduction as createTask above — keep the Inventory page in sync.
+      invalidatesTags: ['Operations', 'Tasks', 'Inventory'],
     }),
     assignTasksPerProduct: builder.mutation({
       query: ({ orderId, ...data }) => ({ url: `/operations/orders/${orderId}/assign-tasks-per-product`, method: 'post', data }),
-      invalidatesTags: ['Operations', 'Tasks'],
+      // Same per-task stock deduction as createTask above — keep the Inventory page in sync.
+      invalidatesTags: ['Operations', 'Tasks', 'Inventory'],
     }),
     setOrderEmergency: builder.mutation({
       query: ({ id, isEmergency }) => ({ url: `/operations/orders/${id}/emergency`, method: 'patch', data: { isEmergency } }),

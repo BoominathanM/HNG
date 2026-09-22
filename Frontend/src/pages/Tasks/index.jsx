@@ -1820,8 +1820,8 @@ export default function Tasks() {
                 <Alert
                   type="warning"
                   showIcon
-                  message={`Stock Short — ${pendingQtyForCard} of ${requiredForCard} unit(s) not yet set aside`}
-                  description={`${deductedForCard} of ${requiredForCard} unit(s) for this order have been reserved from stock so far. Task assignment stays blocked until the remaining ${pendingQtyForCard} unit(s) are restocked — this happens automatically and needs no action here.`}
+                  message={`Reserved ${deductedForCard} of ${requiredForCard} units`}
+                  description={`${pendingQtyForCard} more will be reserved once a task is assigned for them.`}
                   style={{ borderRadius: 8, marginBottom: 8, fontSize: 12 }}
                 />
               );

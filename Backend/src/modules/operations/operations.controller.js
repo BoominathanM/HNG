@@ -486,7 +486,18 @@ exports.assignTasksPerProduct = asyncHandler(async (req, res, next) => {
 
   for (let i = 0; i < (order.items || []).length; i++) {
     const it = order.items[i];
-    const required = it.isKit ? (Number(it.overallQty) || Number(it.qty) || 0) : (Number(it.qty) || 0);
+    // Kit-component rows (Brush/Paste inside "Dental kit") store their PER-KIT RATIO in
+    // `it.qty` (e.g. 2 brushes per kit) — `it.overallQty` is essentially never populated on
+    // these rows in practice, so the old `it.overallQty || it.qty` fallback silently resolved
+    // to the bare per-kit ratio (e.g. 2) instead of ratio × kit count (e.g. 600 for a 300-kit
+    // order). That made this bulk fan-out think a kit product only needed a couple of units
+    // total: the live-stock check below passed trivially even when the REAL requirement (600)
+    // vastly exceeded actual stock, the created task's own qty was wrong, and the product read
+    // as "fully assigned" after producing a small fraction of what the order actually needs.
+    // resolveItemConsumedQty (sales.controller.js) already has the correct ratio ×
+    // kitOrders[].overallQty formula — the same one Today's Checklist and the live-stock gate
+    // use — so reuse it here instead of a third, drifted-out-of-sync copy.
+    const required = resolveItemConsumedQty(it, order);
     const pending = Math.max(0, required - (assignedQtyByIndex.get(i) || 0));
     if (pending <= 0) {
       skippedProducts.push(it.itemName);

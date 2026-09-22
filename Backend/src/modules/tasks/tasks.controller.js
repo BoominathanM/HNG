@@ -514,7 +514,6 @@ function buildEmergencyQtyMap(order) {
 async function computeSuggestedTasks() {
   const InventoryItem = require('../../models/InventoryItem');
   const StickerRequest = require('../../models/StickerRequest');
-  const Kit = require('../../models/Kit');
   const Order = require('../../models/Order');
   const TaskTimeConfig = require('../../models/TaskTimeConfig');
   const MaterialStock = require('../../models/MaterialStock');
@@ -583,12 +582,6 @@ async function computeSuggestedTasks() {
       || (Array.isArray(pa.sticker) && pa.sticker.length > 0);
   });
 
-  // Kits aren't InventoryItems — they're a Kit (components list). Build a lookup so kit
-  // line items report real component-stock readiness instead of a false "no match → 0".
-  const kits = await Kit.find({ deletedAt: null }).select('kitName products').lean();
-  const kitByName = {};
-  kits.forEach((k) => { kitByName[(k.kitName || '').toLowerCase()] = k.products || []; });
-
   // Packing material stock (Box/Ziplock/Butter Paper/Bottle/etc., tracked in Inventory >
   // Material Stocks by name+size) — fetched once and matched per item below via the same
   // resolveMaterialStock helper sales.controller.js's deductMaterialStockForOrder uses, so
@@ -621,30 +614,23 @@ async function computeSuggestedTasks() {
         : (Number(it.overallQty) || Number(it.qty) || 0);
 
       // ── Stock readiness ──
-      let stock;
-      let stockReady;
-      if (isKitItem) {
-        const components = kitByName[(it.kitName || '').toLowerCase()];
-        if (components && components.length) {
-          // How many full kits can be assembled right now, limited by the scarcest component.
-          stock = Math.min(...components.map((c) => {
-            const compStock = stockByName[(c.productName || '').toLowerCase()] ?? 0;
-            return Math.floor(compStock / (c.qty || 1));
-          }));
-          // `stock` is a count of KITS buildable, so it must be compared against kits
-          // NEEDED (kitOverallQty), not the per-product unit total in `requiredQty` — a
-          // >1 per-kit ratio would otherwise compare mismatched units.
-          stockReady = stock >= (kitOverallQty || requiredQty);
-        } else {
-          // Kit not found in the Kit catalog (legacy/unregistered) — can't verify components,
-          // so don't falsely block on an unrelated/zero match.
-          stock = null;
-          stockReady = true;
-        }
-      } else {
-        stock = stockByName[(it.itemName || '').toLowerCase()] ?? 0;
-        stockReady = stock >= requiredQty;
-      }
+      // Every product on this checklist — kit component or not — gets its OWN task
+      // (e.g. the "Box" packing task for just this Brush line), and that task only ever
+      // consumes THIS item's own InventoryItem stock: see checkLiveStockAvailability /
+      // deductStockForTask (utils/taskQuantity.js), the actual gate + deduction that runs
+      // when the task is assigned. Readiness here must mirror that same per-line check.
+      // A previous version compared against a KIT-WIDE bottleneck instead (the fewest
+      // full kits buildable across every sibling component, e.g. floor(soapStock/ratio)
+      // vs floor(brushStock/ratio) vs floor(combStock/ratio), taking the min) — that
+      // single bottleneck number then got applied identically to EVERY component card of
+      // the same kit, so a well-stocked component (e.g. 1,320 brushes on hand) still
+      // showed "Stock Not Available" whenever some unrelated sibling (soap/comb/…) was
+      // the one actually short. It also disagreed with the real assignment-time gate
+      // above, which would have let that brush task through — this checklist was simply
+      // more restrictive than reality for no reason tied to how stock actually gets
+      // deducted now (per task, per line, not per whole kit).
+      const stock = stockByName[(it.itemName || '').toLowerCase()] ?? 0;
+      const stockReady = stock >= requiredQty;
 
       // ── Design (Sticker / Box / Frosted Ziplock / Butter Paper) readiness ──
       const rawDesignType = resolveDesignType(it, o);
