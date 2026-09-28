@@ -4,6 +4,7 @@ const Party = require('../../models/Party');
 const LedgerEntry = require('../../models/LedgerEntry');
 const Quotation = require('../../models/Quotation');
 const Order = require('../../models/Order');
+const Lead = require('../../models/Lead');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
@@ -914,10 +915,43 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
   const roundOff = Number(req.body.roundOff) || 0;
   const courierPaid = req.body.courierPaid !== false;
   const roundOffPaid = req.body.roundOffPaid !== false;
-  const creditedCourier = courierPaid ? courierCharge : 0;
+
+  // Resolve the linked order early (also needed below to propagate the payment) — same
+  // $or resolution used further down/elsewhere in this file.
+  let orderId = invoice.orderId;
+  if (!orderId && invoice.quotationId) {
+    const linkedOrderForScope = await Order.findOne({ quotationId: invoice.quotationId, deletedAt: null }).sort('-createdAt');
+    orderId = linkedOrderForScope?._id;
+  }
+
+  // Transport Cost Scope ('CLIENT' | 'HNG'), set on Lead/Order creation — order first, falling
+  // back to its lead. When HNG, HNG itself bears the transport cost, so a courier charge
+  // recorded here must NOT inflate the invoice total, be credited as received, or raise what the
+  // client's ledger shows as owed — it's an HNG-side cost, not a charge to the client. CLIENT
+  // (and unset, for records that predate the scope field) keeps the original behaviour unchanged.
+  let transportationBy = null;
+  if (orderId) {
+    const orderForScope = await Order.findById(orderId).select('transportationBy leadId');
+    transportationBy = orderForScope?.transportationBy || null;
+    if (!transportationBy && orderForScope?.leadId) {
+      const leadForScope = await Lead.findById(orderForScope.leadId).select('transportationBy');
+      transportationBy = leadForScope?.transportationBy || null;
+    }
+  } else if (invoice.quotationId) {
+    const quotationForScope = await Quotation.findById(invoice.quotationId).select('leadId');
+    if (quotationForScope?.leadId) {
+      const leadForScope = await Lead.findById(quotationForScope.leadId).select('transportationBy');
+      transportationBy = leadForScope?.transportationBy || null;
+    }
+  }
+  // The raw entered courierCharge is still stored on the Payment/order entry either way (for
+  // record-keeping) — only its effect on the client-facing invoice/ledger is gated here.
+  const billableCourier = transportationBy === 'HNG' ? 0 : courierCharge;
+
+  const creditedCourier = courierPaid ? billableCourier : 0;
   const creditedRoundOff = roundOffPaid ? roundOff : 0;
   const netAmount = r2((Number(req.body.amount) || 0) + creditedCourier + creditedRoundOff);
-  const unpaidCourier = !courierPaid && courierCharge !== 0;
+  const unpaidCourier = !courierPaid && billableCourier !== 0;
   const unpaidRoundOff = !roundOffPaid && roundOff !== 0;
   // An Unpaid courier charge / round off with nothing collected alongside it: an adjustment, not a payment.
   const adjustmentOnly = (unpaidCourier || unpaidRoundOff) && netAmount === 0;
@@ -933,8 +967,9 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
   });
 
   // Courier charge and round off both change what's actually owed on the invoice before
-  // we credit the payment against it.
-  if (courierCharge) invoice.total = r2((invoice.total || 0) + courierCharge);
+  // we credit the payment against it. An HNG-scope courier charge is excluded (billableCourier
+  // is 0) — it's a cost HNG bears, not something the client's invoice total should reflect.
+  if (billableCourier) invoice.total = r2((invoice.total || 0) + billableCourier);
   if (roundOff) invoice.total = r2((invoice.total || 0) + roundOff);
 
   // Update invoice balance
@@ -953,12 +988,12 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
     // An Unpaid courier charge raises what the party owes without any money moving — a debit.
     // (A Paid courier needs no row of its own: it is netted into the Payment credit below, as ever.)
     if (unpaidCourier) {
-      runningBal = Math.max(0, r2(runningBal + courierCharge));
+      runningBal = Math.max(0, r2(runningBal + billableCourier));
       await LedgerEntry.create({
         partyId: pId,
         type: 'Debit Note',
         docRef: invoice.invoiceNumber,
-        debit: courierCharge,
+        debit: billableCourier,
         credit: 0,
         balance: runningBal,
         note: `Unpaid courier charge — ${payRef}`,
@@ -999,15 +1034,11 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
     await Party.findByIdAndUpdate(pId, { runningBalance: runningBal });
   }
 
-  // Propagate the payment to the linked order — both its own paymentCollection (so
-  // Sales, which computes paid/total straight off the order, shows this payment
-  // immediately without relying on the frontend to find and patch the right order)
-  // and its tasks' paymentStatus (Task Management + Dispatch gate on that).
-  let orderId = invoice.orderId;
-  if (!orderId && invoice.quotationId) {
-    const linkedOrder = await Order.findOne({ quotationId: invoice.quotationId, deletedAt: null }).sort('-createdAt');
-    orderId = linkedOrder?._id;
-  }
+  // Propagate the payment to the linked order (resolved above, alongside Transport Cost
+  // Scope) — both its own paymentCollection (so Sales, which computes paid/total straight
+  // off the order, shows this payment immediately without relying on the frontend to find
+  // and patch the right order) and its tasks' paymentStatus (Task Management + Dispatch
+  // gate on that).
   if (orderId) {
     await syncOrderPaymentCollection(orderId, {
       paymentMethod: req.body.paymentMode || 'Cash',

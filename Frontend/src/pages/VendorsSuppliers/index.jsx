@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select,
@@ -11,7 +11,8 @@ import {
   EyeOutlined, FileTextOutlined, ContactsOutlined, TeamOutlined,
   LeftOutlined, CheckOutlined, ThunderboltOutlined, RobotOutlined,
   CameraOutlined, SafetyCertificateOutlined, ShoppingOutlined,
-  WalletOutlined, WarningOutlined, ShopOutlined, UserOutlined, DeleteOutlined
+  WalletOutlined, WarningOutlined, ShopOutlined, UserOutlined, DeleteOutlined,
+  EditOutlined, HistoryOutlined
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -84,6 +85,115 @@ const exportToCSV = (headers, rows, filename) => {
   URL.revokeObjectURL(url);
 };
 
+// Read-only label/value rows for a vendor's bank / UPI block — the same fields VendorBankFields
+// collects. A plain string is the legacy free-text shape from before bankDetails was structured.
+const vendorBankRows = (bank) => {
+  if (!bank) return [];
+  if (typeof bank === 'string') return [['Bank Details', bank]];
+  const method = bank.method === 'upi'
+    ? [['Payment Method', 'UPI'], ['UPI ID', bank.upiId], ['UPI Number', bank.upiNumber]]
+    : [
+        ['Payment Method', 'Bank Transfer'], ['Account Holder Name', bank.accountHolderName],
+        ['Account Number', bank.accountNo], ['IFSC Code', bank.ifsc],
+        ['Bank Name', bank.bankName], ['Branch Name', bank.branchName],
+      ];
+  return [...method, ['Payment Contact Phone', bank.phone], ['Payment Contact Email', bank.email]];
+};
+
+// Edit Vendor — the Add Vendor form's fields, pre-filled from the saved vendor (the AI-scan panel is
+// Add-only). Its own component so every open gets a fresh antd form with no leftovers from the last edit.
+function EditVendorModal({ vendor, onClose }) {
+  const [form] = Form.useForm();
+  const [open, setOpen] = useState(true);
+  const [updateVendor, { isLoading: saving }] = useUpdateVendorMutation();
+
+  // Filled on mount instead of via <Form initialValues>: VendorBankFields gives bankDetails.method its own
+  // initialValue, and antd warns when the Form sets the same path too.
+  useEffect(() => {
+    const bank = vendor.bankDetails && typeof vendor.bankDetails === 'object' ? vendor.bankDetails : {};
+    form.setFieldsValue({
+      cust_name: vendor.name,
+      cust_phone: vendor.phone || '',
+      cust_email: vendor.email || '',
+      cust_tax: vendor.taxId || '',
+      cust_address: vendor.address || '',
+      cust_notes: vendor.notes || '',
+      bankDetails: { ...bank, method: bank.method || 'bank' },
+    });
+  }, [form, vendor]);
+
+  const handleUpdateVendor = async (vals) => {
+    try {
+      await updateVendor({
+        id: vendor.id,
+        name: vals.cust_name,
+        phone: vals.cust_phone || '',
+        email: vals.cust_email || '',
+        taxId: vals.cust_tax || '',
+        address: vals.cust_address || '',
+        notes: vals.cust_notes || '',
+        bankDetails: vals.bankDetails || {},
+      }).unwrap();
+      enqueueSnackbar('Vendor updated successfully', { variant: 'success' });
+      setOpen(false);
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update vendor', { variant: 'error' });
+    }
+  };
+
+  return (
+    <Modal
+      title={<Text strong style={{ fontSize: 16 }}>Edit Vendor</Text>}
+      open={open}
+      onCancel={() => setOpen(false)}
+      afterClose={onClose}
+      footer={null}
+      width={540}
+      centered
+    >
+      <Form form={form} layout="vertical" onFinish={handleUpdateVendor} style={{ marginTop: 16 }}>
+        {/* Even columns (not Add's 14/10) so a saved 10-digit phone number isn't cut off; stacks on phones. */}
+        <Row gutter={10}>
+          <Col xs={24} sm={12}>
+            <Form.Item label={<Text style={{ fontSize: 13 }}>Name <span style={{ color: '#ff4d4f' }}>*</span></Text>} name="cust_name" rules={[{ required: true }]} style={{ marginBottom: 12 }}>
+              <Input placeholder="Vendor name" style={{ borderRadius: 8, height: 40 }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12}>
+            <Form.Item label={<Text style={{ fontSize: 13 }}>Phone</Text>} name="cust_phone" style={{ marginBottom: 12 }} rules={[phoneValidator(false)]}>
+              <PhoneInput placeholder="Phone number" />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Row gutter={10}>
+          <Col xs={24} sm={12}>
+            <Form.Item label={<Text style={{ fontSize: 13 }}>Email</Text>} name="cust_email" style={{ marginBottom: 12 }} rules={emailRules(false)}>
+              <Input placeholder="email@example.com" style={{ borderRadius: 8, height: 40 }} />
+            </Form.Item>
+          </Col>
+          <Col xs={24} sm={12}>
+            <Form.Item label={<Text style={{ fontSize: 13 }}>Tax ID (GST/PAN)</Text>} name="cust_tax" style={{ marginBottom: 12 }}>
+              <Input placeholder="GST / PAN" style={{ borderRadius: 8, height: 40 }} />
+            </Form.Item>
+          </Col>
+        </Row>
+        <Form.Item label={<Text style={{ fontSize: 13 }}>Address</Text>} name="cust_address" style={{ marginBottom: 12 }}>
+          <Input placeholder="City, State" style={{ borderRadius: 8, height: 40 }} />
+        </Form.Item>
+        <Divider style={{ margin: '4px 0 12px' }} orientationMargin={0} orientation="left"><Text style={{ fontSize: 12, color: '#aaa' }}>Bank Details</Text></Divider>
+        <VendorBankFields form={form} namePrefix="bankDetails" />
+        <Form.Item label={<Text style={{ fontSize: 13 }}>Notes</Text>} name="cust_notes" style={{ marginBottom: 12 }}>
+          <Input.TextArea rows={2} placeholder="Any additional info..." style={{ borderRadius: 8 }} />
+        </Form.Item>
+        <div style={{ display: 'flex', gap: 8, marginTop: 20 }}>
+          <Button onClick={() => setOpen(false)} style={{ flex: 1, height: 40, borderRadius: 8 }}>Cancel</Button>
+          <Button type="primary" htmlType="submit" loading={saving} style={{ flex: 2, height: 40, borderRadius: 8, background: '#B11E6A', border: 'none', fontWeight: 700 }}>Update Vendor</Button>
+        </div>
+      </Form>
+    </Modal>
+  );
+}
+
 export default function VendorsSuppliers() {
   const [printingSupplierForm] = Form.useForm();
   const makeUpload = useCloudinaryUpload();
@@ -122,6 +232,9 @@ export default function VendorsSuppliers() {
   const [createExpense] = useCreateExpenseMutation();
 
   const [viewVendor, setViewVendor] = useState(null);
+  // Row action modals — read-only vendor details (View) and the pre-filled edit form (Edit).
+  const [vendorDetail, setVendorDetail] = useState(null);
+  const [editingVendor, setEditingVendor] = useState(null);
   // Bills for this vendor, merged across PurchaseOrder and LocalPurchase (the two
   // separate collections vendor spend is split across) — same source as Ledgers.
   const { data: vendorLedgerData } = useGetVendorLedgerQuery(viewVendor?.id, { skip: !viewVendor?.id });
@@ -145,6 +258,7 @@ export default function VendorsSuppliers() {
     email: v.email,
     address: v.address,
     taxId: v.taxId,
+    notes: v.notes,
     bankDetails: v.bankDetails,
     status: v.status,
     aiSummary: v.aiSummary,
@@ -280,13 +394,18 @@ export default function VendorsSuppliers() {
   const capturePhoto = () => {
     const video = cameraVideoRef.current;
     if (!video) return;
+    // No decoded frame yet — capturing now would produce a blank black photo that the AI can't read.
+    if (!video.videoWidth) {
+      enqueueSnackbar('Camera is still starting — wait a moment and tap Capture Photo again.', { variant: 'warning' });
+      return;
+    }
     const canvas = document.createElement('canvas');
     canvas.width = video.videoWidth || 1280;
     canvas.height = video.videoHeight || 720;
     canvas.getContext('2d').drawImage(video, 0, 0);
     canvas.toBlob((blob) => {
       if (!blob) return;
-      const file = new File([blob], `scan_${Date.now()}.jpg`, { type: 'image/jpeg' });
+      const file = new File([blob], `camera_${Date.now()}.jpg`, { type: 'image/jpeg' });
       if (cameraSetFile) cameraSetFile(file);
       enqueueSnackbar('Document captured successfully', { variant: 'success' });
       closeCameraCapture();
@@ -322,6 +441,7 @@ export default function VendorsSuppliers() {
         email: vals.cust_email || '',
         taxId: vals.cust_tax || '',
         address: vals.cust_address || '',
+        notes: vals.cust_notes || '',
         bankDetails: vals.bankDetails || {},
         vendorType: 'raw_material',
       }).unwrap();
@@ -641,6 +761,7 @@ export default function VendorsSuppliers() {
                             size="small"
                             dataSource={filteredVendors}
                             pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                            scroll={{ x: 'max-content' }}
                             columns={[
                               { title: 'Vendor Name', dataIndex: 'name', key: 'name', render: (v) => <Text strong>{v}</Text> },
                               { title: 'Phone', dataIndex: 'phone', key: 'phone' },
@@ -651,7 +772,11 @@ export default function VendorsSuppliers() {
                               {
                                 title: 'Action', key: 'action',
                                 render: (_, r) => (
-                                  <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setViewVendor(r)} style={{ color: '#B11E6A' }}>View History</Button>
+                                  <Space size={4}>
+                                    <Button size="small" type="link" icon={<EyeOutlined />} onClick={() => setVendorDetail(r)} style={{ color: '#B11E6A' }}>View</Button>
+                                    <Button size="small" type="link" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingVendor(r); }} style={{ color: '#B11E6A' }}>Edit</Button>
+                                    <Button size="small" type="link" icon={<HistoryOutlined />} onClick={() => setViewVendor(r)} style={{ color: '#B11E6A' }}>View History</Button>
+                                  </Space>
                                 )
                               }
                             ]}
@@ -1116,7 +1241,7 @@ export default function VendorsSuppliers() {
             </div>
             <div>
               <Text style={{ fontWeight: 700, color: '#B11E6A', display: 'block', fontSize: 13 }}>Scan Invoice / Document with AI</Text>
-              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Scan to use camera — AI will auto-fill the fields below</Text>
+              <Text style={{ fontSize: 11, color: '#aaa' }}>Upload a file or tap Open Camera — AI will auto-fill the fields below</Text>
             </div>
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1129,7 +1254,7 @@ export default function VendorsSuppliers() {
             >
               <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload</Button>
             </Upload>
-            <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setVendorScannedFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', whiteSpace: 'nowrap' }}>Scan</Button>
+            <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setVendorScannedFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', whiteSpace: 'nowrap' }}>Open Camera</Button>
             <Button
               icon={<ThunderboltOutlined />}
               loading={vendorScanLoading}
@@ -1186,6 +1311,51 @@ export default function VendorsSuppliers() {
         </Form>
       </Modal>
 
+      {/* ──────── View Vendor Modal (read-only, same fields as Add) ──────── */}
+      <Modal
+        title={<Text strong style={{ fontSize: 16 }}>Vendor Details</Text>}
+        open={!!vendorDetail}
+        onCancel={() => setVendorDetail(null)}
+        footer={<Button onClick={() => setVendorDetail(null)} style={{ borderRadius: 8 }}>Close</Button>}
+        width={540}
+        centered
+      >
+        {vendorDetail && (
+          <div style={{ marginTop: 16 }}>
+            <Descriptions
+              bordered
+              size="small"
+              column={1}
+              styles={{ label: { width: 170, fontWeight: 600 } }}
+              items={[
+                { key: 'name', label: 'Name', children: <Text strong style={{ color: '#B11E6A' }}>{vendorDetail.name}</Text> },
+                { key: 'phone', label: 'Phone', children: vendorDetail.phone || '—' },
+                { key: 'email', label: 'Email', children: vendorDetail.email || '—' },
+                { key: 'taxId', label: 'Tax ID (GST/PAN)', children: vendorDetail.taxId || '—' },
+                { key: 'address', label: 'Address', children: vendorDetail.address || '—' },
+                { key: 'status', label: 'Status', children: vendorDetail.status ? <Tag color={vendorDetail.status === 'Active' ? 'success' : vendorDetail.status === 'Blacklisted' ? 'error' : 'default'} style={{ borderRadius: 10 }}>{vendorDetail.status}</Tag> : '—' },
+                { key: 'notes', label: 'Notes', children: vendorDetail.notes || '—' },
+              ]}
+            />
+            <Divider style={{ margin: '16px 0 12px' }} orientationMargin={0} orientation="left"><Text style={{ fontSize: 12, color: '#aaa' }}>Bank Details</Text></Divider>
+            {vendorBankRows(vendorDetail.bankDetails).length > 0 ? (
+              <Descriptions
+                bordered
+                size="small"
+                column={1}
+                styles={{ label: { width: 170, fontWeight: 600 } }}
+                items={vendorBankRows(vendorDetail.bankDetails).map(([label, value]) => ({ key: label, label, children: value || '—' }))}
+              />
+            ) : (
+              <Text type="secondary" style={{ fontSize: 12 }}>No bank details added</Text>
+            )}
+          </div>
+        )}
+      </Modal>
+
+      {/* ──────── Edit Vendor Modal (same fields as Add, pre-filled) ──────── */}
+      {editingVendor && <EditVendorModal vendor={editingVendor} onClose={() => setEditingVendor(null)} />}
+
       {/* ──────── Scan & Record Vendor Bill Modal ──────── */}
       <Modal
         title={
@@ -1218,7 +1388,7 @@ export default function VendorsSuppliers() {
               >
                 <Button icon={<UploadOutlined />} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A', width: '100%' }}>Upload Bill</Button>
               </Upload>
-              <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setVendorBillFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A' }}>Capture</Button>
+              <Button icon={<CameraOutlined />} onClick={() => openCameraCapture(setVendorBillFile)} style={{ borderRadius: 8, borderColor: '#B11E6A66', color: '#B11E6A' }}>Open Camera</Button>
               <Button
                 icon={<ThunderboltOutlined />}
                 loading={vendorBillScanLoading}
@@ -1486,7 +1656,7 @@ export default function VendorsSuppliers() {
               <CameraOutlined style={{ color: '#fff', fontSize: 16 }} />
             </div>
             <div>
-              <div style={{ fontWeight: 700, fontSize: 15 }}>Scan Document</div>
+              <div style={{ fontWeight: 700, fontSize: 15 }}>Capture Document</div>
               <div style={{ fontSize: 11, color: '#888', fontWeight: 400 }}>Point camera at the document and tap Capture</div>
             </div>
           </Space>

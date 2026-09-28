@@ -15,7 +15,6 @@ import {
   Row,
   Select,
   Space,
-  Steps,
   Table,
   Tabs,
   Tag,
@@ -35,11 +34,13 @@ import {
   EyeOutlined,
   FileImageOutlined,
   FilePdfOutlined,
+  FileSearchOutlined,
   FileTextOutlined,
   GiftOutlined,
   MessageOutlined,
   PlusOutlined,
   PrinterOutlined,
+  ProfileOutlined,
   TeamOutlined,
   TruckOutlined,
 } from '@ant-design/icons';
@@ -79,10 +80,8 @@ import { formatQty } from '../../utils/numberFormat';
 import {
   buildProductionQueues,
   canAssignTaskFromChecks,
-  FLOW_STAGES,
   formatSizeWithUnit,
   getCheckStateMap,
-  getFlowStep,
   getProgressFromChecks,
   inferItemLogoType,
   normYNOps,
@@ -132,6 +131,10 @@ function kitPrintGate() {
 // suffix first, or "Assign Task" on either split row resolves to no productIndex, which
 // left Dispatch treating that product as never assigned/gated forever.
 const resolveBaseItemKey = (key) => String(key ?? '').replace(/-(emg|rem)$/, '');
+
+// Row key of the Product Specifications table — shared by the table's rowKey and by the row-click
+// popup (which stores just this key and re-finds its LIVE row, see specDetailKey below).
+const specRowKey = (r, idx) => r.key || r._id || String(idx);
 
 export default function OperationDetail() {
   const { id } = useParams();
@@ -1217,6 +1220,12 @@ export default function OperationDetail() {
   const [kitPackingModalKitCfg, setKitPackingModalKitCfg] = useState(null);
   const [partialModalOpen, setPartialModalOpen] = useState(false);
   const [partialQtyInput, setPartialQtyInput] = useState(0);
+  // Product Specifications row-click popup. Only the row KEY is stored (not the row object) so the
+  // popup re-resolves the LIVE row from visibleOrderItems on every render and follows refetched
+  // approvals / printing status / tasks instead of showing a stale snapshot. Open + key are split
+  // so the content stays mounted through the modal's close animation (afterClose clears the key).
+  const [specDetailKey, setSpecDetailKey] = useState(null);
+  const [specDetailOpen, setSpecDetailOpen] = useState(false);
   const handlePartialSplit = async () => {
     if (!order) return;
     try {
@@ -1369,6 +1378,11 @@ export default function OperationDetail() {
       </div>
     );
   }
+
+  // Live row behind the Product Specifications popup (null once the row no longer exists).
+  const specDetailRecord = specDetailKey != null
+    ? (visibleOrderItems.find((r, idx) => String(specRowKey(r, idx)) === String(specDetailKey)) || null)
+    : null;
 
   const checks = checkStates[order.id];
   const readyToAssign = canAssignTaskFromChecks(checks);
@@ -2573,6 +2587,485 @@ export default function OperationDetail() {
     },
   ];
 
+  // ── Product Specifications: row-click detail popup ───────────────────────────────────────
+  const handleSpecRowClick = (e, record, index) => {
+    // React bubbles synthetic events through portals, so a Select dropdown / Popover opened from
+    // inside a cell would otherwise ALSO open this popup — only react to clicks that physically
+    // landed inside the row itself.
+    if (!e.currentTarget.contains(e.target)) return;
+    // Let every control in the row keep doing its own job (Printing Status select, Ops OK /
+    // Reject, Assign Task, design thumbnail popover, invoice Save, attachment links).
+    if (e.target.closest('button, a, input, textarea, select, img, label, .ant-select, .ant-btn, .ant-checkbox-wrapper, .ant-popover')) return;
+    // Selecting text to copy a spec must not pop the dialog open.
+    if (window.getSelection?.()?.toString()) return;
+    setSpecDetailKey(specRowKey(record, index));
+    setSpecDetailOpen(true);
+  };
+
+  // Read-only, sectioned view of EVERYTHING one row of the Product Specifications table holds
+  // (Product, Kit / Spec, Emergency Qty, Personalized Kit, Category, Inventory Stock, Required
+  // Qty, HSN Code, Default Size, Packing Material, Material Category, Brand, Product Attributes,
+  // Printing Status, Design, Invoice, Ops Approval, Assign Task) — laid out with full,
+  // un-truncated text instead of the table's compact chips. Every value uses the SAME fallback
+  // chain as its column above so the two views cannot disagree. Nothing here writes anything:
+  // the Printing Status select, Ops OK / Reject and Assign Task controls stay in the table.
+  const renderSpecDetail = (record) => {
+    const yn = (v) => String(v ?? '').trim().toUpperCase() === 'YES';
+    const dash = <Text type="secondary">—</Text>;
+    const show = (v) => (v === undefined || v === null || v === '' ? dash : v);
+    const tagOrDash = (v, color) => (v ? <Tag color={color} style={{ margin: 0 }}>{v}</Tag> : dash);
+    const ynTag = (v) => (String(v ?? '').trim() === ''
+      ? dash
+      : <Tag color={yn(v) ? 'green' : 'default'} style={{ margin: 0 }}>{yn(v) ? 'Yes' : 'No'}</Tag>);
+    const prettyKey = (k) => k.replace(/([A-Z])/g, ' $1').replace(/^./, (s) => s.toUpperCase()).trim();
+    const fmtDateTime = (d) => (d ? new Date(d).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '-');
+    const border = isDark ? '#2a2a3e' : '#f0e0ea';
+    const item = (key, label, children, span = 1) => ({ key, label, children, span });
+    // Plain label-over-value cards laid out with Row/Col — NOT antd's <Descriptions> (a real
+    // <table>/<colgroup> under the hood). Descriptions computes its column widths from raw CSS
+    // percentages with no JS measurement, so it's fragile to page-wide table/col styling and
+    // rendered as hairline columns with the value text wrapping one letter per line in the live
+    // app. Row/Col is the same responsive grid this page already uses everywhere else (e.g. the
+    // Payment & Delivery Terms card above) and has no such failure mode. `cols` is how many
+    // cards sit per row at tablet+ width (always 1 per row on phones); an item with span=2
+    // always takes the full row, for long text/lists — the 24-column grid wraps the rest
+    // around it automatically, no manual row-chunking needed.
+    const COLS_TO_SM = { 1: 24, 2: 12, 3: 8, 4: 6 };
+    const fieldGrid = (items, cols = 2) => {
+      const list = (Array.isArray(items) ? items : []).filter(Boolean);
+      if (!list.length) return null;
+      const sm = COLS_TO_SM[cols] || 12;
+      return (
+        <Row gutter={[10, 10]}>
+          {list.map((it) => (
+            <Col key={it.key} xs={24} sm={it.span === 2 ? 24 : sm}>
+              <div style={{ height: '100%', padding: '8px 12px', borderRadius: 8, background: mutedBg, border: `1px solid ${border}` }}>
+                <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4 }}>
+                  {it.label}
+                </Text>
+                <div style={{ fontSize: 13, color: textColor }}>{it.children}</div>
+              </div>
+            </Col>
+          ))}
+        </Row>
+      );
+    };
+    const section = (key, icon, title, accent, body) => (
+      <div key={key} style={{ border: `1px solid ${border}`, borderRadius: 10, overflow: 'hidden' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 14px', background: `${accent}${isDark ? '22' : '10'}`, borderBottom: `1px solid ${border}` }}>
+          <span style={{ color: accent, display: 'inline-flex' }}>{icon}</span>
+          <Text strong style={{ color: textColor }}>{title}</Text>
+        </div>
+        <div style={{ padding: 12 }}>{body}</div>
+      </div>
+    );
+    const textBlock = (key, label, body) => (
+      <div key={key} style={{ padding: '10px 12px', borderRadius: 8, background: mutedBg, border: `1px solid ${border}` }}>
+        <Text type="secondary" style={{ fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, display: 'block', marginBottom: 4 }}>{label}</Text>
+        {body}
+      </div>
+    );
+    const includeLabel = (v) => {
+      const isObj = typeof v === 'object' && v !== null;
+      const id = isObj ? (v.id ?? v.name ?? v.itemName ?? JSON.stringify(v)) : v;
+      const qty = isObj ? v.qty : null;
+      return `${String(id)}${qty && Number(qty) > 1 ? ` × ${qty}` : ''}`;
+    };
+    const flagItems = (f, prefix = '') => [
+      item(`${prefix}sticker`, 'Sticker', ynTag(f.sticker)),
+      item(`${prefix}logo`, 'Logo', ynTag(f.logo)),
+      item(`${prefix}printing`, 'Printing', ynTag(f.printing)),
+    ];
+
+    // ── Identity / category ──
+    const name = record.itemName || record.name || record.product || '';
+    const invName = record.itemName || record.name || record.kitType;
+    const inv = invMap[invName];
+    const kitName = record.kitName || record.kitType || '';
+    const isKitItem = !!(record.isKit || kitName);
+    const cat = record.category || (isKitItem ? 'separate_kit' : 'separate_product');
+    const catMeta = ORDER_CATEGORY_META[cat] || ORDER_CATEGORY_META.separate_product;
+
+    // ── Quantities / stock (same sources as the Inventory Stock + Required Qty columns) ──
+    const liveStock = record.itemId?.currentStock ?? inv?.currentStock ?? record.inventoryStock ?? 0;
+    const requiredQty = record.requiredQty != null ? record.requiredQty : (record.qty || 0);
+    const shortBy = Math.max(0, (requiredQty || 0) - liveStock);
+    const emgInfo = record.isEmergencyProduct
+      ? (emergencyProductMap[name.toLowerCase()] || emergencyProductMap[(record.product || record.itemName || '').toLowerCase()])
+      : null;
+
+    // ── Product details (same fallback chains as the HSN / Default Size / Packing / Material /
+    //    Brand columns) ──
+    const hsn = record.hsnCode || record.itemId?.hsnCode || inv?.hsnCode || '';
+    const defaultSize = record.defaultSize || record.size || record.itemId?.defaultSize || inv?.defaultSize || inv?.size || '';
+    const sizeWithUnit = formatSizeWithUnit(record.size, record.unit, name) || '';
+    const packingMaterial = record.packingMaterial || record.packaging || record.itemId?.packingMaterial || inv?.packingMaterial || '';
+    const materialCategory = record.materialCategory || record.material || record.itemId?.materialCategory || inv?.materialCategory || '';
+    const brand = record.brand || record.itemId?.brand || inv?.brand || '';
+
+    // ── Kit config (same lookup as the Kit / Spec column) ──
+    const ownKitCfg = isKitItem
+      ? ((order?.kitOrders || []).find((ko) =>
+        (record.kitId && ko.kitId === record.kitId)
+        || (!record.kitId && (ko.kitName === kitName || ko.kitType === kitName))) || null)
+      : null;
+    const kDU = ownKitCfg?.displayUnit || '';
+    const kDUType = ownKitCfg?.displayUnitType || '';
+    const kSize = ownKitCfg?.size || '';
+    const kQty = Number(ownKitCfg?.overallQty) || 0;
+    const kSpec = ownKitCfg?.specification || '';
+    const kIncludes = Array.isArray(ownKitCfg?.kitIncludes) ? ownKitCfg.kitIncludes : [];
+    // Kit rows show the KIT's own Sticker / Logo / Printing (as the Kit / Spec column does);
+    // separate products show their own.
+    const flags = isKitItem
+      ? { sticker: ownKitCfg?.sticker || record.sticker || '', logo: ownKitCfg?.logo || record.logo || '', printing: ownKitCfg?.printing || record.printing || '' }
+      : { sticker: record.sticker || '', logo: record.logo || '', printing: record.printing || '' };
+
+    // ── Attributes (same merge + precedence as the Product Attributes column: flat order-item
+    //    attrs > the item's own productAttributes > Inventory defaults). Keys already shown as
+    //    their own labelled field elsewhere in this popup are left out of the generic list. ──
+    const ATTR_SKIP = new Set([
+      'itemName','name','kitType','isKit','kitName','kitId','qty','rate','price','gst','gstPercent',
+      'lineTotal','logoType','boxes','packaging','packingMaterial','material','materialCategory',
+      'hsnCode','discountPercent','discount','logo','sticker','brand','size','defaultSize',
+      'specs','displayType','itemId','_id','key','amount','rateValue','total','inventoryStock',
+      'printing','stickerPrinting','product','isEmergencyProduct','isEmergencyGated',
+      'productAttributes','attachments','category','verified','overallQty','kitPrice','displayUnit',
+      'packingMaterialTab','displayUnitTab','specification','otherSpecs','kitIncludes','kitIncludesQty',
+      // shown as dedicated fields in this popup
+      'stickerSize','packingMaterialType','packingSize','requiredQty','printingStatus',
+      'isIncludedInPersonalized','deductedQty','materialDeductedQty','materialDeductedFrom',
+      'packingFromExistingStock','packingExistingStockQty','packingExistingStockAt','packingExistingStockBy',
+      'createdAt','updatedAt','__v',
+      ...(isKitItem ? ['displayUnitType'] : []),
+    ]);
+    const showable = (v) => v != null && v !== ''
+      && (typeof v !== 'object' || (Array.isArray(v) && v.length > 0 && v.every((x) => x == null || typeof x !== 'object')));
+    const attrEntries = (obj) => Object.entries(obj || {}).filter(([k, v]) => !ATTR_SKIP.has(k) && showable(v));
+    const recAttrsObj = (record.productAttributes && typeof record.productAttributes === 'object' && !Array.isArray(record.productAttributes))
+      ? record.productAttributes : {};
+    const mergedAttrs = new Map([
+      ...attrEntries(inv?.productAttributes),
+      ...attrEntries(recAttrsObj),
+      ...attrEntries(record),
+    ]);
+    const attrValue = (v) => (Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v));
+    const specification = record.specification || (typeof record.specs === 'string' ? record.specs : '');
+    const otherSpecsNode = (() => {
+      const v = record.otherSpecs;
+      if (v == null || v === '') return null;
+      if (typeof v === 'string' || typeof v === 'number') return <Text style={{ whiteSpace: 'pre-wrap' }}>{String(v)}</Text>;
+      if (Array.isArray(v)) return v.length ? <Text style={{ whiteSpace: 'pre-wrap' }}>{v.map((x) => (typeof x === 'object' ? JSON.stringify(x) : String(x))).join(', ')}</Text> : null;
+      const entries = Object.entries(v).filter(([, x]) => x != null && x !== '');
+      if (!entries.length) return null;
+      return (
+        <Space direction="vertical" size={2}>
+          {entries.map(([k, x]) => (
+            <Text key={k}><Text type="secondary">{prettyKey(k)}: </Text>{typeof x === 'object' ? JSON.stringify(x) : String(x)}</Text>
+          ))}
+        </Space>
+      );
+    })();
+    const includedInKit = (Array.isArray(record.kitIncludes) ? record.kitIncludes : []).map(includeLabel);
+    const kitIncludesLabels = kIncludes.map(includeLabel);
+    // The same list is not shown twice when the item's own kitIncludes equals the kit config's.
+    const showIncludedInKit = includedInKit.length > 0 && includedInKit.join('|') !== kitIncludesLabels.join('|');
+    const atts = (Array.isArray(record.attachments) ? record.attachments : []).filter((a) => a && (typeof a === 'string' ? a : a.url));
+
+    // ── Printing status: reuse the table's OWN column render verbatim (2026-09-22 — the popup
+    //    now lets you change status directly, not just view it). Guaranteed identical behaviour
+    //    to the table cell (same Select/onChange/mutation, same "Closed" → auto-open Assign Task,
+    //    same Kit's-Display-Unit sub-block) since it's literally the same function, reading and
+    //    writing the SAME printingStatusValues state — changing it here updates the table cell
+    //    too, and vice versa. Unlike the "Kit / Spec" column (compact tiny-chip table styling),
+    //    this column's own Select/Tag are already normal-sized and look fine in a wide card.
+    const printingStatusCol = productColumns.find((c) => c.title === 'Printing Status');
+    const printingStatusNode = printingStatusCol?.render ? printingStatusCol.render(undefined, record) : dash;
+
+    // ── Design / invoice / approval (same resolution as the Design, Invoice, Ops Approval
+    //    columns; kit-level ones are shown for EVERY row of the kit here, not just the first) ──
+    const sr = resolveKitSR(record) || srForRow(record);
+    const productLower = (record.itemName || record.name || record.product || '').toLowerCase();
+    const stickerType = record.packingMaterialTab === 'box' ? 'Box'
+      : record.packingMaterialTab === 'frosted_ziplock' ? 'Frosted Ziplock'
+      : record.packingMaterialTab === 'butter_paper' ? 'Butter Paper'
+      : 'Sticker';
+    const hdKey = `${(order.hotelLogo || '').toLowerCase()}-${productLower}-${stickerType}`;
+    const existingHD = hotelDesigns.find((d) =>
+      `${(d.hotelName || '').toLowerCase()}-${(d.product || '').toLowerCase()}-${d.type || 'Sticker'}` === hdKey);
+    const designUrl = sr?.designFileUrl || existingHD?.designFileUrl;
+    const designIsExisting = !sr?.designFileUrl && !!existingHD?.designFileUrl;
+    // Mixed personalized order: the outer packaging has its own design / invoice / approval.
+    const persSR = (personalizedKitSR && record.isIncludedInPersonalized && personalizedKitSR._id !== sr?._id)
+      ? personalizedKitSR : null;
+    const ownInvoice = (() => {
+      if (isKitItem && (record.category || '') === 'personalized') return personalizedKitSR?.invoiceFile;
+      if (isKitItem) {
+        const tabSr = resolveKitSR(record);
+        if (tabSr?.invoiceFile?.url) return tabSr.invoiceFile;
+        const kt = kitName.toLowerCase();
+        const recCat = record.category || '';
+        const withInvoice = stickerRequests.find((s) => {
+          const srOId = String(s.orderId?._id || s.orderId || '');
+          if (!(srOId === String(order?.key || '') || s.orderId?.orderCode === id)) return false;
+          if (!s.invoiceFile?.url) return false;
+          if (recCat && s.category && s.category !== recCat) return false;
+          if (kt && s.kitType && (s.kitType || '').toLowerCase() !== kt) return false;
+          return true;
+        });
+        return (withInvoice || tabSr)?.invoiceFile;
+      }
+      return srForRow(record)?.invoiceFile;
+    })();
+
+    const designBlock = (url, isExisting) => {
+      if (!url) return <Tag color="default" style={{ margin: 0 }}>No design yet</Tag>;
+      const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
+      return (
+        <Space align="start" size={12} wrap>
+          {isImage && (
+            <a href={url} target="_blank" rel="noopener noreferrer">
+              <img src={url} alt="design" style={{ width: 96, height: 96, objectFit: 'cover', borderRadius: 8, border: `1px solid ${isExisting ? '#52c41a' : '#e0d0e8'}` }} />
+            </a>
+          )}
+          <Space direction="vertical" size={4}>
+            <a href={url} target="_blank" rel="noopener noreferrer">
+              <EyeOutlined /> {isImage ? 'Open full size' : 'View design file'} ↗
+            </a>
+            {isExisting && <Tag color="green" style={{ margin: 0 }}>♻ Previously approved design</Tag>}
+          </Space>
+        </Space>
+      );
+    };
+    const invoiceBlock = (file) => (file?.url ? (
+      <Space size={12} wrap>
+        <a href={file.url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 13, color: '#1890ff' }}>
+          <EyeOutlined /> View
+        </a>
+        <Button type="link" size="small" icon={<DownloadOutlined />} style={{ padding: 0, height: 'auto' }} onClick={() => downloadFile(file.url, file.name || 'invoice')}>
+          Save
+        </Button>
+        {file.name && <Text type="secondary" style={{ fontSize: 12 }}>{file.name}</Text>}
+      </Space>
+    ) : <Text type="secondary">No invoice</Text>);
+    const approvalBlock = (s, emptyLabel) => {
+      if (!s) return <Tag color="default" style={{ margin: 0 }}>{emptyLabel}</Tag>;
+      return (
+        <Space direction="vertical" size={4}>
+          {s.opsHeadApproved ? (
+            <Tag color="blue" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>
+              Ops OK — {s.opsHeadApprovedBy?.fullName || 'Ops'} · {fmtDateTime(s.opsHeadApprovedAt)}
+            </Tag>
+          ) : s.opsHeadRejected ? (
+            <Tag color="red" icon={<CloseCircleOutlined />} style={{ margin: 0, whiteSpace: 'normal' }}>
+              Ops Rejected — {s.opsHeadRejectedBy?.fullName || 'Ops'} · {fmtDateTime(s.opsHeadRejectedAt)}: {s.opsHeadRejectReason || 'No reason given'}
+            </Tag>
+          ) : (
+            <Tag color={s.status === 'Design Change' ? 'red' : 'gold'} style={{ margin: 0 }}>
+              Ops approval pending — {s.status || 'Waiting for Approval'}
+            </Tag>
+          )}
+          {s.salesApproved ? (
+            <Tag color="green" icon={<CheckCircleOutlined />} style={{ margin: 0 }}>Sales OK</Tag>
+          ) : s.salesRejected ? (
+            <Tag color="red" icon={<CloseCircleOutlined />} style={{ margin: 0, whiteSpace: 'normal' }}>
+              Sales Rejected — {s.salesRejectedBy?.fullName || 'Sales'} · {fmtDateTime(s.salesRejectedAt)}: {s.salesRejectReason || 'No reason given'}
+            </Tag>
+          ) : (
+            <Tag color="default" style={{ margin: 0 }}>Sales approval pending</Tag>
+          )}
+        </Space>
+      );
+    };
+    // Labelled stack used when a row carries BOTH the outer personalized packaging's item and its own.
+    const stacked = (persNode, ownLabel, ownNode) => (
+      persNode ? (
+        <Space direction="vertical" size={10} style={{ width: '100%' }}>
+          <div>
+            <Tag color="magenta" style={{ marginBottom: 6 }}>Personalized Kit (outer packaging)</Tag>
+            <div>{persNode}</div>
+          </div>
+          <div>
+            <Tag color="cyan" style={{ marginBottom: 6 }}>{ownLabel}</Tag>
+            <div>{ownNode}</div>
+          </div>
+        </Space>
+      ) : ownNode
+    );
+    const ownLabel = record.category === 'separate_kit' ? 'Separate Kit' : 'This item';
+
+    // ── Assemble sections ──
+    const overviewItems = [
+      item('product', isKitItem ? 'Kit Product' : 'Product', <Text strong>{name || '-'}</Text>),
+      isKitItem && item('kit', 'Kit', <Tag color="purple" icon={<GiftOutlined />} style={{ margin: 0 }}>{kitName}</Tag>),
+      // "Kit / Spec" and "Personalized Kit" table columns are ALWAYS shown for every row (the
+      // table itself shows "—" when a row doesn't have one) — always include a card for them
+      // here too, so a plain separate product's popup never simply omits a column the table has.
+      // Kept short and in this popup's own clean style (not the table cell's cramped tiny-chip
+      // layout) — the FULL detail lives in the Kit Details / Personalized Kit / Product Details
+      // sections below, this card just always names what applies (or says plainly what doesn't).
+      item('kitSpecCol', 'Kit / Spec', isKitItem
+        ? <Space size={6} wrap><Tag color="purple" icon={<GiftOutlined />} style={{ margin: 0 }}>{kitName}</Tag><Text type="secondary" style={{ fontSize: 12 }}>— see Kit Details below</Text></Space>
+        : <Text type="secondary">Not part of a kit — see Product Details &amp; Product Attributes above</Text>),
+      item('personalizedKitCol', 'Personalized Kit', record.isIncludedInPersonalized
+        ? <Space size={6} wrap><Tag color="magenta" icon={<GiftOutlined />} style={{ margin: 0 }}>{order?.kitDisplayUnit || 'Personalized Kit'}</Tag><Text type="secondary" style={{ fontSize: 12 }}>— see Personalized Kit section below</Text></Space>
+        : dash),
+      item('category', 'Category', (
+        <Tag style={{ background: `${catMeta.color}1a`, color: catMeta.color, border: `1px solid ${catMeta.color}55`, borderRadius: 12, fontWeight: 600, margin: 0 }}>
+          {catMeta.label}
+        </Tag>
+      )),
+      item('required', 'Required Qty', (
+        <Space size={8} wrap>
+          <Text strong>{formatQty(requiredQty)}</Text>
+          {shortBy > 0 && <Tag color="error" style={{ margin: 0 }}>Short {formatQty(shortBy)}</Tag>}
+        </Space>
+      )),
+      item('stock', 'Inventory Stock', (
+        <Space size={8} wrap>
+          <Text strong style={{ color: shortBy > 0 ? '#cf1322' : '#389e0d' }}>{formatQty(liveStock)}</Text>
+          <Text type="secondary" style={{ fontSize: 12 }}>{shortBy > 0 ? 'Not enough for this order' : 'Enough for this order'}</Text>
+        </Space>
+      )),
+      item('emergency', 'Emergency', record.isEmergencyProduct ? (
+        <Space size={6} wrap>
+          <Tag color="error" icon={<AlertFilled />} style={{ margin: 0 }}>Emergency</Tag>
+          {emgInfo?.date && <Text>{new Date(emgInfo.date).toLocaleDateString('en-IN', { dateStyle: 'medium' })}</Text>}
+        </Space>
+      ) : record.isEmergencyGated ? (
+        <Tag color="orange" style={{ margin: 0 }}>After Emergency Items</Tag>
+      ) : <Text>No</Text>),
+      item('emgQty', 'Emergency Qty', record.isEmergencyProduct
+        ? <Tag color="error" icon={<AlertFilled />} style={{ margin: 0, fontWeight: 600 }}>{(record.qty || 0).toLocaleString()}</Tag>
+        : dash),
+      // These 4 were previously hidden whenever falsy/zero (`condition && item(...)`), which
+      // dropped the CARD ITSELF — not just an empty value — so the field looked entirely absent
+      // from the popup even though the table's own raw-attribute leak showed it (e.g. "Deducted
+      // Qty: 0", "Verified: false"). Always render them now, formatted, same as the table always
+      // shows every column for every row.
+      item('deductedQty', 'Stock Deducted So Far', <Text>{formatQty(Number(record.deductedQty) || 0)}</Text>),
+      item('verified', 'Verified', record.verified
+        ? <Tag color="green" style={{ margin: 0 }}>Yes</Tag>
+        : <Tag style={{ margin: 0 }}>No</Tag>),
+      item('reserved', 'Packing From Existing Stock', record.packingFromExistingStock
+        ? (
+          <Space direction="vertical" size={2}>
+            <Tag color="green" style={{ margin: 0 }}>Yes — {record.packingExistingStockQty || 0} drawn</Tag>
+            {record.packingExistingStockAt && <Text type="secondary" style={{ fontSize: 11 }}>{fmtDateTime(record.packingExistingStockAt)}</Text>}
+          </Space>
+        )
+        : <Tag style={{ margin: 0 }}>No</Tag>),
+      item('matDeducted', 'Packing Material Deducted', (
+        <Text>{Number(record.materialDeductedQty) || 0}{record.materialDeductedFrom ? ` (from ${record.materialDeductedFrom})` : ''}</Text>
+      )),
+    ].filter(Boolean);
+
+    const detailItems = [
+      item('hsn', 'HSN Code', show(hsn)),
+      item('defSize', 'Default Size', tagOrDash(defaultSize, 'geekblue')),
+      !isKitItem && sizeWithUnit && sizeWithUnit !== defaultSize && item('size', 'Size (with unit)', tagOrDash(sizeWithUnit, 'geekblue')),
+      item('packing', 'Packing Material', tagOrDash(packingMaterial, 'orange')),
+      // Previously hidden entirely when empty (same bug as the 4 stock/deduction fields above) —
+      // always shown now, "—" when this line has no packing type/size/sticker size of its own.
+      item('packingType', 'Packing Type', show(record.packingMaterialType)),
+      item('packingSize', 'Packing Size', show(record.packingSize)),
+      item('material', 'Material Category', tagOrDash(materialCategory, 'cyan')),
+      item('brand', 'Brand', show(brand)),
+      item('stickerSizeField', 'Sticker Size', tagOrDash(record.stickerSize, 'magenta')),
+      ...(isKitItem ? [] : flagItems(flags)),
+    ].filter(Boolean);
+
+    const kitItems = [
+      item('kitName', 'Kit', <Tag color="purple" icon={<GiftOutlined />} style={{ margin: 0 }}>{kitName}</Tag>),
+      item('kDU', 'Display Unit', tagOrDash(kDU && String(kDU).replace(/_/g, ' '), 'purple')),
+      item('kDUType', 'Display Unit Type', tagOrDash(kDUType && String(kDUType).replace(/_/g, ' '), 'magenta')),
+      item('kSize', 'Kit Size', tagOrDash(kSize, 'geekblue')),
+      item('kQty', 'Kits Ordered', kQty > 0 ? <Text strong>{kQty}</Text> : dash),
+      ...flagItems(flags, 'k'),
+      kIncludes.length > 0 && item('kIncludes', 'Kit Includes', (
+        <Space wrap size={4}>
+          {kitIncludesLabels.map((l, i) => <Tag key={i} color="purple" style={{ margin: 0 }}>{l}</Tag>)}
+        </Space>
+      ), 2),
+      kSpec && item('kSpec', 'Kit Specification', <Text style={{ whiteSpace: 'pre-wrap' }}>{String(kSpec)}</Text>, 2),
+    ].filter(Boolean);
+
+    const pDU = order?.kitDisplayUnit || '';
+    const pDUType = order?.kitDisplayUnitType || (Array.isArray(order?.kitOrders) && order.kitOrders[0]?.displayUnitType) || '';
+    const persItems = [
+      item('pName', 'Outer Packaging', <Tag color="magenta" icon={<GiftOutlined />} style={{ margin: 0 }}>{pDU || 'Personalized Kit'}</Tag>),
+      item('pType', 'Type', tagOrDash(pDUType && String(pDUType).replace(/_/g, ' '), 'magenta')),
+      item('pSize', 'Size', tagOrDash(order?.kitSize, 'geekblue')),
+      ...flagItems({ sticker: order?.kitSticker, logo: order?.kitLogo, printing: order?.kitPrinting }, 'p'),
+    ];
+
+    const hasSpecContent = mergedAttrs.size > 0 || specification || otherSpecsNode || showIncludedInKit || atts.length > 0;
+    const specsBody = hasSpecContent ? (
+      <Space direction="vertical" size={10} style={{ width: '100%' }}>
+        {mergedAttrs.size > 0 && fieldGrid([...mergedAttrs.entries()].map(([k, v]) => item(k, prettyKey(k), attrValue(v))), 3)}
+        {showIncludedInKit && textBlock('inKit', 'Included in Kit', (
+          <Space wrap size={4}>
+            {includedInKit.map((l, i) => <Tag key={i} color="purple" style={{ margin: 0 }}>{l}</Tag>)}
+          </Space>
+        ))}
+        {specification && textBlock('spec', 'Specification', <Text style={{ whiteSpace: 'pre-wrap' }}>{String(specification)}</Text>)}
+        {otherSpecsNode && textBlock('other', 'Other Specs', otherSpecsNode)}
+        {atts.length > 0 && textBlock('atts', 'Attachments (reference files from Sales)', renderAttachmentLinks(atts))}
+      </Space>
+    ) : (
+      <Text type="secondary">No additional attributes, specification notes or attachments were entered for this product.</Text>
+    );
+
+    const statusItems = [
+      item('printing', 'Printing Status', printingStatusNode),
+      item('design', 'Design', stacked(
+        persSR?.designFileUrl ? designBlock(persSR.designFileUrl, false) : null,
+        ownLabel,
+        designBlock(designUrl, designIsExisting),
+      )),
+      item('invoice', 'Invoice', stacked(
+        persSR?.invoiceFile?.url ? invoiceBlock(persSR.invoiceFile) : null,
+        ownLabel,
+        invoiceBlock(ownInvoice),
+      )),
+      item('approval', 'Ops Approval', stacked(
+        persSR ? approvalBlock(persSR, 'Awaiting design') : null,
+        ownLabel,
+        approvalBlock(sr, isKitItem ? 'Awaiting design' : 'No design yet'),
+      )),
+      // "Assign Task" card removed from the popup by request (2026-09-22) — same as the table
+      // column, task assignment is still available via the "Assign Tasks (All Products)" bulk
+      // button and via Printing Status → Closed auto-opening the Assign Task modal.
+    ].filter(Boolean);
+
+    return (
+      <Space direction="vertical" size={14} style={{ width: '100%' }}>
+        <Space wrap size={[6, 6]}>
+          <Tag color="purple" icon={<FileImageOutlined />} style={{ margin: 0 }}>{order.hotelLogo}</Tag>
+          <Tag style={{ margin: 0 }}>Order {order.id}</Tag>
+          {order.orderCategory === 'SAMPLE' && <Tag color="purple" icon={<ExperimentOutlined />} style={{ margin: 0, fontWeight: 600 }}>Sample Order</Tag>}
+          {record.isEmergencyProduct && <Tag color="error" icon={<AlertFilled />} style={{ margin: 0 }}>Emergency</Tag>}
+          {record.isEmergencyGated && <Tag color="orange" style={{ margin: 0 }}>After Emergency Items</Tag>}
+        </Space>
+        {section('overview', <ProfileOutlined />, 'Overview', '#B11E6A', fieldGrid(overviewItems, 3))}
+        {section('details', <ContainerOutlined />, 'Product Details', '#1677ff', fieldGrid(detailItems, 3))}
+        {isKitItem && section('kit', <GiftOutlined />, `Kit Details — ${kitName}`, '#722ed1', fieldGrid(kitItems, 2))}
+        {record.isIncludedInPersonalized && section('personalized', <GiftOutlined />, 'Personalized Kit (Outer Packaging)', '#eb2f96', fieldGrid(persItems, 2))}
+        {section('specs', <FileTextOutlined />, 'Product Attributes', '#13a8a8', specsBody)}
+        {section('status', <PrinterOutlined />, 'Printing, Design, Invoice & Ops Approval', '#fa8c16', (
+          <>
+            {fieldGrid(statusItems, 1)}
+            {isKitItem && (
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginTop: 8 }}>
+                Design, invoice and Ops approval are handled once per kit — they apply to every product in {kitName}.
+              </Text>
+            )}
+          </>
+        ))}
+      </Space>
+    );
+  };
+
   const checklist = [
     ['designRequired', 'Design required based on product specs'],
     ['pdfReady', 'Logo PDF ready'],
@@ -2905,14 +3398,6 @@ export default function OperationDetail() {
         </Col>
       </Row>
 
-      <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginBottom: 16 }}>
-        <Steps
-          current={getFlowStep(order)}
-          size="small"
-          items={FLOW_STAGES.map((stage, i) => ({ title: stage, key: i }))}
-        />
-      </Card>
-
       <Tabs
         activeKey={activeTab}
         onChange={setActiveTab}
@@ -3046,20 +3531,30 @@ export default function OperationDetail() {
                       </Text>
                     </div>
                   )}
+                  {/* Discoverability hint. Lives in the body (not the card header's `extra`) — the header
+                      title is nowrap, so on a phone the hint squeezed "Product Specifications" to zero width. */}
+                  <Text type="secondary" style={{ fontSize: 12, display: 'block', padding: '6px 16px 0' }}>
+                    Click a row to view its full details
+                  </Text>
                   <div className="table-responsive" style={{ padding: 4 }}>
                     <Table
                       dataSource={visibleOrderItems}
-                      rowKey={(r, idx) => r.key || r._id || String(idx)}
-                      columns={productColumns}
+                      rowKey={specRowKey}
+                      // "Assign Task" column hidden by request (2026-09-22) — task assignment is
+                      // still available via the "Assign Tasks (All Products)" bulk button above
+                      // and via the Full Details popup's own Assign Task info card. The column
+                      // definition itself is left in productColumns (still reused elsewhere).
+                      columns={productColumns.filter((c) => c.key !== 'assignTask')}
                       pagination={false}
                       size="small"
                       scroll={{ x: 'max-content' }}
-                      onRow={(record) => {
-                        if (record.isEmergencyProduct) {
-                          return { style: { background: 'rgba(255,77,79,0.07)', borderLeft: '3px solid #ff4d4f' } };
-                        }
-                        return {};
-                      }}
+                      onRow={(record, index) => ({
+                        onClick: (e) => handleSpecRowClick(e, record, index),
+                        style: {
+                          cursor: 'pointer',
+                          ...(record.isEmergencyProduct ? { background: 'rgba(255,77,79,0.07)', borderLeft: '3px solid #ff4d4f' } : {}),
+                        },
+                      })}
                     />
                   </div>
                 </Card>
@@ -3815,6 +4310,28 @@ export default function OperationDetail() {
         >
           Create {assignAllRows.length} Task{assignAllRows.length !== 1 ? 's' : ''}
         </Button>
+      </Modal>
+
+      {/* Product Specifications — row-click detail popup (read-only) */}
+      <Modal
+        open={specDetailOpen}
+        onCancel={() => setSpecDetailOpen(false)}
+        afterClose={() => setSpecDetailKey(null)}
+        title={
+          <Space>
+            <FileSearchOutlined style={{ color: '#B11E6A' }} />
+            <span>
+              {specDetailRecord
+                ? (specDetailRecord.itemName || specDetailRecord.name || specDetailRecord.product || specDetailRecord.kitType || 'Product')
+                : 'Product'} — Full Details
+            </span>
+          </Space>
+        }
+        footer={<Button onClick={() => setSpecDetailOpen(false)}>Close</Button>}
+        width="min(1300px, 94vw)"
+        styles={{ body: { maxHeight: '78vh', overflowY: 'auto', paddingRight: 4 } }}
+      >
+        {specDetailRecord && renderSpecDetail(specDetailRecord)}
       </Modal>
 
       <Modal

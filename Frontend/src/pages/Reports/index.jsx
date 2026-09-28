@@ -166,6 +166,9 @@ export default function Reports() {
   // 'combined' | 'forwarding' | 'courier' — mirrors gstViewMode below, driven by the two
   // Forwarding/Courier checkboxes so either charge type can be viewed on its own.
   const [fcViewMode, setFcViewMode] = useState('combined');
+  // Transport Cost Scope (Client/HNG/Unspecified) filter — same idea as tcScopeFilter below,
+  // lets this report be viewed as CLIENT-billed vs HNG-borne charges separately.
+  const [fcScopeFilter, setFcScopeFilter] = useState('all');
 
   // Transportation Charge Report state
   const [tcSearch, setTcSearch] = useState('');
@@ -588,23 +591,24 @@ export default function Reports() {
     const q = fcSearch.toLowerCase();
     const matchSearch = !q || (r.hotel || '').toLowerCase().includes(q);
     const matchMonth = fcMonthFilter === 'all' || `${r.month}-${r.year}` === fcMonthFilter;
-    return matchSearch && matchMonth;
+    const matchScope = fcScopeFilter === 'all' || r.transportCostScope === fcScopeFilter;
+    return matchSearch && matchMonth && matchScope;
   });
   const exportFcExcel = () => {
     // Export matches the selected view — Forwarding-only / Courier-only download their own
     // standalone report instead of always dumping the combined columns.
     if (fcViewMode === 'forwarding') {
-      const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Forwarding Charge'];
-      const rows = fcFilteredForExport.map((r, i) => [i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.forwardingCharge]);
+      const headers = ['S.No', 'Month', 'Hotel', 'Transport Cost Scope', 'Invoices', 'Forwarding Charge'];
+      const rows = fcFilteredForExport.map((r, i) => [i + 1, `${r.month} ${r.year}`, r.hotel, r.transportCostScope, r.invoiceCount, r.forwardingCharge]);
       exportToExcel(headers, rows, 'Forwarding_Charges_Report.csv');
     } else if (fcViewMode === 'courier') {
-      const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Courier Charge'];
-      const rows = fcFilteredForExport.map((r, i) => [i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.courierCharge]);
+      const headers = ['S.No', 'Month', 'Hotel', 'Transport Cost Scope', 'Invoices', 'Courier Charge'];
+      const rows = fcFilteredForExport.map((r, i) => [i + 1, `${r.month} ${r.year}`, r.hotel, r.transportCostScope, r.invoiceCount, r.courierCharge]);
       exportToExcel(headers, rows, 'Courier_Charges_Report.csv');
     } else {
-      const headers = ['S.No', 'Month', 'Hotel', 'Invoices', 'Forwarding Charge', 'Courier Charge', 'Total Charge'];
+      const headers = ['S.No', 'Month', 'Hotel', 'Transport Cost Scope', 'Invoices', 'Forwarding Charge', 'Courier Charge', 'Total Charge'];
       const rows = fcFilteredForExport.map((r, i) => [
-        i + 1, `${r.month} ${r.year}`, r.hotel, r.invoiceCount, r.forwardingCharge, r.courierCharge, r.totalCharge,
+        i + 1, `${r.month} ${r.year}`, r.hotel, r.transportCostScope, r.invoiceCount, r.forwardingCharge, r.courierCharge, r.totalCharge,
       ]);
       exportToExcel(headers, rows, 'Forwarding_Courier_Charges_Report.csv');
     }
@@ -2492,17 +2496,24 @@ export default function Reports() {
             children: (() => {
               const monthlyHotelRows = apiForwardingCourier.monthlyHotelData || [];
               const monthOptions = Array.from(new Set(monthlyHotelRows.map(r => `${r.month}-${r.year}`)));
+              const fcScopeOptions = Array.from(new Set(monthlyHotelRows.map(r => r.transportCostScope))).filter(Boolean);
 
               const filteredFcRows = monthlyHotelRows.filter(r => {
                 const q = fcSearch.toLowerCase();
                 const matchSearch = !q || (r.hotel || '').toLowerCase().includes(q);
                 const matchMonth = fcMonthFilter === 'all' || `${r.month}-${r.year}` === fcMonthFilter;
-                return matchSearch && matchMonth;
+                const matchScope = fcScopeFilter === 'all' || r.transportCostScope === fcScopeFilter;
+                return matchSearch && matchMonth && matchScope;
               });
 
               const totalForwarding = filteredFcRows.reduce((s, r) => s + r.forwardingCharge, 0);
               const totalCourier = filteredFcRows.reduce((s, r) => s + r.courierCharge, 0);
               const totalCharges = filteredFcRows.reduce((s, r) => s + r.totalCharge, 0);
+
+              // Scope-level totals (Client/HNG/Unspecified) — a standing Client-vs-HNG comparison,
+              // same pattern as the Transportation Charge Report's own scopeData below: always the
+              // full breakdown, independent of the Scope filter above (which narrows the table).
+              const fcScopeRows = apiForwardingCourier.scopeData || [];
 
               // fcViewMode: 'combined' | 'forwarding' | 'courier' — driven by the Forwarding/Courier
               // checkboxes in the filter bar, same pattern as Monthly GST's gstViewMode above, so
@@ -2511,6 +2522,10 @@ export default function Reports() {
                 { title: 'S.No', key: 'sno', width: 55, align: 'center', fixed: 'left', render: (_, __, i) => <Text style={{ fontSize: 12 }}>{i + 1}</Text> },
                 { title: 'Month', key: 'month', width: 110, render: (_, r) => <Text style={{ fontSize: 12 }}>{r.month} {r.year}</Text> },
                 { title: 'Hotel', dataIndex: 'hotel', key: 'hotel', width: 180, render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
+                {
+                  title: 'Transport Cost Scope', dataIndex: 'transportCostScope', key: 'transportCostScope', width: 140,
+                  render: v => <Tag color={v === 'CLIENT' ? 'blue' : v === 'HNG' ? 'purple' : 'default'} style={{ borderRadius: 20 }}>{v}</Tag>,
+                },
                 { title: 'Invoices', dataIndex: 'invoiceCount', key: 'invoiceCount', width: 90, align: 'center', render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
                 ...(fcViewMode !== 'courier' ? [
                   { title: 'Forwarding Charge', dataIndex: 'forwardingCharge', key: 'forwardingCharge', width: 150, render: v => <Text style={{ color: '#fa8c16', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
@@ -2534,6 +2549,11 @@ export default function Reports() {
                         <Select value={fcMonthFilter} onChange={setFcMonthFilter} style={{ width: 140 }}>
                           <Option value="all">All Months</Option>
                           {monthOptions.map(m => <Option key={m} value={m}>{m}</Option>)}
+                        </Select>
+                        <Text strong style={{ color: textColor, fontSize: 13 }}>Scope:</Text>
+                        <Select value={fcScopeFilter} onChange={setFcScopeFilter} style={{ width: 130 }}>
+                          <Option value="all">All Scopes</Option>
+                          {fcScopeOptions.map(s => <Option key={s} value={s}>{s}</Option>)}
                         </Select>
                         <Input
                           prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
@@ -2602,6 +2622,42 @@ export default function Reports() {
                       </Col>
                     ))}
                   </Row>
+
+                  {/* By Transport Cost Scope — Client-billed vs HNG-borne, independent of the Scope
+                      filter above (which narrows the table/chart below), same purpose as the
+                      Transportation Charge Report's own scope breakdown. */}
+                  <Card
+                    title={<Text strong style={{ color: textColor }}>Forwarding &amp; Courier Charges — by Transport Cost Scope</Text>}
+                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginBottom: 14 }}
+                    styles={{ body: { padding: 16 } }}
+                  >
+                    <Table
+                      size="small"
+                      bordered
+                      scroll={{ x: 'max-content' }}
+                      pagination={false}
+                      rowKey="scope"
+                      dataSource={fcScopeRows}
+                      locale={{ emptyText: <Empty description="No forwarding/courier charges found" /> }}
+                      columns={[
+                        {
+                          title: 'Transport Cost Scope', dataIndex: 'scope', key: 'scope', width: 160, fixed: 'left',
+                          render: v => <Tag color={v === 'CLIENT' ? 'blue' : v === 'HNG' ? 'purple' : 'default'} style={{ borderRadius: 20 }}>{v}</Tag>,
+                        },
+                        { title: 'Invoices', dataIndex: 'invoiceCount', key: 'invoiceCount', width: 100, align: 'center', render: v => <Text style={{ fontSize: 12 }}>{v}</Text> },
+                        ...(fcViewMode !== 'courier' ? [
+                          { title: 'Forwarding Charge', dataIndex: 'forwardingCharge', key: 'forwardingCharge', width: 160, render: v => <Text style={{ color: '#fa8c16', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                        ] : []),
+                        ...(fcViewMode !== 'forwarding' ? [
+                          { title: 'Courier Charge', dataIndex: 'courierCharge', key: 'courierCharge', width: 160, render: v => <Text style={{ color: '#1890ff', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text> },
+                        ] : []),
+                        {
+                          title: 'Total', dataIndex: 'totalCharge', key: 'totalCharge', width: 160, fixed: 'right',
+                          render: v => <Text strong style={{ color: '#52c41a', fontSize: 12 }}>₹{(v ?? 0).toLocaleString()}</Text>,
+                        },
+                      ]}
+                    />
+                  </Card>
 
                   {/* Month-wise chart */}
                   <Card

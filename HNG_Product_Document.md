@@ -154,7 +154,7 @@ Dashboard · Sales Team · Operations · Task Management · Dispatch Team · Sta
 - **Left sidebar** — the module menu. Only modules you have access to appear. It collapses to icons; badges show pending task count and unread notifications. Company logo and name at the top come from Settings.
 - **Top header** — page title / breadcrumb, quick search where relevant, profile menu, light/dark theme toggle.
 - **Page body** — almost every module opens on a set of **tabs**. Most tabs are a filterable table with an "Add" button and row actions (View / Edit / Delete / Print / WhatsApp / Download).
-- **Detail screens** — Operations, Tasks and Dispatch each have a dedicated per-record screen (opened by clicking a row) with a **progress stepper** across the top showing exactly where that order stands.
+- **Detail screens** — Operations, Tasks and Dispatch each have a dedicated per-record screen (opened by clicking a row). Tasks and Dispatch show a **progress stepper** across the top with exactly where that record stands; Operations opens straight onto the production checklist.
 - **Alerts** — a live in-app alert listener shows escalating pop-ups for things that need action (approvals, overdue payments, low stock), with an optional sound.
 
 ---
@@ -223,11 +223,7 @@ Raise a complaint against an order (description + order link). Track status Open
 **Route:** Operations. Turns a confirmed order into physically packed goods. Tabs:
 
 #### Order Management
-Every order that needs production work, with a **6-stage progress bar**:
-
-`Order Received → Sent to Design → Client Approved → Printing → Stock Received → Task Assigned`
-
-Click an order to open its **Operation Detail** screen. That screen holds the full production checklist per product / per kit:
+Every order that needs production work. Click an order to open its **Operation Detail** screen. That screen holds the full production checklist per product / per kit:
 - Product, Kit/Spec, Category, required vs available inventory stock, HSN code, default size, packing material, brand, product attributes.
 - **Printing Status** (Yet to Receive / Received / Closed), **Design** upload & approval, **Invoice** view.
 - **Ops Approval** — Operations signs off that the item is ready.
@@ -305,7 +301,7 @@ Orders where an employee personally collects goods / drops them at a transporter
 
 #### Transport
 Lorry / courier handoff. Per dispatch round: transporter name, weight, number of boxes, destination, confirmed-by.
-- **Scan Lorry Receipt** — opens the camera, captures the LR, uploads it and auto-reads the details with AI.
+- **Open Camera** — captures the LR with the camera, uploads it and auto-reads the details with AI.
 - Enter LR number and tracking URL, then mark **Finished Dispatch**.
 - **Mismatch approvals:** a wrong **transporter name** needs a single Sales approval (non-blocking); wrong **package count** or **destination** needs a reason plus **dual Sales + Operations approval** and **blocks** "Finished Dispatch" until cleared.
 
@@ -396,8 +392,10 @@ Put competing vendor quotations for the same requirement side by side to choose 
 **Route:** Vendors & Suppliers. The vendor CRM. Tabs:
 
 #### Vendors
-Raw-material suppliers. Add vendor with name, phone, email, tax ID (GST / PAN), address, **bank / UPI details** (dynamic fields), discount %.
-- **View purchase history** per vendor.
+Raw-material suppliers. Add vendor with name, phone, email, tax ID (GST / PAN), address, **bank / UPI details** (dynamic fields) and notes. Each vendor row has an **Action** column:
+- **View** — read-only pop-up with the vendor's saved details (contact, address, status, notes, bank / UPI).
+- **Edit** — the same form as Add, pre-filled with the saved details; change anything and click **Update Vendor**. Needs the *Edit* permission on Vendors & Suppliers.
+- **View History** — purchase history per vendor.
 - **AI vendor summary** — generate and download an AI-written profile / dealings summary.
 - Update vendor status.
 - The vendor's logo/hotel-name is back-filled from related leads where possible.
@@ -690,7 +688,6 @@ Scheduled background jobs run the time-based reminders (payment due, follow-up, 
 | **Pickup order** | Pending · Taken · Pickup Dropped |
 | **Reimbursement / Pickup payment** | Not Applicable · Pending · Partial · Paid |
 | **Mismatch approvals** | none · pending · approved · rejected |
-| **Operations flow** | Order Received → Sent to Design → Client Approved → Printing → Stock Received → Task Assigned |
 
 **Document numbering:** Leads, Quotations, Negotiations, Orders, Invoices, Purchase Orders, Staff, Items and Payments each get a unique auto-generated code with a prefix.
 

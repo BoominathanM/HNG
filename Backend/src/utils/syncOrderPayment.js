@@ -60,7 +60,7 @@ async function syncOrderTasksPayment(orderId) {
 // findByIdAndUpdate builds the update document directly and always writes.
 async function syncOrderPaymentCollection(orderId, entry) {
   if (!orderId || !entry) return null;
-  const order = await Order.findById(orderId).select('paymentCollection paidAmount total amount');
+  const order = await Order.findById(orderId).select('paymentCollection paidAmount total amount transportationBy');
   if (!order) return null;
   const priorCollectionSum = (order.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
   // order.paidAmount may already carry an advance that was never pushed as its own
@@ -87,8 +87,12 @@ async function syncOrderPaymentCollection(orderId, entry) {
   // read fully paid while Billing still shows the courier due. Only an explicit `courierPaid:false`
   // is adjusted — a Paid courier (and every entry saved before the switch existed) keeps its
   // original behaviour untouched.
+  // Transport Cost Scope 'HNG' (set on Lead/Order creation) means HNG itself bears the courier
+  // cost — it must never raise the order's stored total, whether the courier charge is Paid or
+  // Unpaid. Only the round off still applies in that case.
+  const courierBillable = order.transportationBy !== 'HNG';
   const entryRoundOff = Number(entry.roundOff) || 0;
-  const entryUnpaidCourier = entry.courierPaid === false ? (Number(entry.courierCharge) || 0) : 0;
+  const entryUnpaidCourier = (courierBillable && entry.courierPaid === false) ? (Number(entry.courierCharge) || 0) : 0;
   const entryAdjustment = r2(entryRoundOff + entryUnpaidCourier);
   const storedTotal = Number(order.total) || 0;
   const adjustedTotal = entryAdjustment && storedTotal > 0

@@ -3,7 +3,8 @@ import axios from 'axios';
 // Resolve API base URL:
 // - Explicit VITE_API_URL wins (set per-environment at build time)
 // - On localhost dev → backend on port 7007
-// - On the production domain → same origin (e.g. https://hngcrm.askeva.io/api)
+// - On a deployed domain → same origin (https://hngcrm.askeva.io/api → port 7007,
+//   https://devhng.askeva.io/api → port 7008; see .env.production / .env.devhng)
 const isLocalhost =
   typeof window !== 'undefined' &&
   /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);

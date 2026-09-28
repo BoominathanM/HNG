@@ -33,6 +33,38 @@ const dispatchRecordSchema = new mongoose.Schema({
   // Open/Close box verification photos (multiple allowed)
   openBoxPhotos: [String],
   closeBoxPhotos: [String],
+  // Duplicate-photo detection sidecar — one entry per saved box photo (any of the photo arrays on this
+  // record: order-level, items[], kitDispatch[]), keyed by the photo's URL, so those arrays stay plain
+  // URL strings for everything else that reads them. `sha256` (exact bytes) + `phash` (128-bit picture
+  // hash) are computed in the browser at upload time (see services/photoDuplicateService.js).
+  // `dupOf` is only set when the AI "Verify photos" scan judged an already-saved photo to be a repeat of an
+  // older one; the Dispatch page shows those with a red border and blocks dispatch until they're removed.
+  // select:false — only the Dispatch detail / photo endpoints opt in (+photoFingerprints), so list
+  // endpoints and every other reader of this collection never pay for it.
+  photoFingerprints: {
+    type: [{
+      _id: false,
+      url: String,
+      scope: { type: String, enum: ['order', 'item', 'kit'] },
+      refId: String, // items[]._id / kitDispatch[]._id; '' for order-level
+      kind: { type: String, enum: ['open', 'close'] },
+      sha256: String,
+      phash: String,
+      uploadedAt: { type: Date, default: Date.now },
+      uploadedByName: String,
+      dupOf: String,
+      dupReason: String,
+      dupSource: String, // 'ai-scan'
+    }],
+    select: false,
+  },
+  // Result of the last AI "Verify photos" scan (summary only — the per-photo flags live above).
+  photoScan: {
+    at: Date,
+    photosChecked: Number,
+    duplicatesFound: Number,
+    truncated: Boolean,
+  },
   status: { type: String, enum: ['Draft', 'Confirmed', 'Dispatched'], default: 'Draft' },
   dispatchedAt: Date,
   // "Partial Dispatch" checkpoint — set when the emergency/first portion of the order has

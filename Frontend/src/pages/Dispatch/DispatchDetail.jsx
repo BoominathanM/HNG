@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Row, Col, Card, Button, Form, Input, InputNumber, Upload, Typography, Space,
   Steps, Descriptions, Alert, Tag, Checkbox,
-  Table, Divider, Spin, Image, Modal, Select,
+  Table, Divider, Spin, Image, Modal, Select, Tooltip, Popconfirm,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import html2pdf from 'html2pdf.js';
@@ -14,19 +14,24 @@ import {
   InboxOutlined, CheckCircleOutlined, FileDoneOutlined, CheckSquareOutlined,
   LinkOutlined, BellOutlined, CarOutlined, WhatsAppOutlined, ExclamationCircleOutlined,
   LoadingOutlined, GiftOutlined, AppstoreOutlined, CheckCircleFilled,
+  CloseCircleFilled, DeleteOutlined, RobotOutlined, SafetyCertificateOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import CameraCaptureModal from '../../components/common/CameraCaptureModal';
+import SelectWithAdd from '../../components/common/SelectWithAdd';
 import {
   useGetDispatchQuery,
+  useGetDispatchTransportNamesQuery,
   useConfirmDispatchMutation,
   useUploadDispatchLRMutation,
   useSaveAsDraftMutation,
   useUploadBoxPhotosMutation,
   useUploadItemBoxPhotosMutation,
   useUploadKitBoxPhotosMutation,
+  useScanDispatchPhotosMutation,
+  useRemoveDispatchPhotoMutation,
   useGetInvoicesQuery,
   useGetCompanySettingsQuery,
   useGetKitsQuery,
@@ -42,6 +47,7 @@ import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDispatchGroupedProducts, summarizeDispatchVerification, getRowPendingQty } from '../../utils/dispatchGrouping';
+import { fingerprintFile } from '../../utils/photoFingerprint';
 
 const { Title, Text } = Typography;
 
@@ -53,6 +59,17 @@ const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 // backend cap enforced in uploadItemBoxPhotos/uploadKitBoxPhotos and the order-level
 // "All Closed Box Photos" limit below.
 const MAX_ROW_BOX_PHOTOS = 20;
+
+// Box-count cross-check (Photo Verification card): when the declared Boxes number doesn't match the
+// number of UNIQUE closed-box photos, false = warn and ask "send anyway?" before approval/confirm;
+// true = block outright. Soft by default — the order-level list caps at 20 photos and one photo can
+// legitimately show several stacked boxes, so a hard block would strand real dispatches.
+// Duplicate photos flagged by the AI check always block, independent of this switch.
+const BOX_COUNT_MISMATCH_BLOCKS_DISPATCH = false;
+
+// The duplicate-photo toasts carry a full sentence (where the original is, the AI's reason) — let them wrap
+// instead of running off the edge of the screen like a one-line toast would.
+const WRAP_TOAST_STYLE = { maxWidth: 'min(520px, 90vw)', whiteSpace: 'normal' };
 
 // Case/whitespace/punctuation-insensitive compare used for the transport-name mismatch
 // check — AI-scanned and manually-entered names rarely match byte-for-byte (e.g. "VRL
@@ -68,7 +85,9 @@ function computeCompositionGrandTotal(rec = {}, kitsData = [], bundleScaleRatio 
   if ((rec.packagingIncludes || []).length > 0 && kitsData.length > 0) {
     const comp = computePersonalizedComposition(rec, kitsData, bundleScaleRatio);
     const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
-    const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    // Excluded when Transport Cost Scope (rec.transportationBy) is 'HNG' — HNG bears that cost
+    // itself, so it must not raise the printed invoice total (mirrors Billing's own calc).
+    const courier = rec.transportationBy === 'HNG' ? 0 : r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const roundOffTotal = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
     const separateKit = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const separateProduct = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
@@ -110,6 +129,8 @@ export default function DispatchDetail() {
   const [uploadBoxPhotos] = useUploadBoxPhotosMutation();
   const [uploadItemBoxPhotos] = useUploadItemBoxPhotosMutation();
   const [uploadKitBoxPhotos] = useUploadKitBoxPhotosMutation();
+  const [scanDispatchPhotos] = useScanDispatchPhotosMutation();
+  const [removeDispatchPhoto] = useRemoveDispatchPhotoMutation();
   const [uploadFilesMutation] = useUploadFilesMutation();
   const [scanDispatchLR] = useScanDispatchLRMutation();
   const [reportTransportMismatch] = useReportTransportMismatchMutation();
@@ -131,6 +152,11 @@ export default function DispatchDetail() {
   const { data: kitsRaw } = useGetKitsQuery();
   const kits = kitsRaw?.data || [];
   const invoiceSettings = companySettingsData?.data || {};
+  // Every transport/carrier name ever entered across ALL dispatch records (other orders
+  // included) — merged into the Transport Name dropdown below as its option list, on top of
+  // whatever's separately been added via the dropdown's own "+ Add" box.
+  const { data: transportNamesData } = useGetDispatchTransportNamesQuery();
+  const transportNameOptions = (transportNamesData?.data || []).map((n) => ({ value: n, label: n }));
 
   // Tracks which upload buttons are mid-request (keyed by "order-open" / "order-close"
   // for the common section, "<itemId>-open" / "<itemId>-close" for per-item rows) so
@@ -143,71 +169,174 @@ export default function DispatchDetail() {
     return next;
   });
 
+  // ── Duplicate-photo protection ────────────────────────────────────────────
+  // Every box-photo upload below goes through runPhotoUpload: the file is fingerprinted in the browser
+  // (utils/photoFingerprint.js), checked against the photos already on this dispatch, and only then sent.
+  // A byte-identical file is rejected here without being uploaded at all; a near-match is judged by the AI
+  // on the server. A rejected photo is NEVER saved — it is shown beside its Upload button with a red border
+  // and the reason instead. (Backend: services/photoDuplicateService.js.)
+  const [rejectedPhotos, setRejectedPhotos] = useState([]); // [{ id, slot, previewUrl, name, message }]
+  const [scanningPhotos, setScanningPhotos] = useState(false);
+  // Uploads run strictly one at a time: each duplicate check reads the photos the previous upload just
+  // saved, so a multi-select batch can't slip the same picture past the check by racing itself.
+  const photoQueueRef = useRef(Promise.resolve());
+  const pendingSlotsRef = useRef(new Map());
+  // Fingerprints of photos saved during this visit — the refetched record can lag a beat behind an upload.
+  const sessionFingerprintsRef = useRef([]);
+  // Rejected-photo previews are blob: URLs — release whatever is still showing when the page unmounts.
+  const rejectedPhotosRef = useRef([]);
+  useEffect(() => { rejectedPhotosRef.current = rejectedPhotos; }, [rejectedPhotos]);
+  useEffect(() => () => rejectedPhotosRef.current.forEach((r) => URL.revokeObjectURL(r.previewUrl)), []);
+
+  // A slot's spinner must stay up until ITS LAST queued photo finishes, not just the first.
+  const beginSlot = (slot) => {
+    pendingSlotsRef.current.set(slot, (pendingSlotsRef.current.get(slot) || 0) + 1);
+    startUploading(slot);
+  };
+  const endSlot = (slot) => {
+    const left = (pendingSlotsRef.current.get(slot) || 1) - 1;
+    if (left > 0) pendingSlotsRef.current.set(slot, left);
+    else { pendingSlotsRef.current.delete(slot); stopUploading(slot); }
+  };
+
+  const rejectPhoto = ({ slot, file, message }) => {
+    setRejectedPhotos((prev) => [...prev, {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      slot, name: file.name, message, previewUrl: URL.createObjectURL(file),
+    }]);
+    enqueueSnackbar(message, { variant: 'error', style: WRAP_TOAST_STYLE });
+  };
+  const dismissRejectedPhoto = (rejectedId) => setRejectedPhotos((prev) => {
+    const gone = prev.find((r) => r.id === rejectedId);
+    if (gone) URL.revokeObjectURL(gone.previewUrl);
+    return prev.filter((r) => r.id !== rejectedId);
+  });
+
+  // Where a saved photo lives, in words — used in every duplicate message.
+  const describePhotoSpot = ({ scope, refId, kind }) => {
+    if (scope === 'order') return kind === 'close' ? 'All Closed Box Photos' : 'order-level open-box photos';
+    const name = scope === 'kit'
+      ? (order?.kitDispatch || []).find((k) => String(k._id) === String(refId))?.kitName
+      : (order?.items || []).find((it) => String(it._id) === String(refId))?.itemName;
+    return `${kind === 'close' ? 'Closed' : 'Open'} box photo · ${name || (scope === 'kit' ? 'Kit' : 'Product')}`;
+  };
+
+  // customRequest body shared by all three upload controls. `send(formData)` is the RTK mutation call;
+  // `onSaved(result)` is the control's own success handling (antd bookkeeping, counters).
+  const runPhotoUpload = ({ slot, scope, refId, kind, file, send, onSaved, onError, savedMessage, failMessage }) => {
+    beginSlot(slot);
+    // Hashing starts immediately (it never rejects) so a big multi-select overlaps it with the uploads ahead
+    // in the queue; only the upload + server check itself has to wait its turn.
+    const fingerprinting = fingerprintFile(file);
+    const task = async () => {
+      try {
+        const fingerprint = await fingerprinting;
+        // The exact same file is already on this dispatch (or was saved a moment ago) — don't even send it.
+        const same = fingerprint.sha256
+          && [...(order?.photoFingerprints || []), ...sessionFingerprintsRef.current].find((r) => r.sha256 === fingerprint.sha256);
+        if (same) {
+          rejectPhoto({ slot, file, message: `This exact photo is already uploaded (${describePhotoSpot(same)}). Duplicate photos aren't allowed — it was not saved.` });
+          onError(new Error('Duplicate photo'));
+          return;
+        }
+        const fd = new FormData();
+        fd.append('photos', file);
+        fd.append('type', kind);
+        fd.append('fingerprints', JSON.stringify([fingerprint]));
+        const result = await send(fd).unwrap();
+        sessionFingerprintsRef.current.push({ ...fingerprint, scope, refId, kind });
+        onSaved(result);
+        enqueueSnackbar(savedMessage, { variant: 'success' });
+        if (result?.aiUnavailable) {
+          enqueueSnackbar('That photo closely resembles an earlier one and the AI check could not run — use "Verify photos with AI" to double-check.', { variant: 'warning', style: WRAP_TOAST_STYLE });
+        }
+      } catch (err) {
+        if (err?.data?.duplicate) {
+          // Server-side verdict (AI judged it a repeat, or a race the local check couldn't see) — not saved.
+          rejectPhoto({ slot, file, message: err.data.message });
+          onError(new Error('Duplicate photo'));
+        } else {
+          onError(new Error('Upload failed'));
+          enqueueSnackbar(failMessage, { variant: 'error' });
+        }
+      } finally {
+        endSlot(slot);
+      }
+    };
+    const run = photoQueueRef.current.then(task, task);
+    photoQueueRef.current = run.catch(() => {});
+    return run;
+  };
+
   // customRequest for the order-level "All Closed Box Photos" Upload component.
   // Uploads directly to POST /dispatch/:id/box-photos (Cloudinary + DB save in one step).
-  const makeBoxUpload = () => async ({ file, onSuccess, onError }) => {
-    const key = 'order-close';
-    startUploading(key);
-    const fd = new FormData();
-    fd.append('photos', file);
-    fd.append('type', 'close');
-    try {
-      const result = await uploadBoxPhotos({ id, formData: fd }).unwrap();
+  const makeBoxUpload = () => ({ file, onSuccess, onError }) => runPhotoUpload({
+    slot: 'order-close', scope: 'order', refId: '', kind: 'close', file, onError,
+    send: (formData) => uploadBoxPhotos({ id, formData }),
+    onSaved: (result) => {
       const photos = result.data?.closeBoxPhotos;
       const url = (photos || []).slice(-1)[0] || '';
       file.url = url;
       file.thumbUrl = url;
       onSuccess(result.data, file);
       setCloseBoxCount(photos?.length || 0);
-      enqueueSnackbar('Closed box photo saved', { variant: 'success' });
-    } catch {
-      onError(new Error('Upload failed'));
-      enqueueSnackbar('Closed box photo upload failed', { variant: 'error' });
-    } finally {
-      stopUploading(key);
-    }
-  };
+    },
+    savedMessage: 'Closed box photo saved',
+    failMessage: 'Closed box photo upload failed',
+  });
 
   // Per-product open/closed box photo upload (Separate Product rows only — kits use
   // makeKitBoxUpload below). Relies on the Dispatch cache invalidation to refetch, so the
   // row's openBoxPhotos/closeBoxPhotos (threaded through dispatchGrouping's toRow) update
   // reactively — no local counter state needed.
-  const makeItemBoxUpload = (itemId, type) => async ({ file, onSuccess, onError }) => {
-    const key = `${itemId}-${type}`;
-    startUploading(key);
-    const fd = new FormData();
-    fd.append('photos', file);
-    fd.append('type', type);
-    try {
-      const result = await uploadItemBoxPhotos({ id, itemId, formData: fd }).unwrap();
-      onSuccess(result.data, file);
-      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo saved`, { variant: 'success' });
-    } catch {
-      onError(new Error('Upload failed'));
-      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo upload failed`, { variant: 'error' });
-    } finally {
-      stopUploading(key);
-    }
-  };
+  const makeItemBoxUpload = (itemId, type) => ({ file, onSuccess, onError }) => runPhotoUpload({
+    slot: `${itemId}-${type}`, scope: 'item', refId: String(itemId), kind: type, file, onError,
+    send: (formData) => uploadItemBoxPhotos({ id, itemId, formData }),
+    onSaved: (result) => onSuccess(result.data, file),
+    savedMessage: `${type === 'close' ? 'Closed' : 'Open'} box photo saved`,
+    failMessage: `${type === 'close' ? 'Closed' : 'Open'} box photo upload failed`,
+  });
 
   // Kit-level open/closed box photo upload — Personalized Kit / Separate Kit are
   // dispatched (and photographed) as ONE unit, so this is called once per kit, not once
   // per component. `kitDispatchId` is the DispatchRecord.kitDispatch subdoc _id.
-  const makeKitBoxUpload = (kitDispatchId, type) => async ({ file, onSuccess, onError }) => {
-    const key = `kit-${kitDispatchId}-${type}`;
-    startUploading(key);
-    const fd = new FormData();
-    fd.append('photos', file);
-    fd.append('type', type);
+  const makeKitBoxUpload = (kitDispatchId, type) => ({ file, onSuccess, onError }) => runPhotoUpload({
+    slot: `kit-${kitDispatchId}-${type}`, scope: 'kit', refId: String(kitDispatchId), kind: type, file, onError,
+    send: (formData) => uploadKitBoxPhotos({ id, kitDispatchId, formData }),
+    onSaved: (result) => onSuccess(result.data, file),
+    savedMessage: `${type === 'close' ? 'Closed' : 'Open'} box photo saved`,
+    failMessage: `${type === 'close' ? 'Closed' : 'Open'} box photo upload failed`,
+  });
+
+  // AI "Verify photos" — every saved photo on this shipment side by side (also covers photos uploaded before
+  // duplicate checking existed). Flagged repeats get the red border and block dispatch until removed.
+  const errorText = (err, fallback) => (typeof err?.data === 'string' ? err.data : (err?.data?.message || fallback));
+  const handleScanPhotos = async () => {
+    setScanningPhotos(true);
     try {
-      const result = await uploadKitBoxPhotos({ id, kitDispatchId, formData: fd }).unwrap();
-      onSuccess(result.data, file);
-      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo saved`, { variant: 'success' });
-    } catch {
-      onError(new Error('Upload failed'));
-      enqueueSnackbar(`${type === 'close' ? 'Closed' : 'Open'} box photo upload failed`, { variant: 'error' });
+      const res = await scanDispatchPhotos({ id }).unwrap();
+      const found = res?.data?.duplicatesFound || 0;
+      enqueueSnackbar(
+        found
+          ? `${found} duplicate photo${found !== 1 ? 's' : ''} found — highlighted in red. Remove ${found !== 1 ? 'them' : 'it'} to continue.`
+          : `No duplicate photos found across ${res?.data?.photosChecked || 0} photos.`,
+        { variant: found ? 'warning' : 'success', style: WRAP_TOAST_STYLE }
+      );
+    } catch (err) {
+      enqueueSnackbar(errorText(err, 'AI photo check failed.'), { variant: 'error' });
     } finally {
-      stopUploading(key);
+      setScanningPhotos(false);
+    }
+  };
+  const handleRemoveDuplicatePhoto = async (url) => {
+    try {
+      const res = await removeDispatchPhoto({ id, url }).unwrap();
+      setCloseBoxCount(res?.data?.closeBoxPhotos?.length || 0);
+      // The refetched record is the source of truth again — a removed photo mustn't keep blocking a re-upload.
+      sessionFingerprintsRef.current = [];
+      enqueueSnackbar('Duplicate photo removed', { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(errorText(err, 'Could not remove the photo.'), { variant: 'error' });
     }
   };
 
@@ -399,6 +528,9 @@ export default function DispatchDetail() {
       forwardingCharge: order?.forwardingCharge || false,
       forwardingChargeAmount: order?.forwardingChargeAmount || 0,
       paymentCollection: linkedOrder?.paymentCollection || [],
+      // Transport Cost Scope ('CLIENT' | 'HNG') — excludes a courier charge from the printed
+      // total when HNG (see computeCompositionGrandTotal above).
+      transportationBy: order?.transportationBy || linkedOrder?.transportationBy || '',
     };
 
     // Pre-built personalized composition (outer packaging folded into Section A's total,
@@ -605,6 +737,12 @@ export default function DispatchDetail() {
       shippingState: o.shippingState || o.state || lead.shippingState || lead.state || '',
       shippingPincode: o.shippingPincode || o.pincode || lead.shippingPincode || lead.pincode || '',
       transport: d.transportName || '', status: d.status || '',
+      // Transport Name chosen by Sales on the Lead (carried onto the Order) — pre-selected in
+      // the Transport Name dropdown below until the dispatcher saves their own choice.
+      plannedTransportName: String(o.transportName || lead.transportName || '').trim(),
+      // Transport Cost Scope ('CLIENT' | 'HNG'), set on Lead/Order creation — shown read-only
+      // on this page and used to exclude an HNG-borne courier charge from the printed total.
+      transportationBy: o.transportationBy || lead.transportationBy || '',
       salesPerson: o.assignedTo?.fullName || o.salesPerson || lead.salesPerson || '',
       isSample,
       forwardingCharge: o.forwardingCharge || false,
@@ -661,6 +799,10 @@ export default function DispatchDetail() {
       // Stored verification photos
       openBoxPhotos: d.openBoxPhotos || [],
       closeBoxPhotos: d.closeBoxPhotos || [],
+      // Duplicate-photo sidecar (fingerprints per saved photo, `dupOf` when the AI scan flagged one) and the
+      // summary of the last AI "Verify photos" scan — see the Photo Verification card.
+      photoFingerprints: d.photoFingerprints || [],
+      photoScan: d.photoScan || null,
       // Stored LR / tracking details
       storedTransportName: d.transportName || '',
       storedWeight: d.weight || '',
@@ -834,7 +976,9 @@ export default function DispatchDetail() {
 
     // Main dispatch verification form
     form.setFieldsValue({
-      transport: order.storedTransportName || (order.transport !== '—' ? order.transport : ''),
+      // A transport already saved on this dispatch wins; otherwise pre-select the one Sales
+      // picked on the Lead. Either way the dispatcher can still change it from the dropdown.
+      transport: order.storedTransportName || (order.transport !== '—' ? order.transport : '') || order.plannedTransportName || '',
       weight: order.storedWeight || (order.weight !== '—' ? order.weight : ''),
       boxes: order.storedBoxes || order.boxes || 0,
       invoiceNumber: order.storedInvoiceNumber || '',
@@ -938,7 +1082,7 @@ export default function DispatchDetail() {
   const [lrFileList, setLrFileList] = useState([]);
   const [aiParsing, setAiParsing] = useState(false);
   const [aiParsed, setAiParsed] = useState(null);
-  // Camera "Scan Lorry Receipt" — opens an in-app webcam capture modal (a bare
+  // Camera "Open Camera" — opens an in-app webcam capture modal (a bare
   // `capture` attr only opens the OS file-picker on desktop).
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanUploading, setScanUploading] = useState(false);
@@ -1162,6 +1306,9 @@ export default function DispatchDetail() {
               <span>{totalDispatchNow}</span>
             </div>
           </div>
+          {boxPhotoMismatch && (
+            <Alert type="warning" showIcon style={{ marginTop: 12, borderRadius: 8 }} message={boxPhotoMessage} />
+          )}
         </div>
       ),
       okText: isFull ? 'Confirm Full Dispatch' : 'Confirm Partial Dispatch',
@@ -1175,13 +1322,26 @@ export default function DispatchDetail() {
   // unlocks (see the disabled gate on that button below). Notifies Operations, who
   // approve/reject from the "Dispatch Approve" action on Order Management; confirming a
   // round resets this back to 'none' server-side so the next round needs its own request.
-  const handleSendDispatchApproval = async () => {
+  const sendDispatchApprovalNow = async () => {
     try {
       await requestDispatchApproval({ id }).unwrap();
       enqueueSnackbar('Approval request sent to Operations.', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || 'Failed to send approval request.', { variant: 'error' });
     }
+  };
+  // A box-count vs photos mismatch (Photo Verification card) is a warning, not a wall — the dispatcher
+  // gets one explicit "send anyway?" before the request goes to Operations.
+  const handleSendDispatchApproval = () => {
+    if (!boxPhotoMismatch) return sendDispatchApprovalNow();
+    return Modal.confirm({
+      title: 'Box count and photos do not match',
+      icon: <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />,
+      content: boxPhotoMessage,
+      okText: 'Send Approval anyway',
+      cancelText: 'Go back and fix',
+      onOk: sendDispatchApprovalNow,
+    });
   };
 
   const handleSaveDraft = async () => {
@@ -1229,8 +1389,8 @@ export default function DispatchDetail() {
     }
   };
 
-  // `fileOverride` is the just-captured AntD file object passed from the "Scan Lorry
-  // Receipt" camera control's onChange — lets a scan run AI extraction against exactly
+  // `fileOverride` is the just-captured AntD file object passed from the "Open Camera"
+  // control's onChange — lets a camera capture run AI extraction against exactly
   // the file it captured, instead of always assuming lrFileList[0]. Called with no arg
   // (or a click event, which has no .uid) from the manual "AI Parse Receipt" button,
   // it falls back to the first file in the list — unchanged behaviour.
@@ -1240,7 +1400,7 @@ export default function DispatchDetail() {
       : lrFileList?.[0];
     const fileUrl = lrFile?.url || lrFile?.response?.url;
     if (!fileUrl) {
-      enqueueSnackbar('Upload or scan a lorry receipt first.', { variant: 'warning' });
+      enqueueSnackbar('Upload a lorry receipt or open the camera to capture one first.', { variant: 'warning' });
       return;
     }
     setAiParsing(true);
@@ -1331,7 +1491,7 @@ export default function DispatchDetail() {
       const res = await uploadFilesMutation({ formData: fd, folder: 'dispatch/lr' }).unwrap();
       const uploaded = res?.data?.[0];
       if (!uploaded?.url) {
-        enqueueSnackbar('Scan upload failed. Try again or use manual upload.', { variant: 'error' });
+        enqueueSnackbar('Camera photo upload failed. Try again or use manual upload.', { variant: 'error' });
         return;
       }
       const entry = {
@@ -1345,10 +1505,10 @@ export default function DispatchDetail() {
       };
       setLrFileList((prev) => [...prev, entry].slice(-3));
       setCameraOpen(false);
-      enqueueSnackbar('Scan captured — extracting lorry receipt details with AI…', { variant: 'info' });
+      enqueueSnackbar('Photo captured — extracting lorry receipt details with AI…', { variant: 'info' });
       await handleAIParse(entry);
     } catch (err) {
-      enqueueSnackbar(err?.data?.message || 'Scan upload failed. Try again or use manual upload.', { variant: 'error' });
+      enqueueSnackbar(err?.data?.message || 'Camera photo upload failed. Try again or use manual upload.', { variant: 'error' });
     } finally {
       setScanUploading(false);
     }
@@ -1619,13 +1779,173 @@ export default function DispatchDetail() {
   const weightFilled = !!String(liveWeight ?? order.storedWeight ?? '').trim();
   const boxesFilled = Number(liveBoxes ?? order.storedBoxes ?? order.boxes ?? 0) > 0;
 
+  // ── Photo Verification: declared Boxes vs UNIQUE closed-box photos, plus AI-flagged duplicates ──
+  // Photos the AI check flagged as a repeat of an older photo — red border everywhere they're shown.
+  const dupFlags = new Map((order.photoFingerprints || []).filter((f) => f.dupOf).map((f) => [f.url, f]));
+  const flaggedDupCount = dupFlags.size;
+  // The order-level "All Closed Box Photos" list keeps growing across Partial/Full rounds while Boxes is
+  // overwritten each round, so only photos uploaded since the last confirmed round count against THIS
+  // round's box count (a photo with no upload time predates round tracking → belongs to an earlier round).
+  const photoMetaByUrl = new Map((order.photoFingerprints || []).map((f) => [f.url, f]));
+  const lastRoundTime = (order.dispatchHistory || []).length
+    ? new Date(order.dispatchHistory[order.dispatchHistory.length - 1].date).getTime()
+    : null;
+  const closedPhotosThisRound = (order.closeBoxPhotos || []).filter((url) => {
+    if (!Number.isFinite(lastRoundTime)) return true; // no confirmed round yet → everything on file counts
+    const at = photoMetaByUrl.get(url)?.uploadedAt;
+    return !!at && new Date(at).getTime() > lastRoundTime;
+  });
+  const uniqueClosedPhotos = closedPhotosThisRound.filter((url) => !dupFlags.has(url)).length;
+  const declaredBoxes = Number(liveBoxes ?? order.storedBoxes ?? order.boxes ?? 0) || 0;
+  const boxPhotoStatus = declaredBoxes <= 0 ? 'unset'
+    : uniqueClosedPhotos === declaredBoxes ? 'match'
+    : uniqueClosedPhotos < declaredBoxes ? 'short' : 'extra';
+  const boxPhotoMismatch = boxPhotoStatus === 'short' || boxPhotoStatus === 'extra';
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  const boxPhotoMessage = boxPhotoStatus === 'short'
+    ? `${plural(declaredBoxes, 'box', 'boxes')} declared but only ${plural(uniqueClosedPhotos, 'unique closed-box photo', 'unique closed-box photos')} uploaded — ${declaredBoxes - uniqueClosedPhotos} more needed, or correct the Boxes count.`
+    : boxPhotoStatus === 'extra'
+    ? `${plural(declaredBoxes, 'box', 'boxes')} declared but ${plural(uniqueClosedPhotos, 'unique closed-box photo', 'unique closed-box photos')} uploaded — ${uniqueClosedPhotos - declaredBoxes} more than the box count. Check the Boxes count.`
+    : '';
+  const duplicatesBlocking = flaggedDupCount > 0;
+  const boxCountBlocking = BOX_COUNT_MISMATCH_BLOCKS_DISPATCH && boxPhotoMismatch;
+
+  // ── Per-row (product/kit) Open + Closed box-photo COUNT gate ──
+  // Beyond "at least one photo" (dispatchingRowsHavePhotos above), every row actually being
+  // dispatched this round must carry EXACTLY `declaredBoxes` UNIQUE (non-duplicate-flagged)
+  // open-box photos AND exactly `declaredBoxes` closed-box photos — not fewer (missing
+  // evidence) and not more (mis-scans/padding). Always a hard block (unlike the order-level
+  // closed-photo check above, which is soft) since this is what the row's own Upload buttons
+  // are capped to, so a mismatch here means the dispatcher removed a flagged duplicate without
+  // replacing it. Rows not going out this round (not in rowsBeingDispatchedNow) are untouched.
+  const rowPhotoCountIssues = declaredBoxes > 0
+    ? rowsBeingDispatchedNow.map((row) => {
+        const openUnique = (row.openBoxPhotos || []).filter((url) => !dupFlags.has(url)).length;
+        const closeUnique = (row.closeBoxPhotos || []).filter((url) => !dupFlags.has(url)).length;
+        return {
+          label: row.name || row.kitName || 'Item',
+          openUnique,
+          closeUnique,
+          openOk: openUnique === declaredBoxes,
+          closeOk: closeUnique === declaredBoxes,
+        };
+      }).filter((r) => !r.openOk || !r.closeOk)
+    : [];
+  const rowPhotoCountBlocking = rowPhotoCountIssues.length > 0;
+  const rowPhotoCountMessage = rowPhotoCountIssues
+    .map((r) => `${r.label} — open ${r.openUnique}/${declaredBoxes}, closed ${r.closeUnique}/${declaredBoxes}`)
+    .join(' · ');
+  const totalSavedPhotos = (order.openBoxPhotos || []).length + (order.closeBoxPhotos || []).length
+    + (order.items || []).reduce((s, it) => s + (it.openBoxPhotos?.length || 0) + (it.closeBoxPhotos?.length || 0), 0)
+    + (order.kitDispatch || []).reduce((s, kd) => s + (kd.openBoxPhotos?.length || 0) + (kd.closeBoxPhotos?.length || 0), 0);
+
+  // Which list a saved photo sits in, in words (for the duplicate tooltips).
+  const describeSavedPhoto = (url) => {
+    if ((order.closeBoxPhotos || []).includes(url)) return 'All Closed Box Photos';
+    if ((order.openBoxPhotos || []).includes(url)) return 'order-level open-box photos';
+    for (const it of order.items || []) {
+      const name = it.itemName || it.product || 'Product';
+      if ((it.closeBoxPhotos || []).includes(url)) return `Closed box photo · ${name}`;
+      if ((it.openBoxPhotos || []).includes(url)) return `Open box photo · ${name}`;
+    }
+    for (const kd of order.kitDispatch || []) {
+      const name = kd.kitName || 'Kit';
+      if ((kd.closeBoxPhotos || []).includes(url)) return `Closed box photo · ${name}`;
+      if ((kd.openBoxPhotos || []).includes(url)) return `Open box photo · ${name}`;
+    }
+    return 'another photo on this dispatch';
+  };
+  const dupTitle = (url) => {
+    const f = dupFlags.get(url);
+    return `Duplicate of a photo in ${describeSavedPhoto(f.dupOf)}${f.dupReason ? ` — ${f.dupReason}` : ''}`;
+  };
+
+  // A saved photo thumbnail. A photo flagged as a duplicate gets a red border + badge (and, until the
+  // dispatch is complete, a trash button to remove it); everything else renders as before.
+  const savedThumb = (url, i, size, color) => {
+    const flagged = dupFlags.has(url);
+    return (
+      <Tooltip key={`${url}-${i}`} title={flagged ? dupTitle(url) : undefined}>
+        <span style={{ position: 'relative', display: 'inline-flex', width: size, height: size }}>
+          <Image
+            src={url}
+            width={size}
+            height={size}
+            style={{
+              objectFit: 'cover', borderRadius: size > 40 ? 6 : 4, boxSizing: 'border-box',
+              border: flagged ? '2px solid #ff4d4f' : `1px solid ${color}`,
+              boxShadow: flagged ? '0 0 0 2px rgba(255,77,79,0.25)' : undefined,
+            }}
+            preview={{ src: url }}
+          />
+          {flagged ? (
+            <>
+              <CloseCircleFilled
+                style={{ position: 'absolute', bottom: -4, right: -4, color: '#ff4d4f', background: '#fff', borderRadius: '50%', fontSize: size > 40 ? 16 : 12 }}
+              />
+              {!dispatched && (
+                <Popconfirm
+                  title="Remove this duplicate photo?"
+                  okText="Remove"
+                  okButtonProps={{ danger: true }}
+                  onConfirm={() => handleRemoveDuplicatePhoto(url)}
+                >
+                  <DeleteOutlined
+                    style={{
+                      position: 'absolute', top: -6, right: -6, color: '#fff', background: '#ff4d4f', borderRadius: '50%',
+                      fontSize: size > 40 ? 12 : 9, padding: size > 40 ? 4 : 3, cursor: 'pointer',
+                    }}
+                  />
+                </Popconfirm>
+              )}
+            </>
+          ) : (
+            <CheckCircleFilled
+              style={{ position: 'absolute', bottom: -4, right: -4, color, background: '#fff', borderRadius: '50%', fontSize: size > 40 ? 16 : 12 }}
+            />
+          )}
+        </span>
+      </Tooltip>
+    );
+  };
+
+  // Photos the last upload attempt(s) rejected as duplicates for one upload slot — never saved, shown with a
+  // red border and the reason until dismissed.
+  const renderRejectedPhotos = (slot, size) => {
+    const items = rejectedPhotos.filter((r) => r.slot === slot);
+    if (items.length === 0) return null;
+    return (
+      <Space size={4} wrap>
+        {items.map((r) => (
+          <Tooltip key={r.id} title={r.message}>
+            <span style={{ position: 'relative', display: 'inline-flex', width: size, height: size }}>
+              <img
+                src={r.previewUrl}
+                alt="Duplicate photo — not saved"
+                width={size}
+                height={size}
+                style={{ objectFit: 'cover', borderRadius: size > 40 ? 6 : 4, boxSizing: 'border-box', border: '2px solid #ff4d4f', boxShadow: '0 0 0 2px rgba(255,77,79,0.25)' }}
+              />
+              <CloseCircleFilled
+                onClick={() => dismissRejectedPhoto(r.id)}
+                style={{ position: 'absolute', top: -6, right: -6, color: '#ff4d4f', background: '#fff', borderRadius: '50%', fontSize: size > 40 ? 16 : 12, cursor: 'pointer' }}
+              />
+            </span>
+          </Tooltip>
+        ))}
+        <Text style={{ fontSize: 11, color: '#ff4d4f' }}>Duplicate — not saved</Text>
+      </Space>
+    );
+  };
+
   // Dispatch Confirmation Approval — every other pre-condition below (payment, verified
   // photos, transport/weight/boxes) must already be satisfied before it's worth sending;
   // once sent, Confirm stays locked until Operations approves it from Order Management.
   const dispatchApprovalStatus = order?.dispatchApprovalStatus || 'none';
   const dispatchApprovalOk = dispatchApprovalStatus === 'approved';
   const readyToSendDispatchApproval = !dispatched && paymentConfirmed && verificationGateSatisfied
-    && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled;
+    && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled
+    && !duplicatesBlocking && !boxCountBlocking && !rowPhotoCountBlocking;
 
   return (
     <div className="page-container fade-in">
@@ -1742,6 +2062,15 @@ export default function DispatchDetail() {
                 <Descriptions.Item label="Transport">
                   {liveTransport || order.transport
                     ? <Text strong>{liveTransport || order.transport}</Text>
+                    : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
+                <Descriptions.Item label="Transport Cost Scope">
+                  {order.transportationBy
+                    ? (
+                      <Tag color={order.transportationBy === 'HNG' ? 'purple' : 'blue'} style={{ borderRadius: 20 }}>
+                        {order.transportationBy}
+                      </Tag>
+                    )
                     : <Text type="secondary">—</Text>}
                 </Descriptions.Item>
                 <Descriptions.Item label="Sales Person">{order.salesPerson}</Descriptions.Item>
@@ -2003,28 +2332,25 @@ export default function DispatchDetail() {
                             const closePhotos = row.closeBoxPhotos || [];
                             const openCount = openPhotos.length;
                             const closeCount = closePhotos.length;
+                            // Once Boxes is declared, that exact number — not the old fixed 20 —
+                            // is both the upload cap ("not high") and, via rowPhotoCountBlocking
+                            // above (unique/non-duplicate count), the compulsory minimum ("not
+                            // low") for every row being dispatched this round. Boxes not entered
+                            // yet → fall back to the old generous cap so uploads aren't blocked
+                            // before the dispatcher has had a chance to fill it in.
+                            const rowRequired = declaredBoxes > 0 ? declaredBoxes : MAX_ROW_BOX_PHOTOS;
+                            const openUnique = openPhotos.filter((url) => !dupFlags.has(url)).length;
+                            const closeUnique = closePhotos.filter((url) => !dupFlags.has(url)).length;
+                            const openRowOk = declaredBoxes > 0 && openUnique === declaredBoxes;
+                            const closeRowOk = declaredBoxes > 0 && closeUnique === declaredBoxes;
                             // Shows every uploaded photo (not just the most recent) so the
                             // dispatcher can confirm all of them were captured, not only the
                             // last one — each thumbnail opens its own preview on click.
+                            // A photo the AI flagged as a duplicate shows with a red border instead
+                            // (savedThumb) — see the Photo Verification card.
                             const thumb = (photos, color) => photos.length > 0 && (
                               <Space size={4} wrap>
-                                {photos.map((url, i) => (
-                                  <span key={`${url}-${i}`} style={{ position: 'relative', display: 'inline-flex', width: 28, height: 28 }}>
-                                    <Image
-                                      src={url}
-                                      width={28}
-                                      height={28}
-                                      style={{ objectFit: 'cover', borderRadius: 4, border: `1px solid ${color}` }}
-                                      preview={{ src: url }}
-                                    />
-                                    <CheckCircleFilled
-                                      style={{
-                                        position: 'absolute', bottom: -4, right: -4,
-                                        color, background: '#fff', borderRadius: '50%', fontSize: 12,
-                                      }}
-                                    />
-                                  </span>
-                                ))}
+                                {photos.map((url, i) => savedThumb(url, i, 28, color))}
                               </Space>
                             );
                             const openUploading = uploadingKeys.has(`${uploadKey}-open`);
@@ -2036,48 +2362,62 @@ export default function DispatchDetail() {
                             // request resolves) can't by itself stop a single oversized batch
                             // from exceeding the cap — these per-render counters do, ticking
                             // down as each file in the batch is accepted.
-                            let openRemaining = MAX_ROW_BOX_PHOTOS - openCount;
-                            let closeRemaining = MAX_ROW_BOX_PHOTOS - closeCount;
+                            let openRemaining = rowRequired - openCount;
+                            let closeRemaining = rowRequired - closeCount;
                             const guardBeforeUpload = (getRemaining, setRemaining, label) => () => {
                               if (getRemaining() <= 0) {
-                                enqueueSnackbar(`Up to ${MAX_ROW_BOX_PHOTOS} ${label} box photos allowed`, { variant: 'warning' });
+                                enqueueSnackbar(
+                                  declaredBoxes > 0
+                                    ? `Boxes is set to ${declaredBoxes} — exactly ${declaredBoxes} ${label} box photos allowed`
+                                    : `Up to ${rowRequired} ${label} box photos allowed`,
+                                  { variant: 'warning' },
+                                );
                                 return Upload.LIST_IGNORE;
                               }
                               setRemaining(getRemaining() - 1);
                               return true;
                             };
                             return (
-                              <Space size={4} wrap>
-                                <Upload
-                                  showUploadList={false}
-                                  accept="image/*"
-                                  multiple
-                                  beforeUpload={guardBeforeUpload(() => openRemaining, (v) => { openRemaining = v; }, 'open')}
-                                  disabled={openCount >= MAX_ROW_BOX_PHOTOS || openUploading || noKitTarget || dispatched || row.assigned === false}
-                                  customRequest={uploadFn}
-                                >
-                                  <Button size="small" icon={openUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
-                                    style={openCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
+                              <Space direction="vertical" size={2}>
+                                <Space size={4} wrap>
+                                  <Upload
+                                    showUploadList={false}
+                                    accept="image/*"
+                                    multiple
+                                    beforeUpload={guardBeforeUpload(() => openRemaining, (v) => { openRemaining = v; }, 'open')}
+                                    disabled={openCount >= rowRequired || openUploading || noKitTarget || dispatched || row.assigned === false}
+                                    customRequest={uploadFn}
                                   >
-                                    Open ({openCount}/{MAX_ROW_BOX_PHOTOS})
-                                  </Button>
-                                </Upload>
-                                {thumb(openPhotos, '#52c41a')}
-                                <Upload
-                                  showUploadList={false}
-                                  accept="image/*"
-                                  multiple
-                                  beforeUpload={guardBeforeUpload(() => closeRemaining, (v) => { closeRemaining = v; }, 'closed')}
-                                  disabled={closeCount >= MAX_ROW_BOX_PHOTOS || closeUploading || noKitTarget || dispatched || row.assigned === false}
-                                  customRequest={uploadFnClose}
-                                >
-                                  <Button size="small" icon={closeUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
-                                    style={closeCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
+                                    <Button size="small" icon={openUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
+                                      style={openRowOk ? { borderColor: '#52c41a', color: '#52c41a' } : declaredBoxes > 0 && openCount > 0 ? { borderColor: '#fa8c16', color: '#fa8c16' } : openCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
+                                    >
+                                      Open ({openCount}/{rowRequired})
+                                    </Button>
+                                  </Upload>
+                                  {thumb(openPhotos, '#52c41a')}
+                                  {renderRejectedPhotos(`${uploadKey}-open`, 28)}
+                                  <Upload
+                                    showUploadList={false}
+                                    accept="image/*"
+                                    multiple
+                                    beforeUpload={guardBeforeUpload(() => closeRemaining, (v) => { closeRemaining = v; }, 'closed')}
+                                    disabled={closeCount >= rowRequired || closeUploading || noKitTarget || dispatched || row.assigned === false}
+                                    customRequest={uploadFnClose}
                                   >
-                                    Closed ({closeCount}/{MAX_ROW_BOX_PHOTOS})
-                                  </Button>
-                                </Upload>
-                                {thumb(closePhotos, '#1677ff')}
+                                    <Button size="small" icon={closeUploading ? <LoadingOutlined spin /> : <CameraOutlined />}
+                                      style={closeRowOk ? { borderColor: '#52c41a', color: '#52c41a' } : declaredBoxes > 0 && closeCount > 0 ? { borderColor: '#fa8c16', color: '#fa8c16' } : closeCount > 0 ? { borderColor: '#52c41a', color: '#52c41a' } : undefined}
+                                    >
+                                      Closed ({closeCount}/{rowRequired})
+                                    </Button>
+                                  </Upload>
+                                  {thumb(closePhotos, '#1677ff')}
+                                  {renderRejectedPhotos(`${uploadKey}-close`, 28)}
+                                </Space>
+                                {declaredBoxes > 0 && (!openRowOk || !closeRowOk) && (
+                                  <Text style={{ fontSize: 11, color: '#fa8c16' }}>
+                                    Needs exactly {declaredBoxes} open &amp; {declaredBoxes} closed (unique) — have {openUnique} open, {closeUnique} closed
+                                  </Text>
+                                )}
                               </Space>
                             );
                           },
@@ -2094,12 +2434,40 @@ export default function DispatchDetail() {
                 <Row gutter={12}>
                   <Col xs={24} sm={12}>
                     <Form.Item
-                      label={<span><span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Transport Name</span>}
+                      label={(
+                        <span>
+                          <span style={{ color: '#ff4d4f', marginRight: 4 }}>*</span>Transport Name
+                          {order.transportationBy && (
+                            <Tag
+                              color={order.transportationBy === 'HNG' ? 'purple' : 'blue'}
+                              style={{ borderRadius: 20, marginLeft: 8, fontSize: 11 }}
+                            >
+                              Transport Cost: {order.transportationBy}
+                            </Tag>
+                          )}
+                          {order.plannedTransportName && (
+                            <Tag color="geekblue" style={{ borderRadius: 20, marginLeft: 8, fontSize: 11 }}>
+                              Lead: {order.plannedTransportName}
+                            </Tag>
+                          )}
+                        </span>
+                      )}
                       name="transport"
                       validateStatus={transportFilled ? 'success' : 'error'}
                       help={transportFilled ? undefined : 'Required before dispatch can be confirmed'}
                     >
-                      <Input placeholder="e.g. Fast Cargo" />
+                      <SelectWithAdd
+                        field="transportName"
+                        defaultOptions={
+                          order.plannedTransportName && !transportNameOptions.some((o) => o.value === order.plannedTransportName)
+                            ? [{ value: order.plannedTransportName, label: order.plannedTransportName }, ...transportNameOptions]
+                            : transportNameOptions
+                        }
+                        placeholder="Select or add a transport name"
+                        showSearch
+                        allowClear
+                        style={{ width: '100%' }}
+                      />
                     </Form.Item>
                   </Col>
                   <Col xs={12} sm={6}>
@@ -2278,34 +2646,122 @@ export default function DispatchDetail() {
                       }
                       return true;
                     }}
-                    customRequest={makeBoxUpload()}
+                    customRequest={(options) => makeBoxUpload()(options)}
                   >
                     <Button icon={uploadingKeys.has('order-close') ? <LoadingOutlined spin /> : <CameraOutlined />}>
                       Upload Closed Box Photo ({closeBoxCount}/20)
                     </Button>
                   </Upload>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
-                    {(order?.closeBoxPhotos || []).map((url, i) => (
-                      <span key={`close-${i}`} style={{ position: 'relative', display: 'inline-flex' }}>
-                        <Image
-                          src={url}
-                          width={64}
-                          height={64}
-                          style={{ objectFit: 'cover', borderRadius: 6, border: '1px solid #1677ff' }}
-                        />
-                        <CheckCircleFilled
-                          style={{
-                            position: 'absolute', bottom: -4, right: -4,
-                            color: '#1677ff', background: '#fff', borderRadius: '50%', fontSize: 16,
-                          }}
-                        />
-                      </span>
-                    ))}
+                    {(order?.closeBoxPhotos || []).map((url, i) => savedThumb(url, i, 64, '#1677ff'))}
                     {closeBoxCount === 0 && (
                       <Text style={{ fontSize: 12, color: '#999' }}>No closed box photos uploaded yet.</Text>
                     )}
                   </div>
+                  {/* Duplicates the upload check rejected (never saved) — red border + reason. */}
+                  {rejectedPhotos.some((r) => r.slot === 'order-close') && (
+                    <div style={{ marginTop: 10 }}>
+                      {renderRejectedPhotos('order-close', 64)}
+                      {rejectedPhotos.filter((r) => r.slot === 'order-close').map((r) => (
+                        <Text key={r.id} style={{ display: 'block', fontSize: 12, color: '#ff4d4f', marginTop: 4 }}>{r.message}</Text>
+                      ))}
+                    </div>
+                  )}
                 </Form.Item>
+
+                {/* Photo Verification — cross-checks the declared Boxes against the UNIQUE closed-box photos
+                    uploaded (order-level list, soft warning via BOX_COUNT_MISMATCH_BLOCKS_DISPATCH) AND
+                    against each dispatched row's own Open/Closed box photos (Product Details table above,
+                    hard block via rowPhotoCountBlocking — every row going out this round needs EXACTLY
+                    Boxes-many unique open and unique closed photos), and lets the AI compare every photo
+                    on the shipment for duplicates/repeats. Photos flagged as duplicates get a red border
+                    wherever they appear above and always block dispatch until removed. */}
+                <div style={{ background: sectionBg, border: `1px solid ${(duplicatesBlocking || rowPhotoCountBlocking) ? '#ff4d4f66' : '#B11E6A22'}`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                    <SafetyCertificateOutlined style={{ color: '#B11E6A', fontSize: 16 }} />
+                    <Text strong style={{ color: textColor, fontSize: 13 }}>Photo Verification</Text>
+                    <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>box count vs photos · AI duplicate check</Text>
+                    <Button
+                      size="small"
+                      icon={scanningPhotos ? <LoadingOutlined spin /> : <RobotOutlined />}
+                      disabled={dispatched || scanningPhotos || totalSavedPhotos < 2}
+                      onClick={handleScanPhotos}
+                      style={{ marginLeft: 'auto', borderColor: '#B11E6A55', color: '#B11E6A' }}
+                    >
+                      {scanningPhotos ? 'Checking photos…' : 'Verify photos with AI'}
+                    </Button>
+                  </div>
+                  <Row gutter={[12, 8]} style={{ marginBottom: 10 }}>
+                    {[
+                      { label: 'Boxes declared', value: declaredBoxes > 0 ? declaredBoxes : '—', color: textColor },
+                      {
+                        label: lastRoundTime != null ? 'Unique closed photos (this round)' : 'Unique closed-box photos',
+                        value: uniqueClosedPhotos,
+                        color: boxPhotoStatus === 'match' ? '#52c41a' : boxPhotoMismatch ? '#fa8c16' : textColor,
+                      },
+                      { label: 'Duplicate photos', value: flaggedDupCount, color: flaggedDupCount > 0 ? '#ff4d4f' : '#52c41a' },
+                    ].map((s) => (
+                      <Col xs={24} sm={8} key={s.label}>
+                        <div style={{ border: `1px solid ${borderColor}`, borderRadius: 8, padding: '8px 12px', background: cardBg }}>
+                          <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block' }}>{s.label}</Text>
+                          <Text strong style={{ fontSize: 20, color: s.color }}>{s.value}</Text>
+                        </div>
+                      </Col>
+                    ))}
+                  </Row>
+                  {boxPhotoStatus === 'unset' && (
+                    <Alert type="info" showIcon style={{ borderRadius: 8 }} message="Enter the number of Boxes above — it is cross-checked against the unique closed-box photos uploaded." />
+                  )}
+                  {boxPhotoStatus === 'match' && (
+                    <Alert type="success" showIcon style={{ borderRadius: 8 }} message={`Box count matches photos — ${plural(declaredBoxes, 'box', 'boxes')}, ${plural(uniqueClosedPhotos, 'unique closed-box photo', 'unique closed-box photos')}.`} />
+                  )}
+                  {boxPhotoMismatch && (
+                    <Alert
+                      type="warning"
+                      showIcon
+                      style={{ borderRadius: 8 }}
+                      message="Box count and photos do not match"
+                      description={boxPhotoMessage}
+                    />
+                  )}
+                  {rowPhotoCountBlocking && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ borderRadius: 8, marginTop: boxPhotoMismatch ? 8 : 0 }}
+                      message={`Row open/closed box photos don't match Boxes (${declaredBoxes})`}
+                      description={`Each row being dispatched this round needs exactly ${declaredBoxes} unique open and ${declaredBoxes} unique closed box photos. ${rowPhotoCountMessage}`}
+                    />
+                  )}
+                  {duplicatesBlocking && (
+                    <Alert
+                      type="error"
+                      showIcon
+                      style={{ borderRadius: 8, marginTop: (boxPhotoMismatch || rowPhotoCountBlocking) ? 8 : 0 }}
+                      message={`${plural(flaggedDupCount, 'duplicate photo', 'duplicate photos')} found`}
+                      description="Shown with a red border above. Remove the duplicate(s) with the trash button — dispatch approval stays blocked until they are gone."
+                    />
+                  )}
+                  {[...dupFlags.keys()].map((url) => (
+                    <div key={url} style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, padding: '6px 10px', border: '1px solid #ff4d4f55', borderRadius: 8, background: isDark ? 'rgba(255,77,79,0.08)' : '#fff2f0' }}>
+                      <Image src={url} width={40} height={40} style={{ objectFit: 'cover', borderRadius: 4, border: '2px solid #ff4d4f', boxSizing: 'border-box' }} preview={{ src: url }} />
+                      <Text style={{ fontSize: 12, color: textColor, flex: 1 }}>
+                        <Text strong style={{ color: '#ff4d4f' }}>{describeSavedPhoto(url)}</Text>
+                        {` — ${dupTitle(url)}`}
+                      </Text>
+                      {!dispatched && (
+                        <Popconfirm title="Remove this duplicate photo?" okText="Remove" okButtonProps={{ danger: true }} onConfirm={() => handleRemoveDuplicatePhoto(url)}>
+                          <Button size="small" danger icon={<DeleteOutlined />}>Remove</Button>
+                        </Popconfirm>
+                      )}
+                    </div>
+                  ))}
+                  <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888', display: 'block', marginTop: 8 }}>
+                    {order.photoScan?.at
+                      ? `Last AI check ${new Date(order.photoScan.at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })} — ${plural(order.photoScan.photosChecked || 0, 'photo', 'photos')} compared, ${plural(order.photoScan.duplicatesFound || 0, 'duplicate', 'duplicates')} found${order.photoScan.truncated ? ' (only the first 40 photos were compared)' : ''}.`
+                      : 'Every new photo is checked automatically as you upload it. Use "Verify photos with AI" to re-check everything on this shipment, including photos uploaded earlier.'}
+                  </Text>
+                </div>
 
                 {/* Print Invoice */}
                 <div style={{ background: sectionBg, border: `1px solid #B11E6A22`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
@@ -2395,6 +2851,19 @@ export default function DispatchDetail() {
                     Enter Transport Name, Weight and Boxes above to enable dispatch confirmation.
                   </Text>
                 )}
+                {!dispatched && duplicatesBlocking && (
+                  <Text style={{ fontSize: 12, color: '#ff4d4f', marginRight: 'auto' }}>
+                    Remove the duplicate photo{flaggedDupCount !== 1 ? 's' : ''} highlighted in red before dispatching.
+                  </Text>
+                )}
+                {!dispatched && boxCountBlocking && (
+                  <Text style={{ fontSize: 12, color: '#ff4d4f', marginRight: 'auto' }}>{boxPhotoMessage}</Text>
+                )}
+                {!dispatched && rowPhotoCountBlocking && (
+                  <Text style={{ fontSize: 12, color: '#ff4d4f', marginRight: 'auto' }}>
+                    Boxes = {declaredBoxes} — each row must have exactly {declaredBoxes} open and {declaredBoxes} closed box photos: {rowPhotoCountMessage}
+                  </Text>
+                )}
                 {!dispatched && readyToSendDispatchApproval && dispatchApprovalStatus === 'none' && (
                   <Text style={{ fontSize: 12, color: '#fa8c16', marginRight: 'auto' }}>
                     Send Approval and wait for Operations to approve before confirming dispatch.
@@ -2444,8 +2913,8 @@ export default function DispatchDetail() {
                 <Button
                   type="primary"
                   icon={<CarOutlined />}
-                  disabled={!paymentConfirmed || dispatched || !verificationGateSatisfied || closeBoxCount === 0 || !transportFilled || !weightFilled || !boxesFilled || !dispatchApprovalOk}
-                  style={{ background: (paymentConfirmed && !dispatched && verificationGateSatisfied && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled && dispatchApprovalOk) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
+                  disabled={!paymentConfirmed || dispatched || !verificationGateSatisfied || closeBoxCount === 0 || !transportFilled || !weightFilled || !boxesFilled || !dispatchApprovalOk || duplicatesBlocking || boxCountBlocking || rowPhotoCountBlocking}
+                  style={{ background: (paymentConfirmed && !dispatched && verificationGateSatisfied && closeBoxCount > 0 && transportFilled && weightFilled && boxesFilled && dispatchApprovalOk && !duplicatesBlocking && !boxCountBlocking && !rowPhotoCountBlocking) ? 'linear-gradient(135deg,#B11E6A,#D85C9E)' : undefined, border: 'none' }}
                   onClick={handleConfirmDispatch}
                 >
                   {dispatched
@@ -2491,7 +2960,7 @@ export default function DispatchDetail() {
               <div style={{ background: sectionBg, border: `1px solid #B11E6A33`, borderRadius: 10, padding: 14, marginBottom: 16 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
                   <UploadOutlined style={{ color: '#B11E6A', fontSize: 16 }} />
-                  <Text strong style={{ color: textColor, fontSize: 13 }}>Lorry Receipt (Upload or Scan)</Text>
+                  <Text strong style={{ color: textColor, fontSize: 13 }}>Lorry Receipt (Upload or Open Camera)</Text>
                   {lrUploaded && <Tag color="success" style={{ borderRadius: 12 }}>Uploaded</Tag>}
                 </div>
 
@@ -2514,7 +2983,7 @@ export default function DispatchDetail() {
                   </Button>
                 </Upload>
 
-                {/* Scan Lorry Receipt — opens an in-app webcam capture modal
+                {/* Open Camera — opens an in-app webcam capture modal
                     (CameraCaptureModal). The captured JPEG is uploaded to Cloudinary,
                     dropped into the same lrFileList as the manual upload, and run through
                     the SAME AI extraction (handleAIParse) — no separate "AI Parse" click.
@@ -2527,7 +2996,7 @@ export default function DispatchDetail() {
                   onClick={() => setCameraOpen(true)}
                   style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginTop: 8 }}
                 >
-                  {scanUploading || aiParsing ? 'Extracting…' : 'Scan Lorry Receipt (Camera) — Auto AI Extract'}
+                  {scanUploading || aiParsing ? 'Extracting…' : 'Open Camera — Auto AI Extract'}
                 </Button>
 
                 {order.invoiceMismatchStatus === 'pending' && (
@@ -2957,7 +3426,7 @@ export default function DispatchDetail() {
         onClose={() => setCameraOpen(false)}
         onCapture={handleScanCapture}
         busy={scanUploading}
-        title="Scan Lorry Receipt"
+        title="Capture Lorry Receipt"
         fileNamePrefix="lorry-receipt"
       />
     </div>

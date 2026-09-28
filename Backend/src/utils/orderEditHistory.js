@@ -34,6 +34,7 @@ const SCALAR_FIELDS = {
   salesPerson: 'Assigned To',
   deliveryBy: 'Delivery By',
   transportationBy: 'Transportation By',
+  transportName: 'Transport Name',
   forwardingCharge: 'Forwarding Charge',
   forwardingChargeAmount: 'Forwarding Charge Amount',
   expectedDeliveryDate: 'Expected Delivery Date',

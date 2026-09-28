@@ -17,6 +17,8 @@ const { notifyMany, notifyRoles } = require('../../utils/notify');
 const { sendMessage } = require('../../services/whatsAppService');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
 const aiService = require('../../services/aiService');
+const photoDup = require('../../services/photoDuplicateService');
+const { cloudinary } = require('../../config/cloudinary');
 
 // Sends the "Dispatch Notify" WhatsApp template (configured in Integrations → WhatsApp →
 // Event Mapping) to both the order's sales person and the customer, with the confirmed
@@ -174,7 +176,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
   const dispatchesRaw = await DispatchRecord.find({ _id: { $in: pageIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName total orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo expectedDeliveryDate kitOrders items packagingIncludes splitDates kitOverallQty',
+      select: 'orderCode clientName total orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo expectedDeliveryDate kitOrders items packagingIncludes splitDates kitOverallQty transportationBy',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -233,7 +235,7 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
   const dispatches = await DispatchRecord.find({ orderId: { $in: todayOrderIds } })
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes splitDates kitOverallQty',
+      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes splitDates kitOverallQty transportationBy',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -264,7 +266,7 @@ exports.getPendingDispatches = asyncHandler(async (req, res) => {
   const dispatches = await DispatchRecord.find(filter)
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes splitDates kitOverallQty',
+      select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes splitDates kitOverallQty transportationBy',
       populate: [
         { path: 'leadId', select: 'leadType' },
         { path: 'assignedTo', select: 'fullName' },
@@ -284,10 +286,11 @@ exports.getPendingDispatches = asyncHandler(async (req, res) => {
 
 exports.getDispatch = asyncHandler(async (req, res, next) => {
   const dispatch = await DispatchRecord.findById(req.params.id)
+    .select('+photoFingerprints')
     .populate({
       path: 'orderId',
       populate: [
-        { path: 'leadId', select: 'leadType hotelName contactPerson phone altNumber landlineNumber email destination detailedAddress address city state pincode shippingAddress shippingCity shippingState shippingPincode salesPerson products' },
+        { path: 'leadId', select: 'leadType hotelName contactPerson phone altNumber landlineNumber email destination detailedAddress address city state pincode shippingAddress shippingCity shippingState shippingPincode salesPerson products transportName' },
         { path: 'assignedTo', select: 'fullName' },
       ],
     })
@@ -641,16 +644,119 @@ exports.verifyInvoice = asyncHandler(async (req, res, next) => {
   res.status(200).json({ success: true, data: { verdict, score: `${passed}/${checks.length}`, checks } });
 });
 
+// ─── Duplicate box-photo detection ──────────────────────────────────────────
+// Matching/decision logic lives in services/photoDuplicateService.js; this is the DispatchRecord glue.
+// Every box-photo upload below screens the new file against the photos already saved on the record and
+// rejects a duplicate (deleting the Cloudinary copy multer just made) instead of saving it.
+
+function describePhoto({ scope, kind, name }) {
+  if (scope === 'order') return kind === 'close' ? 'All Closed Box Photos' : 'order-level open-box photos';
+  return `${kind === 'close' ? 'Closed' : 'Open'} box photo · ${name}`;
+}
+
+// Every photo currently saved on the record, wherever it sits — order-level, per product, per kit.
+function collectSavedPhotos(dispatch) {
+  const out = [];
+  const add = (urls, scope, refId, kind, name) => (urls || []).forEach((url) => out.push({ url, scope, refId, kind, name }));
+  add(dispatch.openBoxPhotos, 'order', '', 'open', '');
+  add(dispatch.closeBoxPhotos, 'order', '', 'close', '');
+  (dispatch.items || []).forEach((it) => {
+    add(it.openBoxPhotos, 'item', String(it._id), 'open', it.itemName || 'Product');
+    add(it.closeBoxPhotos, 'item', String(it._id), 'close', it.itemName || 'Product');
+  });
+  (dispatch.kitDispatch || []).forEach((kd) => {
+    add(kd.openBoxPhotos, 'kit', String(kd._id), 'open', kd.kitName || 'Kit');
+    add(kd.closeBoxPhotos, 'kit', String(kd._id), 'close', kd.kitName || 'Kit');
+  });
+  return out.map((p) => ({ ...p, label: describePhoto(p) }));
+}
+
+// Fingerprinted photos that are still actually saved (an entry whose URL was since removed is ignored).
+function savedFingerprintRecords(dispatch) {
+  const saved = new Map(collectSavedPhotos(dispatch).map((p) => [p.url, p]));
+  return (dispatch.photoFingerprints || [])
+    .filter((f) => saved.has(f.url))
+    .map((f) => ({ url: f.url, sha256: f.sha256, phash: f.phash, kind: f.kind, label: saved.get(f.url).label }));
+}
+
+// Resolves the AI key once, only if a near-match actually needs judging. Returns null when AI isn't set up.
+function makeDuplicateJudge() {
+  let ctx; // undefined = not resolved yet, null = AI not configured
+  return async (newPhoto, candidates) => {
+    if (ctx === undefined) {
+      const config = await aiService.getAiConfig({ withKey: true });
+      const apiKey = aiService.resolveApiKey(config);
+      ctx = apiKey ? { apiKey, model: config.model } : null;
+    }
+    if (!ctx) return null;
+    return aiService.judgeDuplicatePhoto({ ...ctx, newPhoto, candidates });
+  };
+}
+
+// A duplicate was just uploaded to Cloudinary by multer before we could check it — throw that copy away.
+// Best-effort: a failed cleanup must never fail the request (it only leaves an orphaned asset).
+async function discardUploadedFiles(files) {
+  await Promise.all(files.map((f) => (
+    f.filename ? Promise.resolve(cloudinary.uploader.destroy(f.filename, { invalidate: true })).catch(() => {}) : null
+  )));
+}
+
+// Screens the just-uploaded files, throws the rejected ones away, and returns what may be saved.
+async function screenUploadedPhotos(dispatch, req, { scope, refId, kind, name, files }) {
+  const result = await photoDup.screenNewPhotos({
+    files,
+    fingerprints: photoDup.parseFingerprints(req.body.fingerprints),
+    records: savedFingerprintRecords(dispatch),
+    kind,
+    newLabel: describePhoto({ scope, kind, name }),
+    judge: makeDuplicateJudge(),
+  });
+  if (result.rejected.length) await discardUploadedFiles(result.rejected.map((r) => r.file));
+  return result;
+}
+
+function recordAcceptedFingerprints(dispatch, accepted, { scope, refId, kind }, user) {
+  accepted.forEach(({ file, fp }) => {
+    dispatch.photoFingerprints.push({
+      url: file.path, scope, refId, kind, sha256: fp.sha256, phash: fp.phash,
+      uploadedAt: new Date(), uploadedByName: user?.fullName || user?.name || '',
+    });
+  });
+}
+
+// Everything rejected (nothing saved) → 409 with the details the Dispatch page shows next to the red-bordered
+// photo. A mixed batch still succeeds for the photos that passed, with the rejected ones listed alongside.
+function sendPhotoResult(res, dispatch, { accepted, rejected, aiUnavailable }) {
+  const rejections = rejected.map(photoDup.publicRejection);
+  if (rejections.length && accepted.length === 0) {
+    return res.status(409).json({
+      success: false,
+      error: { duplicate: true, message: rejections[0].message, rejected: rejections },
+    });
+  }
+  return res.status(200).json({
+    success: true,
+    data: dispatch,
+    ...(rejections.length ? { rejected: rejections } : {}),
+    ...(aiUnavailable ? { aiUnavailable: true } : {}),
+  });
+}
+
 // Upload open/close box photos (multiple). field 'photos', query/body ?type=open|close
 exports.uploadBoxPhotos = asyncHandler(async (req, res, next) => {
-  const dispatch = await DispatchRecord.findById(req.params.id);
+  const dispatch = await DispatchRecord.findById(req.params.id).select('+photoFingerprints');
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
-  const urls = (req.files || []).map((f) => f.path);
   const type = req.body.type || req.query.type;
-  if (type === 'close') dispatch.closeBoxPhotos = [...(dispatch.closeBoxPhotos || []), ...urls];
-  else dispatch.openBoxPhotos = [...(dispatch.openBoxPhotos || []), ...urls];
-  await dispatch.save({ validateBeforeSave: false });
-  res.status(200).json({ success: true, data: dispatch });
+  const kind = type === 'close' ? 'close' : 'open';
+  const screened = await screenUploadedPhotos(dispatch, req, { scope: 'order', refId: '', kind, name: '', files: req.files || [] });
+  if (screened.accepted.length) {
+    const urls = screened.accepted.map((a) => a.file.path);
+    if (kind === 'close') dispatch.closeBoxPhotos = [...(dispatch.closeBoxPhotos || []), ...urls];
+    else dispatch.openBoxPhotos = [...(dispatch.openBoxPhotos || []), ...urls];
+    recordAcceptedFingerprints(dispatch, screened.accepted, { scope: 'order', refId: '', kind }, req.user);
+    await dispatch.save({ validateBeforeSave: false });
+  }
+  sendPhotoResult(res, dispatch, screened);
 });
 
 // Store a pre-uploaded Cloudinary URL for an open/close box photo.
@@ -944,7 +1050,7 @@ exports.getTransports = asyncHandler(async (req, res) => {
   const transports = await Transport.find()
     .populate({
       path: 'orderId',
-      select: 'destination detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode contactPerson clientPhone email salesPerson assignedTo isEmergency emergencyApproved paymentTerms',
+      select: 'destination detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode contactPerson clientPhone email salesPerson assignedTo isEmergency emergencyApproved paymentTerms transportationBy',
       populate: [{ path: 'assignedTo', select: 'fullName' }],
     })
     .populate({ path: 'dispatchId', select: 'invoiceNumber invoiceDate dispatchType' })
@@ -962,6 +1068,30 @@ exports.updateTransportStatus = asyncHandler(async (req, res, next) => {
   const t = await Transport.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
   if (!t) return next(new AppError('Transport record not found', 404));
   res.status(200).json({ success: true, data: t });
+});
+
+// GET /api/dispatch/transport-names — every distinct transport/carrier name ever entered on a
+// DispatchRecord (across ALL orders, not just this dispatcher's own), so the Transport Name
+// dropdown on Dispatch Details lists what's actually been used elsewhere instead of only the
+// names someone explicitly added via its own "+ Add" box. Cheap distinct() query, unscoped by
+// user — a carrier name isn't sensitive per-order data, and every dispatcher benefits from
+// seeing the full shared list. Also includes the Transport Name chosen on Leads/Orders (the
+// Add Lead form's mandatory field), so a name picked there shows up here too, and the Add Lead
+// form reuses this same list for its own dropdown.
+exports.getTransportNames = asyncHandler(async (req, res) => {
+  const notBlank = { transportName: { $nin: [null, ''] } };
+  const [dispatchNames, leadNames, orderNames] = await Promise.all([
+    DispatchRecord.distinct('transportName', notBlank),
+    Lead.distinct('transportName', notBlank),
+    Order.distinct('transportName', notBlank),
+  ]);
+  const names = [...new Set(
+    [...dispatchNames, ...leadNames, ...orderNames]
+      .filter((n) => typeof n === 'string')
+      .map((n) => n.trim())
+      .filter(Boolean),
+  )];
+  res.status(200).json({ success: true, data: names.sort((a, b) => a.localeCompare(b)) });
 });
 
 // ─── PICKUP ORDERS ──────────────────────────────────────────────────────────
@@ -1051,18 +1181,23 @@ exports.updatePickupOrder = asyncHandler(async (req, res, next) => {
 // Partial Dispatch round already uploaded, rather than getting stuck once a photo
 // exists. Only the first N files that fit under the remaining slots are accepted.
 exports.uploadItemBoxPhotos = asyncHandler(async (req, res, next) => {
-  const dispatch = await DispatchRecord.findById(req.params.id);
+  const dispatch = await DispatchRecord.findById(req.params.id).select('+photoFingerprints');
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
   const item = dispatch.items.id(req.params.itemId);
   if (!item) return next(new AppError('Dispatch item not found', 404));
   const type = req.body.type || req.query.type;
-  const field = type === 'close' ? 'closeBoxPhotos' : 'openBoxPhotos';
+  const kind = type === 'close' ? 'close' : 'open';
+  const field = kind === 'close' ? 'closeBoxPhotos' : 'openBoxPhotos';
   const existing = item[field] || [];
   const remaining = Math.max(0, 20 - existing.length);
-  const urls = (req.files || []).slice(0, remaining).map((f) => f.path);
-  item[field] = [...existing, ...urls];
-  await dispatch.save({ validateBeforeSave: false });
-  res.status(200).json({ success: true, data: dispatch });
+  const scope = { scope: 'item', refId: String(item._id), kind };
+  const screened = await screenUploadedPhotos(dispatch, req, { ...scope, name: item.itemName || 'Product', files: (req.files || []).slice(0, remaining) });
+  if (screened.accepted.length) {
+    item[field] = [...existing, ...screened.accepted.map((a) => a.file.path)];
+    recordAcceptedFingerprints(dispatch, screened.accepted, scope, req.user);
+    await dispatch.save({ validateBeforeSave: false });
+  }
+  sendPhotoResult(res, dispatch, screened);
 });
 
 // Upload open/close box photos for a single kit (Personalized Kit / Separate Kit are
@@ -1071,16 +1206,114 @@ exports.uploadItemBoxPhotos = asyncHandler(async (req, res, next) => {
 // round and then a Full Dispatch round needs fresh evidence for each round, not just
 // the single "one common photo" the original cap of 1 allowed.
 exports.uploadKitBoxPhotos = asyncHandler(async (req, res, next) => {
-  const dispatch = await DispatchRecord.findById(req.params.id);
+  const dispatch = await DispatchRecord.findById(req.params.id).select('+photoFingerprints');
   if (!dispatch) return next(new AppError('Dispatch not found', 404));
   const kit = dispatch.kitDispatch.id(req.params.kitDispatchId);
   if (!kit) return next(new AppError('Kit dispatch entry not found', 404));
   const type = req.body.type || req.query.type;
-  const field = type === 'close' ? 'closeBoxPhotos' : 'openBoxPhotos';
+  const kind = type === 'close' ? 'close' : 'open';
+  const field = kind === 'close' ? 'closeBoxPhotos' : 'openBoxPhotos';
   const existing = kit[field] || [];
   const remaining = Math.max(0, 20 - existing.length);
-  const urls = (req.files || []).slice(0, remaining).map((f) => f.path);
-  kit[field] = [...existing, ...urls];
+  const scope = { scope: 'kit', refId: String(kit._id), kind };
+  const screened = await screenUploadedPhotos(dispatch, req, { ...scope, name: kit.kitName || 'Kit', files: (req.files || []).slice(0, remaining) });
+  if (screened.accepted.length) {
+    kit[field] = [...existing, ...screened.accepted.map((a) => a.file.path)];
+    recordAcceptedFingerprints(dispatch, screened.accepted, scope, req.user);
+    await dispatch.save({ validateBeforeSave: false });
+  }
+  sendPhotoResult(res, dispatch, screened);
+});
+
+// Every saved box photo on this shipment, side by side, to the AI — flags the ones that are repeats of an
+// older photo (see DUPLICATE_SCAN_PROMPT in aiService.js). This is what covers photos uploaded before
+// fingerprinting existed and anything a near-match check let through. Each flagged photo is stored as a
+// `dupOf` entry on photoFingerprints, which the Dispatch page renders with a red border and which blocks
+// dispatch until the photo is removed (removeBoxPhoto). A fresh scan replaces the previous scan's flags.
+const MAX_SCAN_PHOTOS = 40;
+exports.scanBoxPhotos = asyncHandler(async (req, res, next) => {
+  const dispatch = await DispatchRecord.findById(req.params.id).select('+photoFingerprints');
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  if (dispatch.dispatchedAt) return next(new AppError('This dispatch is already complete — photos can no longer be changed.', 409));
+
+  const config = await aiService.getAiConfig({ withKey: true });
+  const apiKey = aiService.resolveApiKey(config);
+  if (!apiKey) {
+    return next(new AppError('AI is not configured yet. Add your OpenAI API key under Integration → AI Integration.', 503));
+  }
+
+  const saved = collectSavedPhotos(dispatch);
+  // Oldest first — the oldest photo of a duplicate group is kept as the original, later ones get flagged.
+  // Photos with no fingerprint entry predate this feature, so they count as the oldest.
+  const uploadedAt = new Map((dispatch.photoFingerprints || []).map((f) => [f.url, f.uploadedAt ? new Date(f.uploadedAt).getTime() : 0]));
+  const ordered = saved
+    .map((p, i) => ({ ...p, order: i, time: uploadedAt.get(p.url) || 0 }))
+    .sort((a, b) => a.time - b.time || a.order - b.order);
+  const photos = ordered.slice(0, MAX_SCAN_PHOTOS);
+
+  let groups = [];
+  if (photos.length >= 2) {
+    try {
+      groups = await aiService.findDuplicatePhotoGroups({
+        apiKey, model: config.model, photos: photos.map((p) => ({ url: p.url, label: p.label })),
+      });
+    } catch (err) {
+      return next(new AppError(`AI photo check failed: ${err.message}`, err.statusCode === 401 ? 401 : 502));
+    }
+  }
+  const flags = photoDup.flagsFromGroups(photos, groups);
+
+  // Replace the previous scan's flags with this scan's result.
+  (dispatch.photoFingerprints || []).forEach((f) => {
+    if (f.dupSource === 'ai-scan') { f.dupOf = undefined; f.dupReason = undefined; f.dupSource = undefined; }
+  });
+  const byUrl = new Map(saved.map((p) => [p.url, p]));
+  flags.forEach((flag, url) => {
+    let entry = dispatch.photoFingerprints.find((f) => f.url === url);
+    if (!entry) {
+      const p = byUrl.get(url);
+      // Legacy photo (no fingerprint) — the upload time is unknown, so leave it null rather than "now".
+      dispatch.photoFingerprints.push({ url, scope: p.scope, refId: p.refId, kind: p.kind, uploadedAt: null });
+      entry = dispatch.photoFingerprints[dispatch.photoFingerprints.length - 1];
+    }
+    entry.dupOf = flag.dupOf;
+    entry.dupReason = flag.reason;
+    entry.dupSource = 'ai-scan';
+  });
+  const scan = {
+    at: new Date(),
+    photosChecked: photos.length,
+    duplicatesFound: flags.size,
+    truncated: ordered.length > MAX_SCAN_PHOTOS,
+  };
+  dispatch.photoScan = scan;
+  await dispatch.save({ validateBeforeSave: false });
+
+  res.status(200).json({
+    success: true,
+    data: { ...scan, flagged: [...flags.entries()].map(([url, f]) => ({ url, ...f })) },
+  });
+});
+
+// Removes a photo that has been flagged as a duplicate (the only photos this endpoint will touch — it is not a
+// general "delete evidence" tool). Its URL is stripped from whichever list holds it. The Cloudinary asset is
+// deliberately left alone: a confirmed round's history snapshot may still reference the same URL.
+exports.removeBoxPhoto = asyncHandler(async (req, res, next) => {
+  const { url } = req.body;
+  if (!url) return next(new AppError('url is required', 400));
+  const dispatch = await DispatchRecord.findById(req.params.id).select('+photoFingerprints');
+  if (!dispatch) return next(new AppError('Dispatch not found', 404));
+  if (dispatch.dispatchedAt) return next(new AppError('This dispatch is already complete — photos can no longer be changed.', 409));
+
+  const entry = (dispatch.photoFingerprints || []).find((f) => f.url === url);
+  if (!entry?.dupOf) return next(new AppError('Only photos flagged as duplicates can be removed.', 409));
+
+  const strip = (list) => (list || []).filter((u) => u !== url);
+  dispatch.openBoxPhotos = strip(dispatch.openBoxPhotos);
+  dispatch.closeBoxPhotos = strip(dispatch.closeBoxPhotos);
+  (dispatch.items || []).forEach((it) => { it.openBoxPhotos = strip(it.openBoxPhotos); it.closeBoxPhotos = strip(it.closeBoxPhotos); });
+  (dispatch.kitDispatch || []).forEach((kd) => { kd.openBoxPhotos = strip(kd.openBoxPhotos); kd.closeBoxPhotos = strip(kd.closeBoxPhotos); });
+  dispatch.photoFingerprints = dispatch.photoFingerprints.filter((f) => f.url !== url);
   await dispatch.save({ validateBeforeSave: false });
   res.status(200).json({ success: true, data: dispatch });
 });

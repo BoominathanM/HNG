@@ -81,7 +81,12 @@ function taxSplitProductRows(rows = []) {
   return { taxable: r2(taxable), gst: r2(gst) };
 }
 
+// Transport Cost Scope ('CLIENT' | 'HNG'), set on Lead/Order creation. When HNG, HNG itself
+// bears the transport/courier cost — it must never inflate what the CLIENT's invoice/order
+// total shows as owed, however the courier charge was recorded (Paid or Unpaid). CLIENT (and
+// unset, for records that predate the scope field) keeps the original behaviour unchanged.
 function sumCourierCharges(rec = {}) {
+  if (rec.transportationBy === 'HNG') return 0;
   return r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
 }
 
@@ -92,6 +97,7 @@ function sumRoundOff(rec = {}) {
 // Courier charges recorded as Unpaid (explicit `courierPaid: false`) — they raise the total without
 // having been received. Entries saved before the Paid/Unpaid switch have no flag and count as Paid.
 function sumUnpaidCourier(rec = {}) {
+  if (rec.transportationBy === 'HNG') return 0;
   return r2((rec.paymentCollection || []).reduce((s, e) => s + (e?.courierPaid === false ? (Number(e?.courierCharge) || 0) : 0), 0));
 }
 

@@ -83,6 +83,8 @@ import {
   useDecideLrMismatchSalesMutation,
   useDecideInvoiceMismatchMutation,
   useLazyVerifyGstinQuery,
+  useLazyVerifyPincodeQuery,
+  useGetDispatchTransportNamesQuery,
 } from '../../store/api/apiSlice';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
@@ -764,7 +766,9 @@ function computeRecordBuckets(rec = {}) {
   const fwd = rec.forwardingCharge ? r2(Number(rec.forwardingChargeAmount) || 0) : 0;
   // Courier/shipping charge recorded via Record Payment In (Billing) — extra amount owed
   // on top of the order, entered per-payment rather than stored on the record itself.
-  const courier = r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+  // sumCourierCharges excludes it when Transport Cost Scope ('rec.transportationBy') is 'HNG' —
+  // HNG bears that cost itself, so it must not appear in the order's own total either.
+  const courier = sumCourierCharges(rec);
   // Round off recorded via Record Payment In (Billing) — a signed adjustment (Addition raises
   // the total, Discount lowers it), read off paymentCollection exactly like courier. Without it
   // Sales disagreed with Billing/Parties/Reports: an Unpaid round off looked fully paid here.
@@ -800,7 +804,7 @@ function computeCompositionGrandTotal(formData = {}, kitsData = []) {
   if ((formData.packagingIncludes || []).length > 0 && kitsData.length > 0) {
     const comp = computePersonalizedComposition(formData, kitsData);
     const fwd = formData.forwardingCharge ? r2(Number(formData.forwardingChargeAmount) || 0) : 0;
-    const courier = r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    const courier = sumCourierCharges(formData);
     const B = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const C = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
     return r2(comp.totalPersonalized + B + C + fwd + courier + sumRoundOff(formData));
@@ -2136,6 +2140,28 @@ function SpecFormList({ form, disabled = false }) {
   );
 }
 
+// Transport Name dropdown — shares the exact option pool of Dispatch Details' Transport Name
+// dropdown: the same persisted "transportName" SelectWithAdd options plus every name already
+// used on dispatches/leads/orders. A name added here via "+ Add" shows up in Dispatch too.
+function TransportNameSelect(props) {
+  const { data: transportNamesData } = useGetDispatchTransportNamesQuery();
+  const options = React.useMemo(
+    () => (transportNamesData?.data || []).map((n) => ({ value: n, label: n })),
+    [transportNamesData],
+  );
+  return (
+    <SelectWithAdd
+      field="transportName"
+      defaultOptions={options}
+      placeholder="Select or add a transport name"
+      showSearch
+      allowClear
+      style={{ width: '100%' }}
+      {...props}
+    />
+  );
+}
+
 function DeliveryPaymentFields({ disabled = false, showUpload = false }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const paymentTerms = Form.useWatch('paymentTerms');
@@ -2760,6 +2786,7 @@ export default function Sales() {
       branch: order.branch || '',
       deliveryBy: order.deliveryBy || '',
       transportationBy: order.transportationBy || '',
+      transportName: order.transportName || order.leadId?.transportName || undefined,
       forwardingCharge: order.forwardingCharge || false,
       forwardingChargeAmount: order.forwardingChargeAmount || 0,
       // Fall back to the linked negotiation/quotation/lead when the order itself was
@@ -2909,6 +2936,7 @@ export default function Sales() {
         branch: vals.branch || orderEditTarget.branch,
         deliveryBy: vals.deliveryBy || orderEditTarget.deliveryBy,
         transportationBy: vals.transportationBy || orderEditTarget.transportationBy,
+        transportName: vals.transportName || orderEditTarget.transportName,
         forwardingCharge: vals.forwardingCharge ?? orderEditTarget.forwardingCharge,
         forwardingChargeAmount: vals.forwardingChargeAmount ?? orderEditTarget.forwardingChargeAmount,
         kitDisplayUnit: editStore.kitDisplayUnit || orderEditTarget.kitDisplayUnit,
@@ -2981,6 +3009,7 @@ export default function Sales() {
           branch: updated.branch || undefined,
           deliveryBy: updated.deliveryBy || undefined,
           transportationBy: updated.transportationBy || undefined,
+          transportName: updated.transportName || undefined,
           forwardingCharge: updated.forwardingCharge != null ? updated.forwardingCharge : undefined,
           forwardingChargeAmount: updated.forwardingChargeAmount != null ? updated.forwardingChargeAmount : undefined,
           kitDisplayUnit: updated.kitDisplayUnit || undefined,
@@ -3454,6 +3483,8 @@ export default function Sales() {
   const [expandedPartyKeys, setExpandedPartyKeys] = useState([]);
   const [expandedForecastKeys, setExpandedForecastKeys] = useState([]);
   const [verifyGstinTrigger] = useLazyVerifyGstinQuery();
+  const [verifyPincodeTrigger] = useLazyVerifyPincodeQuery();
+  const pincodeLookupCache = React.useRef({});
 
   // Fetch GST details for order-detail view (uses backend proxy via gstverify.co.in)
   const fetchGstDetails = async (gstin) => {
@@ -3537,6 +3568,44 @@ export default function Sales() {
       enqueueSnackbar(typeof msg === 'string' ? msg : 'GST lookup failed.', { variant: 'error' });
     } finally {
       setGstAddApiLoading(false);
+    }
+  };
+
+  // Pincode → City/State/Location auto-fill (free India Post API, no key needed).
+  // Fires once a field holds exactly 6 digits; results are cached per-pincode
+  // for the session so re-typing the same value doesn't re-hit the API.
+  // `fields` names which form fields to fill from the lookup — only fields that
+  // actually exist on that form/card should be passed in (checked per call site
+  // below); District/Country have no corresponding inputs anywhere in this file,
+  // so only city/state/location are ever populated.
+  const lookupPincode = async (pincode, targetForm, fields = {}) => {
+    const { cityField = 'city', stateField = 'state', locationField } = fields;
+    const cleaned = (pincode || '').trim();
+    if (!/^[1-9][0-9]{5}$/.test(cleaned)) return;
+
+    const applyFill = (data) => {
+      if (!data) return;
+      const fillValues = {};
+      if (cityField && data.city) fillValues[cityField] = data.city;
+      if (stateField && data.state) fillValues[stateField] = data.state;
+      if (locationField && data.area) fillValues[locationField] = data.area;
+      if (Object.keys(fillValues).length) targetForm.setFieldsValue(fillValues);
+    };
+
+    if (Object.prototype.hasOwnProperty.call(pincodeLookupCache.current, cleaned)) {
+      applyFill(pincodeLookupCache.current[cleaned]);
+      return;
+    }
+
+    try {
+      const result = await verifyPincodeTrigger(cleaned).unwrap();
+      const data = result.data || result;
+      pincodeLookupCache.current[cleaned] = data;
+      applyFill(data);
+    } catch {
+      // Pincode auto-fill is a convenience, not a blocker — stay silent and let
+      // the user fill City/State/Location manually if the lookup fails or isn't found.
+      pincodeLookupCache.current[cleaned] = null;
     }
   };
 
@@ -4126,6 +4195,7 @@ export default function Sales() {
         pocDesignation: o.pocDesignation || o.leadId?.pocDesignation || '',
         deliveryBy: o.deliveryBy || o.leadId?.deliveryBy,
         transportationBy: o.transportationBy || o.leadId?.transportationBy,
+        transportName: o.transportName || o.leadId?.transportName,
         forwardingCharge: o.forwardingCharge ?? o.leadId?.forwardingCharge,
         forwardingChargeAmount: o.forwardingChargeAmount ?? o.leadId?.forwardingChargeAmount,
         paymentTerms: o.paymentTerms || o.leadId?.paymentTerms,
@@ -4389,6 +4459,7 @@ export default function Sales() {
     const city = values.city || formStore.city;
     const state = values.state || formStore.state;
     const pincode = values.pincode || formStore.pincode;
+    const billingLocation = values.billingLocation || formStore.billingLocation;
     const gstPhone = values.gstPhone || formStore.gstPhone;
     // Shipping address: when "Same as Billing Address" is checked, materialize the billing
     // values into the shipping fields so every downstream consumer (Order, Invoice, Dispatch)
@@ -4398,6 +4469,7 @@ export default function Sales() {
     const shippingCity = shippingSameAsBilling ? city : (values.shippingCity || formStore.shippingCity);
     const shippingState = shippingSameAsBilling ? state : (values.shippingState || formStore.shippingState);
     const shippingPincode = shippingSameAsBilling ? pincode : (values.shippingPincode || formStore.shippingPincode);
+    const shippingLocation = shippingSameAsBilling ? billingLocation : (values.shippingLocation || formStore.shippingLocation);
     // Extract Cloudinary URLs from file list fields
     const hotelLogoUrl = (values.hotelLogo || []).find(f => f.url)?.url || undefined;
     const paymentProofFiles = (values.paymentProofs || []).map(f => ({
@@ -4415,6 +4487,7 @@ export default function Sales() {
       city,
       state,
       pincode,
+      billingLocation,
       gstPhone,
       address: detailedAddress,
       shippingSameAsBilling,
@@ -4422,6 +4495,7 @@ export default function Sales() {
       shippingCity,
       shippingState,
       shippingPincode,
+      shippingLocation,
       locationCity: values.location,
       location: values.location,
       salesPerson: values.salesPerson,
@@ -4739,12 +4813,12 @@ export default function Sales() {
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
     const fieldsBySection = {
       hotel: ['category', 'hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'landlineNumber', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
-      billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber', 'gstPhone'],
-      shipping: ['shippingSameAsBilling', 'shippingAddress', 'shippingCity', 'shippingState', 'shippingPincode'],
+      billing: ['detailedAddress', 'city', 'state', 'pincode', 'billingLocation', 'billType', 'gstNumber', 'gstPhone'],
+      shipping: ['shippingSameAsBilling', 'shippingAddress', 'shippingCity', 'shippingState', 'shippingPincode', 'shippingLocation'],
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
       leadJourney: ['followUpStep'],
       personalization: ['productType', 'displayUnit', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitPrice', 'kitOverallQty', 'kitOrders', 'products'],
-      delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'forwardingChargeAmount', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'creditDueDate', 'paymentProofs', 'paymentCollection'],
+      delivery: ['orderDeliveryDate', 'transportName', 'splitDates', 'forwardingCharge', 'forwardingChargeAmount', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'creditDueDate', 'paymentProofs', 'paymentCollection'],
       products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitLamination', 'kitPrice', 'kitOverallQty', 'kitOrders', 'productType', 'packagingIncludes', 'packagingIncludesQty', 'displayUnitTab', 'displayUnit'],
     };
     try {
@@ -4881,6 +4955,7 @@ export default function Sales() {
       products: (lead.products || []).map(p => ({ ...p })),
       forwardingCharge: lead.forwardingCharge, forwardingChargeAmount: lead.forwardingChargeAmount || 0,
       deliveryBy: lead.deliveryBy, transportationBy: lead.transportationBy,
+      transportName: lead.transportName,
       paymentTerms: lead.paymentTerms,
       status: 'Initial', flowStep: 0,
       date: new Date().toISOString().split('T')[0],
@@ -4944,6 +5019,7 @@ export default function Sales() {
         forwardingChargeAmount: lead.forwardingChargeAmount || 0,
         deliveryBy: lead.deliveryBy,
         transportationBy: lead.transportationBy,
+        transportName: lead.transportName,
         paymentTerms: lead.paymentTerms,
         // Carry emergency / partial-delivery data so it isn't lost on the direct lead→negotiation path
         splitDates: lead.splitDates || [],
@@ -5032,6 +5108,7 @@ export default function Sales() {
         productType: lead.productType,
         deliveryBy: lead.deliveryBy,
         transportationBy: lead.transportationBy,
+        transportName: lead.transportName,
         forwardingCharge: lead.forwardingCharge,
         forwardingChargeAmount: lead.forwardingChargeAmount || 0,
         leadId: lead._id || lead.key,
@@ -5224,6 +5301,7 @@ export default function Sales() {
           forwardingChargeAmount: values.forwardingChargeAmount ?? src.forwardingChargeAmount ?? 0,
           deliveryBy: values.deliveryBy || src.deliveryBy,
           transportationBy: values.transportationBy || src.transportationBy,
+          transportName: values.transportName || src.transportName,
           paymentTerms: values.paymentTerms || src.paymentTerms,
           // Kit fields carried from the form (user's edits) with fallback to the lead
           productType: pickKitField('productType'),
@@ -5383,10 +5461,12 @@ export default function Sales() {
       city: undefined,
       state: undefined,
       pincode: undefined,
+      billingLocation: undefined,
       shippingAddress: undefined,
       shippingCity: undefined,
       shippingState: undefined,
       shippingPincode: undefined,
+      shippingLocation: undefined,
       shippingSameAsBilling: true,
       billType: 'GST',
       gstPhone: undefined,
@@ -5441,12 +5521,17 @@ export default function Sales() {
           ...(d.city ? { city: d.city } : {}),
           ...(d.state ? { state: d.state } : {}),
           ...(d.pincode ? { pincode: d.pincode } : {}),
+          ...(d.billingLocation ? { billingLocation: d.billingLocation } : {}),
           // Shipping address
           ...(d.shippingAddress ? { shippingAddress: d.shippingAddress } : {}),
           ...(d.shippingCity ? { shippingCity: d.shippingCity } : {}),
           ...(d.shippingState ? { shippingState: d.shippingState } : {}),
           ...(d.shippingPincode ? { shippingPincode: d.shippingPincode } : {}),
+          ...(d.shippingLocation ? { shippingLocation: d.shippingLocation } : {}),
           ...(d.shippingSameAsBilling != null ? { shippingSameAsBilling: d.shippingSameAsBilling } : {}),
+          // Transport Name — suggest the one this hotel used last time, but never overwrite a
+          // name the rep already picked on this form.
+          ...(d.transportName && !leadForm.getFieldValue('transportName') ? { transportName: d.transportName } : {}),
           // Populate logo from stored Cloudinary URL
           ...(d.hotelLogoUrl ? {
             hotelLogo: [{ uid: '-1', name: 'hotel-logo', status: 'done', url: d.hotelLogoUrl }],
@@ -5582,6 +5667,7 @@ export default function Sales() {
       forwardingChargeAmount: q.forwardingChargeAmount || 0,
       deliveryBy: q.deliveryBy,
       transportationBy: q.transportationBy,
+      transportName: q.transportName || qLead?.transportName,
       // Carry the tentative delivery date through so the order detail can show it
       expectedDeliveryDate: q.orderDeliveryDate || q.expectedDeliveryDate || undefined,
       orderCategory: qLead?.leadType === 'SAMPLE' ? 'SAMPLE' : (q.orderCategory || 'ORDER'),
@@ -5681,6 +5767,7 @@ export default function Sales() {
         productType: order.productType,
         deliveryBy: order.deliveryBy,
         transportationBy: order.transportationBy,
+        transportName: order.transportName,
         forwardingCharge: order.forwardingCharge,
         forwardingChargeAmount: order.forwardingChargeAmount || 0,
         expectedDeliveryDate: order.expectedDeliveryDate,
@@ -5780,6 +5867,7 @@ export default function Sales() {
         productType: order.productType,
         deliveryBy: order.deliveryBy,
         transportationBy: order.transportationBy,
+        transportName: order.transportName,
         forwardingCharge: order.forwardingCharge,
         forwardingChargeAmount: order.forwardingChargeAmount || 0,
         orderDeliveryDate: order.expectedDeliveryDate,
@@ -5842,6 +5930,7 @@ export default function Sales() {
         productType: order.productType,
         deliveryBy: order.deliveryBy,
         transportationBy: order.transportationBy,
+        transportName: order.transportName,
         forwardingCharge: order.forwardingCharge,
         forwardingChargeAmount: order.forwardingChargeAmount || 0,
         expectedDeliveryDate: order.expectedDeliveryDate,
@@ -7424,7 +7513,8 @@ export default function Sales() {
             <div style={{ padding: '14px 16px', background: 'rgba(250,140,22,0.06)', borderRadius: 10, border: '1px solid rgba(250,140,22,0.15)', height: '100%' }}>
               <Text type="secondary" style={{ fontSize: 11, fontWeight: 700, display: 'block', marginBottom: 10, letterSpacing: 0.5 }}>DELIVERY INFO</Text>
               <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><Text type="secondary" style={{ fontSize: 12 }}>Delivery By</Text><Text strong>{rec.deliveryBy || '—'}</Text></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}><Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text><Text strong>{rec.transportationBy || '—'}</Text></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}><Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text><Text strong>{rec.transportationBy || '—'}</Text></div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}><Text type="secondary" style={{ fontSize: 12 }}>Transport Name</Text><Text strong>{rec.transportName || '—'}</Text></div>
               {(rec.orderDeliveryDate || rec.expectedDelivery) && (
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
                   <Text type="secondary" style={{ fontSize: 12 }}>Tentative Date</Text>
@@ -7830,6 +7920,7 @@ export default function Sales() {
                     kitOrders: qKitOrders,
                     kitPrice: q.kitPrice || qLead?.kitPrice,
                     kitOverallQty: q.kitOverallQty || qLead?.kitOverallQty,
+                    transportName: q.transportName || qLead?.transportName,
                   };
                   return <DetailDeliveryPayment rec={qEnriched} grandTotal={computeCompositionGrandTotal(qEnriched, kits) || computeRecordGrandTotal(qEnriched)} />;
                 })()}
@@ -8447,6 +8538,7 @@ export default function Sales() {
                     kitOrders: nKitOrders,
                     kitPrice: n.kitPrice || nLead?.kitPrice,
                     kitOverallQty: n.kitOverallQty || nLead?.kitOverallQty,
+                    transportName: n.transportName || nLead?.transportName,
                   };
                   return <DetailDeliveryPayment rec={nEnriched} grandTotal={computeCompositionGrandTotal(nEnriched, kits) || computeRecordGrandTotal(nEnriched)} />;
                 })()}
@@ -8651,6 +8743,7 @@ export default function Sales() {
         location: base.location || full.location || lead.location || lead.locationCity,
         deliveryBy: base.deliveryBy || full.deliveryBy || lead.deliveryBy,
         transportationBy: base.transportationBy || full.transportationBy || lead.transportationBy,
+        transportName: base.transportName || full.transportName || lead.transportName,
         forwardingCharge: base.forwardingCharge ?? full.forwardingCharge ?? lead.forwardingCharge,
         paymentTerms: base.paymentTerms || full.paymentTerms || lead.paymentTerms,
         // Expected delivery: prefer the order's own date, else fall back to the tentative
@@ -9832,7 +9925,7 @@ export default function Sales() {
                   <Col xs={24} sm={12}><Form.Item label="GST Number" name="gstNumber"><Input placeholder="GSTIN" disabled={isSalesExec} /></Form.Item></Col>
                   <Col xs={24} sm={12}><Form.Item label="City" name="city"><Input placeholder="City" disabled={isSalesExec} /></Form.Item></Col>
                   <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" disabled={isSalesExec} /></Form.Item></Col>
-                  <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={12}><Form.Item label="Pincode" name="pincode"><Input placeholder="Pincode" disabled={isSalesExec} onChange={(e) => lookupPincode(e.target.value, orderEditForm, { locationField: 'location' })} /></Form.Item></Col>
                   <Col xs={24}><Form.Item label="Detailed Address" name="detailedAddress"><Input.TextArea rows={2} placeholder="Street / detailed address" disabled={isSalesExec} /></Form.Item></Col>
                   <Col xs={24} sm={8}><Form.Item label="Alt. Contact Name" name="alternativeName"><Input placeholder="Alternative contact name" disabled={isSalesExec} /></Form.Item></Col>
                   <Col xs={24} sm={8}><Form.Item label="Alt. Contact Role" name="alternativeRole"><Input placeholder="Role / designation" disabled={isSalesExec} /></Form.Item></Col>
@@ -10529,7 +10622,11 @@ export default function Sales() {
               {/* ── Delivery & Payment ── */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CalendarOutlined style={{ color: '#fa8c16' }} /><span>Delivery & Payment</span></Space>}>
-                <Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}><DatePicker style={{ width: '100%' }} /></Form.Item>
+                <Row gutter={[12, 0]}>
+                  <Col xs={24} sm={12}><Form.Item label="Expected Delivery Date" name="expectedDelivery" rules={[{ required: true, message: 'Select delivery date' }]}><DatePicker style={{ width: '100%' }} /></Form.Item></Col>
+                  {/* Planned transport — pre-selected in Dispatch Details' Transport Name dropdown */}
+                  <Col xs={24} sm={12}><Form.Item label="Transport Name" name="transportName"><TransportNameSelect /></Form.Item></Col>
+                </Row>
                 <Row gutter={[12, 0]}>
                   <Col xs={24} sm={8}><Form.Item label="Delivery By" name="deliveryBy"><SelectWithAdd field="deliveryBy" defaultOptions={[{ value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" /></Form.Item></Col>
                   <Col xs={24} sm={8}><Form.Item label="Transport Cost Scope" name="transportationBy"><SelectWithAdd field="transportationBy" defaultOptions={[{ value: 'CLIENT', label: 'Client' }, { value: 'HNG', label: 'HNG' }]} placeholder="Select or Add" /></Form.Item></Col>
@@ -11213,7 +11310,7 @@ export default function Sales() {
                     <Col xs={24} sm={12}><Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true, message: 'Detailed Address is required' }]}><Input.TextArea rows={1} /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="City" name="city"><Input /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="State" name="state"><Input /></Form.Item></Col>
-                    <Col xs={24} sm={8}><Form.Item label="Pincode" name="pincode"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="Pincode" name="pincode"><Input onChange={(e) => lookupPincode(e.target.value, quotationForm, { locationField: 'location' })} /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="Alt. Contact Name" name="alternativeName"><Input placeholder="Alternative contact" /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="Alt. Contact Role" name="alternativeRole"><Input placeholder="Role / designation" /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="Alt. Phone" name="alternativePhone"><Input placeholder="Alt. phone number" /></Form.Item></Col>
@@ -11938,7 +12035,7 @@ export default function Sales() {
                     <Col xs={24} sm={12}><Form.Item label="Detailed Address" name="detailedAddress" rules={[{ required: true }]}><Input.TextArea rows={1} /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="City" name="city"><Input /></Form.Item></Col>
                     <Col xs={24} sm={8}><Form.Item label="State" name="state"><Input /></Form.Item></Col>
-                    <Col xs={24} sm={8}><Form.Item label="Pincode" name="pincode"><Input /></Form.Item></Col>
+                    <Col xs={24} sm={8}><Form.Item label="Pincode" name="pincode"><Input onChange={(e) => lookupPincode(e.target.value, orderForm, { locationField: 'location' })} /></Form.Item></Col>
                   </Row>
                 </Card>
 
@@ -12705,6 +12802,7 @@ export default function Sales() {
                         <Col xs={24} sm={12}><InfoRow label="City" value={record.city} /></Col>
                         <Col xs={24} sm={12}><InfoRow label="State" value={record.state} /></Col>
                         <Col xs={24} sm={12}><InfoRow label="Pincode" value={record.pincode} /></Col>
+                        <Col xs={24} sm={12}><InfoRow label="Location" value={record.billingLocation} /></Col>
                         <Col xs={24}><InfoRow label="Detailed Address" value={record.detailedAddress || record.address} /></Col>
                       </Row>
                     ) : (
@@ -12714,9 +12812,10 @@ export default function Sales() {
                         <Col xs={24} sm={12}><Form.Item label="State" name="state"><Input placeholder="State" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
                         <Col xs={24} sm={12}>
                           <Form.Item label="Pincode" name="pincode" rules={[{ pattern: /^[0-9]*$/, message: 'Pincode must contain only numbers' }]}>
-                            <Input placeholder="Pincode" maxLength={6} inputMode="numeric" disabled={lockAutoFilledHotelFields} />
+                            <Input placeholder="Pincode" maxLength={6} inputMode="numeric" disabled={lockAutoFilledHotelFields} onChange={(e) => lookupPincode(e.target.value, leadForm, { locationField: 'billingLocation' })} />
                           </Form.Item>
                         </Col>
+                        <Col xs={24} sm={12}><Form.Item label="Location" name="billingLocation"><Input placeholder="Area / Locality" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
                         {watchedLeadType !== 'SAMPLE' && (
                           <Col xs={24} sm={12}><Form.Item label="Bill Type" name="billType"><Select placeholder="Select Bill Type" allowClear disabled={lockAutoFilledHotelFields}><Option value="GST">GST Bill</Option><Option value="NON_GST">Without GST</Option></Select></Form.Item></Col>
                         )}
@@ -12872,6 +12971,7 @@ export default function Sales() {
                           <Col xs={24} sm={12}><InfoRow label="City" value={record.shippingCity} /></Col>
                           <Col xs={24} sm={12}><InfoRow label="State" value={record.shippingState} /></Col>
                           <Col xs={24} sm={12}><InfoRow label="Pincode" value={record.shippingPincode} /></Col>
+                          <Col xs={24} sm={12}><InfoRow label="Location" value={record.shippingLocation} /></Col>
                           <Col xs={24}><InfoRow label="Detailed Address" value={record.shippingAddress} /></Col>
                         </Row>
                       )
@@ -12889,9 +12989,10 @@ export default function Sales() {
                             <Col xs={24} sm={12}><Form.Item label="State" name="shippingState"><Input placeholder="State" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
                             <Col xs={24} sm={12}>
                               <Form.Item label="Pincode" name="shippingPincode" rules={[{ pattern: /^[0-9]*$/, message: 'Pincode must contain only numbers' }]}>
-                                <Input placeholder="Pincode" maxLength={6} inputMode="numeric" disabled={lockAutoFilledHotelFields} />
+                                <Input placeholder="Pincode" maxLength={6} inputMode="numeric" disabled={lockAutoFilledHotelFields} onChange={(e) => lookupPincode(e.target.value, leadForm, { cityField: 'shippingCity', stateField: 'shippingState', locationField: 'shippingLocation' })} />
                               </Form.Item>
                             </Col>
+                            <Col xs={24} sm={12}><Form.Item label="Location" name="shippingLocation"><Input placeholder="Area / Locality" disabled={lockAutoFilledHotelFields} /></Form.Item></Col>
                           </>
                         )}
                       </Row>
@@ -14850,9 +14951,13 @@ export default function Sales() {
                             <Text type="secondary" style={{ fontSize: 12 }}>Delivery By</Text>
                             <Text strong>{record.deliveryBy || '—'}</Text>
                           </div>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                             <Text type="secondary" style={{ fontSize: 12 }}>Transport Cost Scope</Text>
                             <Text strong>{record.transportationBy || '—'}</Text>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+                            <Text type="secondary" style={{ fontSize: 12 }}>Transport Name</Text>
+                            <Text strong>{record.transportName || '—'}</Text>
                           </div>
                           {record.orderDeliveryDate && (
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
@@ -15096,11 +15201,21 @@ export default function Sales() {
                     </div>
                   )}
 
-                  {/* Tentative Date */}
+                  {/* Tentative Date + Transport Name (mandatory — pre-selected later in the
+                      Dispatch Details page's Transport Name dropdown for this order) */}
                   <Row gutter={12} style={{ marginBottom: 4 }}>
                     <Col xs={24} sm={12}>
                       <Form.Item label="Tentative Date" name="orderDeliveryDate">
                         <DatePicker style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
+                    <Col xs={24} sm={12}>
+                      <Form.Item
+                        label="Transport Name"
+                        name="transportName"
+                        rules={[{ required: true, whitespace: true, message: 'Select or add a transport name' }]}
+                      >
+                        <TransportNameSelect />
                       </Form.Item>
                     </Col>
                   </Row>

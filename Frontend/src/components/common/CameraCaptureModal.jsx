@@ -4,26 +4,26 @@ import { CameraOutlined, RedoOutlined, CheckOutlined, SwapOutlined, LoadingOutli
 
 /**
  * CameraCaptureModal — opens the device webcam / phone camera via getUserMedia,
- * lets the user snap a still, and hands the parent a JPEG File. Used anywhere a
- * "Scan" button should capture a document with the camera instead of opening the
- * OS file-picker (which is all the bare `capture` attribute does on desktop).
+ * lets the user snap a still, and hands the parent a JPEG File. Used anywhere an
+ * "Open Camera" button should capture a document with the camera instead of opening
+ * the OS file-picker (which is all the bare `capture` attribute does on desktop).
  *
  * Props:
  *   open        — controls visibility
  *   onClose()   — called when the user dismisses without using a photo
  *   onCapture(file: File) — called with the captured JPEG once the user confirms
- *   title       — modal title (default "Scan Document")
+ *   title       — modal title (default "Capture Document")
  *   busy        — parent-owned loading flag (e.g. while uploading / AI-parsing);
  *                 keeps the modal open with a spinner over the confirm action
- *   fileNamePrefix — basename for the produced File (default "scan")
+ *   fileNamePrefix — basename for the produced File (default "camera")
  */
 export default function CameraCaptureModal({
   open,
   onClose,
   onCapture,
-  title = 'Scan Document',
+  title = 'Capture Document',
   busy = false,
-  fileNamePrefix = 'scan',
+  fileNamePrefix = 'camera',
 }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);

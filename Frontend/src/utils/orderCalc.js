@@ -63,7 +63,11 @@ export function sumProductRows(rows = []) {
 
 // Sum of courier/shipping charges recorded via payments (Record Payment In) — an extra
 // amount owed on top of the order, entered per-payment rather than stored on the record itself.
+// Transport Cost Scope ('CLIENT' | 'HNG', set on Lead/Order creation): when HNG, HNG itself bears
+// the transport cost, so it must never inflate what the CLIENT's invoice/total shows as owed,
+// however it was recorded. CLIENT (and unset, for records predating the scope field) is unchanged.
 export function sumCourierCharges(rec = {}) {
+  if (rec.transportationBy === 'HNG') return 0;
   return r2((rec.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
 }
 

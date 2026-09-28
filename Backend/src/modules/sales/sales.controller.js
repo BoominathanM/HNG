@@ -516,6 +516,7 @@ exports.convertLeadToNegotiation = asyncHandler(async (req, res, next) => {
     pincode: lead.pincode,
     deliveryBy: lead.deliveryBy,
     transportationBy: lead.transportationBy,
+    transportName: lead.transportName,
     forwardingCharge: lead.forwardingCharge,
     forwardingChargeAmount: lead.forwardingChargeAmount || 0,
     paymentTerms: lead.paymentTerms,
@@ -1084,6 +1085,7 @@ exports.convertToOrder = asyncHandler(async (req, res, next) => {
     shippingPincode: resolveField(negObj.shippingPincode, lead?.shippingPincode),
     deliveryBy: resolveField(negObj.deliveryBy, lead?.deliveryBy),
     transportationBy: resolveField(negObj.transportationBy, lead?.transportationBy),
+    transportName: resolveField(negObj.transportName, lead?.transportName),
     forwardingCharge: resolveField(negObj.forwardingCharge, lead?.forwardingCharge),
     forwardingChargeAmount: resolveField(negObj.forwardingChargeAmount, lead?.forwardingChargeAmount, 0),
     paymentTerms: resolveField(negObj.paymentTerms, lead?.paymentTerms),
@@ -1267,7 +1269,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 20;
   const [orders, total] = await Promise.all([
-    Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').populate('leadId', 'leadType hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rowsInHotel generalOccupancy branch pocDesignation deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders packagingIncludes packagingIncludesQty kitSticker kitLogo kitPrinting kitPrice kitOverallQty productType products items splitDates isEmergency isUrgent status paymentCollection paidAmount advancePaid').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    Order.find(filter).populate('clientPartyId', 'name phone').populate('assignedTo', 'fullName').populate('leadId', 'leadType hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rowsInHotel generalOccupancy branch pocDesignation deliveryBy transportationBy transportName forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders packagingIncludes packagingIncludesQty kitSticker kitLogo kitPrinting kitPrice kitOverallQty productType products items splitDates isEmergency isUrgent status paymentCollection paidAmount advancePaid').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     Order.countDocuments(filter),
   ]);
   const data = await attachDispatchStage(orders);
@@ -1278,7 +1280,7 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
   const order = await Order.findOne({ _id: req.params.id, deletedAt: null })
     .populate('clientPartyId')
     .populate('assignedTo', 'fullName email')
-    .populate('leadId', 'leadCode hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rowsInHotel generalOccupancy branch pocDesignation deliveryBy transportationBy forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders packagingIncludes packagingIncludesQty products items splitDates isEmergency isUrgent leadType status paymentCollection paidAmount advancePaid')
+    .populate('leadId', 'leadCode hotelName phone email contactPerson alternativeName alternativeRole alternativePhone location locationCity billingName gstNumber gstPercent salesPerson billType detailedAddress city state pincode destination hotelType rowsInHotel generalOccupancy branch pocDesignation deliveryBy transportationBy transportName forwardingCharge forwardingChargeAmount paymentTerms orderDeliveryDate paymentProofs hotelLogoUrl displayUnit displayUnitTab kitDisplayUnit kitSize selectedKit selectedKits kitOrders packagingIncludes packagingIncludesQty products items splitDates isEmergency isUrgent leadType status paymentCollection paidAmount advancePaid')
     .populate('negotiationId', 'negCode')
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));

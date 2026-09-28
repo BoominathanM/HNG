@@ -186,10 +186,6 @@ export const statusPill = {
 // the order's live payment status reads identically wherever it's shown.
 export const paymentStatusColor = { Paid: 'success', Partial: 'orange', Pending: 'warning' };
 
-export const FLOW_STAGES = [
-  'Order Received', 'Sent To Design', 'Client Approved', 'Printing', 'Stock Received', 'Task Assigned',
-];
-
 export const designerCredentials = {
   username: 'designops@healnglow.com',
   password: 'HNG@Design2024',
@@ -216,16 +212,6 @@ export const canAssignTaskFromChecks = (checks) => {
   if (!checks) return false;
   return checks.pdfReady && checks.designSent && checks.clientApproved &&
     checks.printingStarted && checks.stockReceived && checks.operationApproved;
-};
-
-export const getFlowStep = (order) => {
-  const r = order.readiness || {};
-  if (order.taskStatus === 'Full') return 5;
-  if (r.stockReceived && r.operationApproved) return 4;
-  if (order.printingStatus === 'In Process' || order.printingStatus === 'Printing') return 3;
-  if (r.clientApproved) return 2;
-  if (r.designSent) return 1;
-  return 0;
 };
 
 // Returns true when the item's physical packaging is frosted/ziplock/pouch —

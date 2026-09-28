@@ -892,6 +892,46 @@ export default function Tasks() {
     return map;
   }, [suggestedList, ordersList, kitPackingTasksByOrder]);
 
+  // ── Today's Checklist product filter ─────────────────────────────────────
+  // Lets the hotel-wise checklist below be narrowed down to just one product, without
+  // a separate tab/view — pick a product and displayedHotelGroups (below) drops every
+  // hotel/order that isn't waiting on it. Left cleared, everything shows exactly as it
+  // did before this filter existed.
+  const productOptions = useMemo(() => {
+    const seen = new Set();
+    const options = [];
+    suggestedList.forEach((s) => {
+      if (!s.product || s.__kitPlaceholder) return;
+      const key = s.product.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      options.push({ value: s.product, label: s.product });
+    });
+    return options.sort((a, b) => a.label.localeCompare(b.label));
+  }, [suggestedList]);
+
+  const [selectedProduct, setSelectedProduct] = useState(null);
+
+  // hotelGroups narrowed to the selected product — same { hotelName: { orderCode: [items] } }
+  // shape, so every existing hotel-card / order-drilldown render below works unchanged.
+  // Kit-packing placeholder entries (see hotelGroups above) carry no s.product of their
+  // own, so a product filter always drops them; with no product selected this is just
+  // hotelGroups itself, unfiltered.
+  const displayedHotelGroups = useMemo(() => {
+    if (!selectedProduct) return hotelGroups;
+    const wanted = selectedProduct.toLowerCase();
+    const map = {};
+    Object.entries(hotelGroups).forEach(([hotel, orders]) => {
+      Object.entries(orders).forEach(([orderCode, items]) => {
+        const matched = items.filter((s) => !s.__kitPlaceholder && (s.product || '').toLowerCase() === wanted);
+        if (matched.length === 0) return;
+        if (!map[hotel]) map[hotel] = {};
+        map[hotel][orderCode] = matched;
+      });
+    });
+    return map;
+  }, [hotelGroups, selectedProduct]);
+
   // Order status lookup (orderId -> status) — used below to catch case 3: a product
   // whose sibling(s) already carried the order to Dispatch Ready while this one was left
   // with zero task coverage. Reads the same ordersList the New Task modal's Order →
@@ -2036,29 +2076,68 @@ export default function Tasks() {
             ),
             children: (
               <div>
-                <Alert
-                  type="info"
-                  showIcon
-                  icon={<BulbOutlined />}
-                  message={(
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                      <span>Today's Checklist — Hotel-wise Production</span>
-                      {suggestedList.length > 0 && (
-                        <Button
-                          size="small"
-                          icon={<RobotOutlined />}
-                          loading={taskInsightLoading}
-                          onClick={handleGetTaskInsight}
-                          style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', color: '#fff' }}
-                        >
-                          {taskInsightLoading ? 'Analysing...' : 'Get AI Insight'}
-                        </Button>
+                {/* Today's Checklist intro + Alternative Suggestions product filter, side by
+                    side (50/50 on desktop, stacked on narrow screens). Purely a layout change —
+                    neither card's own content/behaviour is affected. */}
+                <Row gutter={[16, 16]} align="stretch" style={{ marginBottom: 16 }}>
+                  <Col xs={24} md={12} style={{ display: 'flex' }}>
+                    <Alert
+                      type="info"
+                      showIcon
+                      icon={<BulbOutlined />}
+                      message={(
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                          <span>Today's Checklist — Hotel-wise Production</span>
+                          {suggestedList.length > 0 && (
+                            <Button
+                              size="small"
+                              icon={<RobotOutlined />}
+                              loading={taskInsightLoading}
+                              onClick={handleGetTaskInsight}
+                              style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', color: '#fff' }}
+                            >
+                              {taskInsightLoading ? 'Analysing...' : 'Get AI Insight'}
+                            </Button>
+                          )}
+                        </div>
                       )}
+                      description="Order products grouped by hotel — readiness here is based on inventory stock. Emergency orders are prioritized first, then oldest-placed orders. Stock shortages are marked in red."
+                      style={{ borderRadius: 8, width: '100%' }}
+                    />
+                  </Col>
+                  <Col xs={24} md={12} style={{ display: 'flex' }}>
+                    {/* Alternative Suggestions — narrows the hotel-wise list below down to just
+                        the hotels/orders currently waiting on the selected product. Clearing it
+                        (or leaving it unset) shows everything, exactly as before this filter
+                        existed. */}
+                    <div
+                      style={{
+                        display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 14,
+                        width: '100%', padding: '14px 20px', borderRadius: 12,
+                        background: isDark ? 'linear-gradient(135deg,#3a1530,#1E1E2E)' : 'linear-gradient(135deg,#fff0f7,#ffe4f0)',
+                        border: '1.5px solid #B11E6A55',
+                        boxShadow: '0 2px 12px rgba(177,30,106,0.10)',
+                      }}
+                    >
+                      <Space size={8}>
+                        <SwapOutlined style={{ color: '#B11E6A', fontSize: 20 }} />
+                        <Text strong style={{ fontSize: 16, color: '#B11E6A' }}>Alternative Suggestions</Text>
+                      </Space>
+                      <Select
+                        showSearch
+                        allowClear
+                        size="large"
+                        optionFilterProp="label"
+                        placeholder="Filter by product"
+                        value={selectedProduct}
+                        onChange={(v) => { setSelectedProduct(v || null); setSelectedHotel(null); }}
+                        options={productOptions}
+                        style={{ flex: '1 1 220px', minWidth: 200 }}
+                        notFoundContent={productOptions.length ? 'No match' : 'No products pending right now'}
+                      />
                     </div>
-                  )}
-                  description="Order products grouped by hotel — readiness here is based on inventory stock. Emergency orders are prioritized first, then oldest-placed orders. Stock shortages are marked in red."
-                  style={{ marginBottom: 16, borderRadius: 8 }}
-                />
+                  </Col>
+                </Row>
 
                 {taskInsight && (
                   <div style={{ marginBottom: 16, padding: '16px 20px', borderRadius: 12, background: 'linear-gradient(135deg,#B11E6A18,#D85C9E10)', border: '1.5px solid #B11E6A44' }}>
@@ -2083,6 +2162,11 @@ export default function Tasks() {
                     <BulbOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
                     <Text type="secondary">No products awaiting task assignment</Text>
                   </div>
+                ) : selectedProduct && Object.keys(displayedHotelGroups).length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '48px 0' }}>
+                    <BulbOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
+                    <Text type="secondary">No pending orders currently need "{selectedProduct}"</Text>
+                  </div>
                 ) : selectedHotel ? (
                   /* ── Order-wise view for selected hotel ── */
                   <div>
@@ -2090,7 +2174,7 @@ export default function Tasks() {
                       <Button size="small" onClick={() => setSelectedHotel(null)}>← Back to Hotels</Button>
                       <Title level={5} style={{ margin: 0, color: textColor }}>{selectedHotel}</Title>
                     </div>
-                    {Object.entries(hotelGroups[selectedHotel] || {}).map(([orderCode, items]) => (
+                    {Object.entries(displayedHotelGroups[selectedHotel] || {}).map(([orderCode, items]) => (
                       <div key={orderCode} style={{ marginBottom: 24 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
                           <ShoppingOutlined style={{ color: '#B11E6A' }} />
@@ -2289,7 +2373,7 @@ export default function Tasks() {
                 ) : (
                   /* ── Hotel cards view ── */
                   <Row gutter={[24, 24]} align="stretch">
-                    {Object.entries(hotelGroups).map(([hotel, orders]) => {
+                    {Object.entries(displayedHotelGroups).map(([hotel, orders]) => {
                       const allItems = Object.values(orders).flat();
                       // Kit-packing placeholder entries (see hotelGroups above) aren't real
                       // pending products — exclude them from the item/stock counts below, but

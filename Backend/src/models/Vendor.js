@@ -20,6 +20,7 @@ const vendorSchema = new mongoose.Schema({
   email: { type: String, lowercase: true },
   taxId: String,
   address: String,
+  notes: String,
   bankDetails: bankDetailsSchema,
   vendorType: { type: String, enum: ['raw_material', 'printing'], default: 'raw_material' },
   supplierType: String,

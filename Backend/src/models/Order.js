@@ -235,6 +235,9 @@ const orderSchema = new mongoose.Schema({
   // Delivery routing (copied from the originating lead/negotiation at conversion).
   deliveryBy: String,
   transportationBy: String,
+  // Planned transport / carrier from the Lead — Dispatch Details pre-selects it in its
+  // Transport Name dropdown (the dispatcher can still pick another or add a new one).
+  transportName: String,
   forwardingCharge: { type: Boolean, default: false },
   deliveryType: { type: String, enum: ['Full', 'Partial', ''], default: '' },
   // Partial-delivery tracking: partial qty processed now, balance as a follow-on entry (same order ID).

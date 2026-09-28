@@ -59,6 +59,19 @@ const { Option } = Select;
 // Round money to 2 decimals (strip float noise) without collapsing genuine paise to whole rupees.
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
+// Standard Indian GST slabs shown in the pricing-edit dropdowns.
+const GST_RATE_SLABS = [0, 5, 12, 18, 28];
+// Slab list for one GST field: keeps the "can't drop below original" floor the old
+// InputNumber enforced (min={origGst}), and keeps the row's original/current value selectable
+// even when it's a non-standard rate not in GST_RATE_SLABS.
+const gstRateOptions = (origGst, currentGst) => {
+  const floor = Number(origGst) || 0;
+  const set = new Set(GST_RATE_SLABS.filter((v) => v >= floor));
+  set.add(floor);
+  if (currentGst != null) set.add(Number(currentGst) || 0);
+  return Array.from(set).sort((a, b) => a - b).map((v) => ({ value: v, label: `${v}%` }));
+};
+
 // Mirror of Sales/index.jsx itemsToProducts — converts flat items[] to products[] shape.
 // Needed when a lead/order only has items (older records) rather than the products[] array.
 const itemsToProducts = (items = []) =>
@@ -107,7 +120,9 @@ function computeCompositionGrandTotal(formData = {}, kitsData = []) {
   if ((formData.packagingIncludes || []).length > 0 && kitsData.length > 0) {
     const comp = computePersonalizedComposition(formData, kitsData);
     const fwd = formData.forwardingCharge ? r2(Number(formData.forwardingChargeAmount) || 0) : 0;
-    const courier = r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    // Excluded when Transport Cost Scope (formData.transportationBy) is 'HNG' — HNG bears that
+    // cost itself, so it must not raise what the client's invoice/quotation total shows.
+    const courier = formData.transportationBy === 'HNG' ? 0 : r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const roundOffTotal = r2((formData.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
     const separateKit = comp.separateKits.reduce((s, sk) => s + (sk.remainingValue || 0), 0);
     const separateProduct = comp.sepProdsList.reduce((s, sp) => s + (sp.remainingValue || 0), 0);
@@ -155,10 +170,16 @@ const sumPaid = (...sources) => {
 //    no Paid round off alongside (a Paid round off is money received in this save, so the Amount it
 //    is measured against stays). `courierPaid` defaults to Paid so callers that don't send it behave
 //    exactly as before the courier switch existed.
+//  - `courierBillable` (default true): false when the invoice/quotation/order's Transport Cost
+//    Scope is 'HNG' — HNG bears that cost itself, so the courier charge must not touch the
+//    client's invoice total or be counted as money received, whatever the Paid/Unpaid switch
+//    says. The amount is still returned unchanged for CLIENT scope (or when unset), matching
+//    the pre-existing behaviour exactly.
 // Single source of truth for the drawer preview, the footer and the saved entry.
-const resolvePaymentAmounts = ({ amount, courier, roundOff, roundOffPaid, courierPaid = true }) => {
+const resolvePaymentAmounts = ({ amount, courier, roundOff, roundOffPaid, courierPaid = true, courierBillable = true }) => {
+  const billableCourier = courierBillable ? courier : 0;
   const unpaidRoundOff = roundOff !== 0 && !roundOffPaid;
-  const unpaidCourier = courier !== 0 && !courierPaid;
+  const unpaidCourier = billableCourier !== 0 && !courierPaid;
   const paidRoundOff = roundOff !== 0 && !!roundOffPaid;
   const amountIgnored = unpaidRoundOff || (unpaidCourier && !paidRoundOff);
   const baseAmount = amountIgnored ? 0 : (Number(amount) || 0);
@@ -167,7 +188,7 @@ const resolvePaymentAmounts = ({ amount, courier, roundOff, roundOffPaid, courie
     unpaidCourier,
     amountIgnored,
     baseAmount,
-    net: r2(baseAmount + (courierPaid ? courier : 0) + (roundOffPaid ? roundOff : 0)),
+    net: r2(baseAmount + (courierPaid ? billableCourier : 0) + (roundOffPaid ? roundOff : 0)),
   };
 };
 
@@ -314,6 +335,10 @@ export default function Billing() {
     const fwdSrc = fullOrder || linkedLead || linkedQuotation || quotationLead;
     const fwdEnabled = !!(fwdSrc?.forwardingCharge ?? linkedLead?.forwardingCharge ?? quotationLead?.forwardingCharge);
     const fwdAmt = fwdEnabled ? r2(Number(fwdSrc?.forwardingChargeAmount ?? linkedLead?.forwardingChargeAmount ?? quotationLead?.forwardingChargeAmount) || 0) : 0;
+    // Transport Cost Scope ('CLIENT' | 'HNG'), set on Lead/Order creation — order first (source
+    // of truth), falling back to lead/quotation. Drives whether a recorded courier charge counts
+    // toward this invoice's total (see courierChargeTotal / computeCompositionGrandTotal below).
+    const transportationBy = fullOrder?.transportationBy || linkedOrder?.transportationBy || linkedLead?.transportationBy || quotationLead?.transportationBy || linkedQuotation?.transportationBy || '';
     // Kit composition (identical resolution to quotationList): order products → order items → lead
     const srcProds = fullOrder?.products?.length
       ? fullOrder.products
@@ -357,6 +382,9 @@ export default function Billing() {
           // Order is where Invoice-path payments push their paymentCollection entry (see
           // syncOrderPaymentCollection in recordPayment) — courier charges live here.
           paymentCollection: fullOrder?.paymentCollection || linkedLead?.paymentCollection || quotationLead?.paymentCollection || linkedQuotation?.paymentCollection || [],
+          // Needed so computeCompositionGrandTotal (below) excludes an HNG-scope courier charge
+          // from the folded-in total exactly like the plain computeRecordGrandTotal path does.
+          transportationBy,
         }
       : null;
     const kitTotal = srcRec ? computeCompositionGrandTotal(srcRec, kits) : 0;
@@ -368,9 +396,11 @@ export default function Billing() {
     const invTotal = r2(kitTotal > 0 ? kitTotal : (Number(fullOrder?.total) || Number(linkedLead?.total) || Number(quotationLead?.total) || Number(linkedQuotation?.total) || Number(inv.total) || 0));
     // Courier Charge / Round Off totals recorded via Record Payment In — surfaced separately
     // (below Forwarding Charge) on the invoice document view, on top of already being folded
-    // into invTotal above via computeCompositionGrandTotal.
+    // into invTotal above via computeCompositionGrandTotal. Transport Cost Scope 'HNG' excludes
+    // the courier charge here too — HNG bears that cost, so it shouldn't appear as a line on the
+    // client's invoice at all.
     const pcForCharges = srcRec?.paymentCollection || [];
-    const courierChargeTotal = r2(pcForCharges.reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    const courierChargeTotal = transportationBy === 'HNG' ? 0 : r2(pcForCharges.reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const roundOffTotal = r2(pcForCharges.reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
     const invPaid = sumPaid(fullOrder, linkedLead, quotationLead, linkedQuotation, inv);
     const invBalance = r2(Math.max(0, invTotal - invPaid));
@@ -402,6 +432,9 @@ export default function Billing() {
       order: fullOrder?.orderCode || linkedOrder?.orderCode || '—',
       orderCategory: (fullOrder?.orderCategory === 'SAMPLE' || linkedLead?.leadType === 'SAMPLE' || quotationLead?.leadType === 'SAMPLE') ? 'SAMPLE' : (fullOrder?.orderCategory || linkedOrder?.orderCategory || 'ORDER'),
       isEmergency: !!(fullOrder?.isEmergency || linkedOrder?.isEmergency),
+      // Transport Cost Scope ('CLIENT' | 'HNG') — drives the Record Payment In courier-charge
+      // gate (see openRecordPay/paymentAmounts) and is shown read-only in the drawer.
+      transportationBy,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       rawDate: inv.invoiceDate || null,
       dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
@@ -472,6 +505,9 @@ export default function Billing() {
     const fwdSrc = linkedOrder || lead;
     const fwdEnabled = !!(fwdSrc?.forwardingCharge ?? lead?.forwardingCharge ?? q.forwardingCharge);
     const fwdAmt = fwdEnabled ? r2(Number(fwdSrc?.forwardingChargeAmount ?? lead?.forwardingChargeAmount ?? q.forwardingChargeAmount) || 0) : 0;
+    // Transport Cost Scope ('CLIENT' | 'HNG'), set on Lead/Order creation — order first, then lead
+    // (the Quotation model itself has no such field). Drives courierChargeTotal below.
+    const transportationBy = linkedOrder?.transportationBy || lead?.transportationBy || '';
     // Products: order's items → lead's products → quotation items
     const lProds = linkedOrder?.products?.length
       ? linkedOrder.products
@@ -527,6 +563,7 @@ export default function Billing() {
       forwardingChargeAmount: fwdAmt,
       // Courier charges recorded via Record Payment In live wherever the payment was saved.
       paymentCollection,
+      transportationBy,
     };
     const kitTotal = computeCompositionGrandTotal(sourceRec, kits);
     const composition = buildDocComposition(sourceRec, kits);
@@ -536,8 +573,10 @@ export default function Billing() {
     // paymentCollection from lead is authoritative (Sales reads the same source)
     const paid = sumPaid(linkedOrder, lead, q);
     const balance = r2(Math.max(0, total - paid));
-    // Shown below Forwarding Charge on the quotation document (DocumentTemplate) when > 0
-    const courierChargeTotal = r2(paymentCollection.reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
+    // Shown below Forwarding Charge on the quotation document (DocumentTemplate) when > 0.
+    // Transport Cost Scope 'HNG' excludes it — HNG bears that cost, so it shouldn't appear as a
+    // line on the client's quotation/invoice at all.
+    const courierChargeTotal = transportationBy === 'HNG' ? 0 : r2(paymentCollection.reduce((s, e) => s + (Number(e?.courierCharge) || 0), 0));
     const roundOffTotal = r2(paymentCollection.reduce((s, e) => s + (Number(e?.roundOff) || 0), 0));
     const qStatus = total > 0
       ? (r2(paid) >= r2(total) ? 'Paid' : paid > 0 ? 'Partially Paid' : 'Unpaid')
@@ -555,6 +594,9 @@ export default function Billing() {
       // lead-based way, masking the mismatch).
       orderId: editOrder?._id || linkedOrder?._id,
       docType: 'Quotation',
+      // Transport Cost Scope ('CLIENT' | 'HNG') — drives the Record Payment In courier-charge
+      // gate (see openRecordPay/paymentAmounts) and is shown read-only in the drawer.
+      transportationBy,
       // Edit Pricing source rows + audit log (see editHasOrderLink above) — always parallel to
       // whatever the backend's updateQuotationPricing will load for this exact quotation.
       editHasOrderLink,
@@ -682,6 +724,9 @@ export default function Billing() {
     return {
       key: o._id,
       docType: 'Order',
+      // Transport Cost Scope ('CLIENT' | 'HNG') — drives the Record Payment In courier-charge
+      // gate (see openRecordPay/paymentAmounts) and is shown read-only in the drawer.
+      transportationBy: o.transportationBy || '',
       // Link IDs — required by syncBillingChain to propagate payment to Sales records
       leadId: o.leadId,
       leadCode: o.leadCode || '',
@@ -891,10 +936,15 @@ export default function Billing() {
 
   // Money this save records (see resolvePaymentAmounts): Amount + the courier and the round off when
   // each is Paid — an Unpaid one only moves the document total (see the courier/roundOffTotal sums).
+  // Transport Cost Scope 'HNG' (set on Lead/Order creation, carried onto recordPayInv above) —
+  // HNG bears the transport cost itself, so a courier charge recorded here must not touch this
+  // invoice/quotation/order's own total. CLIENT (or unset, for older records) is unaffected.
+  const courierScopeIsHNG = recordPayInv?.transportationBy === 'HNG';
   const paymentAmounts = () => resolvePaymentAmounts({
     amount: payAmount,
     courier: payCourierVisible ? Number(payCourierAmount) || 0 : 0,
     courierPaid: payCourierPaid,
+    courierBillable: !courierScopeIsHNG,
     roundOff: payRoundOffVisible ? signedRoundOff : 0,
     roundOffPaid: payRoundOffPaid,
   });
@@ -1003,6 +1053,10 @@ export default function Billing() {
   const handleSavePayment = async () => {
     if (!recordPayInv?.key) { enqueueSnackbar('No invoice selected', { variant: 'error' }); return; }
     const courierCharge = payCourierVisible ? Number(payCourierAmount) || 0 : 0;
+    // Transport Cost Scope 'HNG' — the raw courierCharge is still saved on the entry below (for
+    // record-keeping), but it must not move this record's own total/balance, mirroring the
+    // backend's recordPayment gate for the Invoice path.
+    const billableCourier = courierScopeIsHNG ? 0 : courierCharge;
     const roundOff = payRoundOffVisible ? signedRoundOff : 0;
     // The Paid/Unpaid switches only matter when a courier charge / round off is actually being recorded.
     const courierPaid = courierCharge !== 0 ? payCourierPaid : true;
@@ -1037,7 +1091,7 @@ export default function Billing() {
       recordedBy: currentUser?._id || currentUser?.id,
       recordedByName: currentUserName,
     };
-    const unpaidCourier = !courierPaid && courierCharge !== 0;
+    const unpaidCourier = !courierPaid && billableCourier !== 0;
     const unpaidRoundOff = !roundOffPaid && roundOff !== 0;
     const adjustmentOnly = (unpaidCourier || unpaidRoundOff) && net === 0;
     // The record's total once this entry lands. An Unpaid round off / courier charge moves the total
@@ -1046,7 +1100,7 @@ export default function Billing() {
     // `recordPayInv.total` is the pre-entry figure and would leave the stored balance off by that
     // amount. Every other entry (no round off/courier, or Paid ones) is measured exactly as before.
     const totalAfterEntry = unpaidCourier || unpaidRoundOff
-      ? r2((recordPayInv.total || 0) + courierCharge + roundOff)
+      ? r2((recordPayInv.total || 0) + billableCourier + roundOff)
       : (recordPayInv.total || 0);
     try {
       if (recordPayInv.docType === 'Order') {
@@ -1382,13 +1436,11 @@ export default function Billing() {
         {
           title: 'GST %', width: 90, align: 'right',
           render: (_, row) => (
-            <InputNumber
+            <Select
               size="small"
-              min={row.origGst}
-              max={100}
               value={row.gst}
-              controls={false}
               style={{ width: '100%' }}
+              options={gstRateOptions(row.origGst, row.gst)}
               onChange={(v) => updateStandaloneField(row.key, 'gst', v == null ? row.origGst : v)}
             />
           ),
@@ -1417,8 +1469,9 @@ export default function Billing() {
           size="small" min={g.origKitPrice} value={g.kitPrice} controls={false} prefix="₹" style={{ width: 110 }}
           onChange={(v) => updateKitGroupField(g.key, 'kitPrice', v == null ? g.origKitPrice : v)}
         />
-        <InputNumber
-          size="small" min={g.origGst} max={100} value={g.gst} controls={false} suffix="%" style={{ width: 85 }}
+        <Select
+          size="small" value={g.gst} style={{ width: 85 }}
+          options={gstRateOptions(g.origGst, g.gst)}
           onChange={(v) => updateKitGroupField(g.key, 'gst', v == null ? g.origGst : v)}
         />
         <Text strong style={{ fontSize: 12, minWidth: 90, textAlign: 'right' }}>
@@ -1452,8 +1505,9 @@ export default function Billing() {
                 size="small" min={r.origRate} value={r.rate} controls={false} prefix="₹" style={{ width: 110 }}
                 onChange={(v) => updateKitComponentField(g.key, r.key, 'rate', v == null ? r.origRate : v)}
               />
-              <InputNumber
-                size="small" min={r.origGst} max={100} value={r.gst} controls={false} suffix="%" style={{ width: 85 }}
+              <Select
+                size="small" value={r.gst} style={{ width: 85 }}
+                options={gstRateOptions(r.origGst, r.gst)}
                 onChange={(v) => updateKitComponentField(g.key, r.key, 'gst', v == null ? r.origGst : v)}
               />
               <Text style={{ fontSize: 12, minWidth: 90, textAlign: 'right' }}>₹{r2(r.qty * r.rate * (1 + r.gst / 100)).toLocaleString()}</Text>
@@ -2191,12 +2245,19 @@ export default function Billing() {
 
             {/* ── Courier Charge ── */}
             <div style={{ marginBottom: payCourierVisible ? 10 : 0 }}>
-              <Checkbox
-                checked={payCourierVisible}
-                onChange={(e) => { setPayCourierVisible(e.target.checked); if (!e.target.checked) { setPayCourierAmount(0); setPayCourierPaid(false); } }}
-              >
-                <Text style={{ fontSize: 13, fontWeight: 500 }}>Courier Charge</Text>
-              </Checkbox>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Checkbox
+                  checked={payCourierVisible}
+                  onChange={(e) => { setPayCourierVisible(e.target.checked); if (!e.target.checked) { setPayCourierAmount(0); setPayCourierPaid(false); } }}
+                >
+                  <Text style={{ fontSize: 13, fontWeight: 500 }}>Courier Charge</Text>
+                </Checkbox>
+                {recordPayInv?.transportationBy && (
+                  <Tag color={courierScopeIsHNG ? 'purple' : 'blue'} style={{ borderRadius: 20, margin: 0, fontSize: 11 }}>
+                    Transport Cost: {recordPayInv.transportationBy}
+                  </Tag>
+                )}
+              </div>
               {payCourierVisible && (
                 <div style={{ marginTop: 8 }}>
                   <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>Courier / Shipping Amount</Text>
@@ -2208,9 +2269,15 @@ export default function Billing() {
                     style={{ width: '100%', borderRadius: 8 }}
                     controls={false}
                   />
-                  <Text style={{ fontSize: 12, color: '#16a34a', display: 'block', marginTop: 4 }}>
-                    {`+ ₹${(Number(payCourierAmount) || 0).toLocaleString()} will be added to the total`}
-                  </Text>
+                  {courierScopeIsHNG ? (
+                    <Text style={{ fontSize: 12, color: '#d46b08', display: 'block', marginTop: 4 }}>
+                      Transport Cost Scope is HNG — this amount is recorded but will NOT be added to the client's invoice total.
+                    </Text>
+                  ) : (
+                    <Text style={{ fontSize: 12, color: '#16a34a', display: 'block', marginTop: 4 }}>
+                      {`+ ₹${(Number(payCourierAmount) || 0).toLocaleString()} will be added to the total`}
+                    </Text>
+                  )}
                   {/* Paid / Unpaid — whether the courier charge also counts as money received */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, padding: '8px 10px', borderRadius: 8, background: '#f7f7fb', border: '1px solid #ececf3' }}>
                     <div style={{ paddingRight: 10 }}>
@@ -2306,7 +2373,7 @@ export default function Billing() {
               // by both — otherwise ticking either box doesn't move the Settled figure,
               // and it drifts from the New Party Balance total below (which already
               // includes both via computeNetPayable()).
-              const courier = payCourierVisible ? Number(payCourierAmount) || 0 : 0;
+              const courier = payCourierVisible && !courierScopeIsHNG ? Number(payCourierAmount) || 0 : 0;
               const roundOffAmt = payRoundOffVisible ? signedRoundOff : 0;
               const invBalanceWithExtras = r2(inv.balance + courier + roundOffAmt);
               const netPayable = computeNetPayable();

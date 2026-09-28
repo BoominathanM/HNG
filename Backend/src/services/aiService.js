@@ -591,6 +591,145 @@ async function generateTaskInsight({ apiKey, model, suggestions, taskNames }) {
   };
 }
 
+// ─── Dispatch box-photo duplicate detection ─────────────────────────────────
+
+// Cloudinary serves any stored image at a smaller size straight from the URL — keeps the vision
+// requests fast and cheap (a phone photo is several MB). Falls back to the original URL if the
+// transformed one is refused, and non-Cloudinary URLs are used as-is.
+function smallImageUrl(url, width) {
+  return /\/image\/upload\//.test(url)
+    ? url.replace('/image/upload/', `/image/upload/w_${width},c_limit,q_auto:good,f_jpg/`)
+    : url;
+}
+
+async function fetchImageDataUrl(url, width = 640) {
+  let res = await fetch(smallImageUrl(url, width));
+  if (!res.ok) res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to download photo (HTTP ${res.status})`);
+  const mime = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+  const base64 = Buffer.from(await res.arrayBuffer()).toString('base64');
+  return `data:${mime.startsWith('image/') ? mime : 'image/jpeg'};base64,${base64}`;
+}
+
+const DUPLICATE_RULES = `What counts as a duplicate:
+- "same_photo": the very same picture — identical, or the same photograph re-saved, re-compressed, resized, cropped, rotated, mirrored, colour/brightness-adjusted, screenshotted, or a photo taken of a screen/print of the other.
+- "repeat_shot": a second, separate capture of the SAME physical box/scene from essentially the same viewpoint, where specific identifying details (a printed label or number, handwriting, tape pattern, damage/scuffs, a distinctive item in the background) are identical in both and nothing shows it is a different box.
+What does NOT count (never report these):
+- Different cartons that merely look alike (identical-looking boxes are common — a generic look-alike is NOT enough for "repeat_shot").
+- The same box seen from a clearly different angle/distance, or showing different content.
+- An OPEN-box photo and a CLOSED-box photo of the same carton — that is two different pieces of evidence, not a duplicate.
+Be conservative: only report when you are confident. If unsure, do not report it.`;
+
+// Verdict shared by the upload-time judge and the deep scan — same_photo needs less certainty than
+// repeat_shot, which is the riskier call.
+const isConfidentDuplicate = (verdict, confidence) => {
+  const c = Number(confidence) || 0;
+  return (verdict === 'same_photo' && c >= 60) || (verdict === 'repeat_shot' && c >= 80);
+};
+
+const DUPLICATE_JUDGE_PROMPT = `You are a quality-control auditor for a warehouse dispatch team. Staff photograph the boxes they pack as proof of shipment, and some try to reuse the same photo instead of photographing each box. You are shown ONE NEW photo and then one or more CANDIDATE photos that were already uploaded for the same shipment (each labelled with where it was uploaded). For each candidate decide whether the NEW photo is a duplicate of it.
+
+${DUPLICATE_RULES}
+
+Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
+{ "results": [ { "candidate": 1, "verdict": "same_photo" | "repeat_shot" | "different", "confidence": 0, "reason": "one short sentence naming what you compared" } ] }
+Include one entry per candidate, using the candidate numbers given.`;
+
+// candidates: [{ label, url }]. Returns [{ candidate (1-based), duplicate, verdict, confidence, reason }].
+async function judgeDuplicatePhoto({ apiKey, model, newPhoto, candidates }) {
+  const content = [
+    { type: 'text', text: `NEW photo — ${newPhoto.label}:` },
+    { type: 'image_url', image_url: { url: await fetchImageDataUrl(newPhoto.url) } },
+  ];
+  for (let i = 0; i < candidates.length; i += 1) {
+    content.push({ type: 'text', text: `CANDIDATE ${i + 1} — ${candidates[i].label}:` });
+    content.push({ type: 'image_url', image_url: { url: await fetchImageDataUrl(candidates[i].url) } });
+  }
+
+  const result = await openAiRequest('/chat/completions', {
+    apiKey,
+    method: 'POST',
+    timeoutMs: 90000,
+    body: {
+      model: model || DEFAULT_MODEL,
+      messages: [
+        { role: 'system', content: DUPLICATE_JUDGE_PROMPT },
+        { role: 'user', content },
+      ],
+      response_format: { type: 'json_object' },
+    },
+  });
+  if (result.statusCode !== 200) {
+    const msg = result.body?.error?.message || `OpenAI API returned status ${result.statusCode}`;
+    throw Object.assign(new Error(msg), { statusCode: result.statusCode === 401 ? 401 : 502 });
+  }
+  const raw = result.body?.choices?.[0]?.message?.content;
+  if (!raw) throw new Error('OpenAI returned an empty response');
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw new Error('Failed to parse the AI response as JSON'); }
+
+  return (Array.isArray(parsed.results) ? parsed.results : []).map((r) => ({
+    candidate: Number(r.candidate),
+    verdict: r.verdict,
+    confidence: Number(r.confidence) || 0,
+    reason: String(r.reason || ''),
+    duplicate: isConfidentDuplicate(r.verdict, r.confidence),
+  }));
+}
+
+const DUPLICATE_SCAN_PROMPT = `You are a quality-control auditor for a warehouse dispatch team. Staff photograph the boxes they pack as proof of shipment, and some try to reuse the same photo instead of photographing each box. You are shown every photo uploaded for ONE shipment, numbered and labelled with where it was uploaded. Find the photos that are duplicates of one another.
+
+${DUPLICATE_RULES}
+
+Group photos that are duplicates of each other (a group has 2 or more photo numbers). A photo may appear in at most one group.
+
+Respond with ONLY a JSON object of this exact shape — no markdown, no commentary, no code fences:
+{ "groups": [ { "photos": [1, 4], "verdict": "same_photo" | "repeat_shot", "confidence": 0, "reason": "one short sentence on what matches" } ] }
+If there are no duplicates, return { "groups": [] }.`;
+
+// photos: [{ label, url }]. Returns [{ photos: [1-based indexes], verdict, confidence, reason }] for the
+// confident groups only.
+async function findDuplicatePhotoGroups({ apiKey, model, photos }) {
+  const content = [{ type: 'text', text: `There are ${photos.length} photos for this shipment.` }];
+  for (let i = 0; i < photos.length; i += 1) {
+    content.push({ type: 'text', text: `PHOTO ${i + 1} — ${photos[i].label}:` });
+    content.push({ type: 'image_url', image_url: { url: await fetchImageDataUrl(photos[i].url, 512) } });
+  }
+
+  const result = await openAiRequest('/chat/completions', {
+    apiKey,
+    method: 'POST',
+    // Up to ~40 photos in one vision request — generous headroom, same reasoning as compareQuotationFiles.
+    timeoutMs: 240000,
+    body: {
+      model: model || DEFAULT_MODEL,
+      messages: [
+        { role: 'system', content: DUPLICATE_SCAN_PROMPT },
+        { role: 'user', content },
+      ],
+      response_format: { type: 'json_object' },
+    },
+  });
+  if (result.statusCode !== 200) {
+    const msg = result.body?.error?.message || `OpenAI API returned status ${result.statusCode}`;
+    throw Object.assign(new Error(msg), { statusCode: result.statusCode === 401 ? 401 : 502 });
+  }
+  const raw = result.body?.choices?.[0]?.message?.content;
+  if (!raw) throw new Error('OpenAI returned an empty response');
+  let parsed;
+  try { parsed = JSON.parse(raw); } catch { throw new Error('Failed to parse the AI response as JSON'); }
+
+  return (Array.isArray(parsed.groups) ? parsed.groups : [])
+    .map((g) => ({
+      photos: [...new Set((Array.isArray(g.photos) ? g.photos : []).map(Number))]
+        .filter((n) => Number.isInteger(n) && n >= 1 && n <= photos.length),
+      verdict: g.verdict,
+      confidence: Number(g.confidence) || 0,
+      reason: String(g.reason || ''),
+    }))
+    .filter((g) => g.photos.length >= 2 && isConfidentDuplicate(g.verdict, g.confidence));
+}
+
 module.exports = {
   getAiConfig,
   resolveApiKey,
@@ -601,6 +740,8 @@ module.exports = {
   extractInvoiceFields,
   extractLorryReceiptFields,
   generateTaskInsight,
+  judgeDuplicatePhoto,
+  findDuplicatePhotoGroups,
   normalizeUnit,
   DEFAULT_MODEL,
 };

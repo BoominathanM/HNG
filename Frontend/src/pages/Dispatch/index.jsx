@@ -55,6 +55,18 @@ const statusColor = {
 
 // LR parsing handled by AI scan API
 
+// Who bears the freight/transport cost — Order.transportationBy ('CLIENT' | 'HNG'), set on
+// the Sales "Transport Cost Scope" field. Same Client/HNG tag styling as the Dispatch Detail
+// page's "Transport Cost Scope" field, just relabeled here to match how Dispatch reads it.
+const renderTransportPaidBy = (v) => {
+  if (!v) return <Text type="secondary" style={{ fontSize: 13 }}>—</Text>;
+  return (
+    <Tag color={v === 'HNG' ? 'purple' : 'blue'} style={{ borderRadius: 20, fontSize: 12 }}>
+      {v === 'CLIENT' ? 'Client' : v}
+    </Tag>
+  );
+};
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const isToday = (dateStr) => {
   const d = new Date(dateStr);
@@ -389,6 +401,8 @@ export default function Dispatch() {
       // just flags an urgent delivery date on the order.
       emergencyApproved: !!(d.orderId?.emergencyApproved),
       transport: d.transportName || d.lrNumber || '—',
+      // Who bears the freight cost — 'CLIENT' | 'HNG' (Sales' "Transport Cost Scope").
+      transportationBy: d.orderId?.transportationBy || '',
       lrNumber: d.lrNumber,
       trackingUrl: d.trackingUrl,
       invoiceNumber: d.invoiceNumber,
@@ -462,6 +476,8 @@ export default function Dispatch() {
       emergencyApproved: !!t.orderId?.emergencyApproved,
       payment: t.orderPaymentStatus || 'Pending',
       invoiceNumber: t.dispatchId?.invoiceNumber || '—',
+      // Who bears the freight cost — 'CLIENT' | 'HNG' (Sales' "Transport Cost Scope").
+      transportationBy: t.orderId?.transportationBy || '',
     }));
     if (fromApi.length) return fromApi;
     // Fallback: derive from dispatch records that carry an LR number.
@@ -478,6 +494,7 @@ export default function Dispatch() {
       emergencyApproved: !!d.emergencyApproved,
       payment: d.payment || 'Pending',
       invoiceNumber: d.invoiceNumber || '—',
+      transportationBy: d.transportationBy || '',
     }));
   }, [transportRaw, dispatchOrders]);
 
@@ -927,6 +944,7 @@ export default function Dispatch() {
         },
       },
       { title: 'Transport', dataIndex: 'transport', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+      { title: 'Transportation Paid By', dataIndex: 'transportationBy', width: 150, responsive: ['lg'], render: renderTransportPaidBy },
       {
         title: 'Balance', key: 'balance', width: 170,
         // Pending counts broken down by Personalized Kit / Separate Kit / Separate
@@ -1009,6 +1027,7 @@ export default function Dispatch() {
     { title: 'Boxes', dataIndex: 'boxes', width: 80, render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text style={{ fontSize: 13 }}>{v}</Text></Space> },
     { title: 'Weight', dataIndex: 'weight', width: 95, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Freight', dataIndex: 'freight', width: 95, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    { title: 'Transportation Paid By', dataIndex: 'transportationBy', width: 150, render: renderTransportPaidBy },
     {
       title: 'Payment', dataIndex: 'payment', width: 100,
       render: v => <Tag color={v === 'Paid' ? 'success' : v === 'Partial' ? 'processing' : 'error'} style={{ fontSize: 12 }}>{v}</Tag>,

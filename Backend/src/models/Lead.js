@@ -72,6 +72,7 @@ const leadSchema = new mongoose.Schema({
   city: String,
   state: String,
   pincode: String,
+  billingLocation: String,
 
   // Shipping address (defaults to billing unless overridden) — dispatch uses this,
   // while invoices continue to use the billing address above.
@@ -79,6 +80,7 @@ const leadSchema = new mongoose.Schema({
   shippingCity: String,
   shippingState: String,
   shippingPincode: String,
+  shippingLocation: String,
   shippingSameAsBilling: { type: Boolean, default: true },
 
   // Lead status / journey
@@ -117,6 +119,9 @@ const leadSchema = new mongoose.Schema({
   // Delivery & payment
   deliveryBy: String,
   transportationBy: String,
+  // Transport / carrier the goods should go by — mandatory on the Add Lead form, carried
+  // through to the Order and pre-selected in Dispatch Details' Transport Name dropdown.
+  transportName: String,
   forwardingCharge: { type: Boolean, default: false },
   forwardingChargeAmount: { type: Number, default: 0 },
   orderDeliveryDate: Date,

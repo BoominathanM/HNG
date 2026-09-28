@@ -582,6 +582,7 @@ export default function Inventory() {
   const [approvalType, setApprovalType] = useState(null);
   const [approvalStatus, setApprovalStatus] = useState(null);
   const [approvalDateRange, setApprovalDateRange] = useState(null);
+  const [historyListSearch, setHistoryListSearch] = useState('');
   /* ── Stock History ── */
   // Hotels/Parties for the filter dropdown (used inside the per-item history screen) — the
   // same "Customer" Party records Orders link to via clientPartyId, not the unrelated
@@ -1016,9 +1017,17 @@ export default function Inventory() {
   // stock pools that can legitimately share the same Item Name (e.g. both named "Shampoo") —
   // itemType is carried through so the table can tag them apart instead of looking like an
   // unexplained duplicate.
-  const historyItemRows = useMemo(() => inventoryList.map((i) => ({
-    key: i.key, itemId: i.key, item: i.name, code: i.code, category: i.category, current: i.current, unit: i.unit, itemType: i.itemType,
-  })), [inventoryList]);
+  const historyItemRows = useMemo(() => {
+    const q = historyListSearch.trim().toLowerCase();
+    return inventoryList
+      .map((i) => ({
+        key: i.key, itemId: i.key, item: i.name, code: i.code, category: i.category, current: i.current, unit: i.unit, itemType: i.itemType,
+      }))
+      .filter((r) => !q
+        || (r.item || '').toLowerCase().includes(q)
+        || (r.code || '').toLowerCase().includes(q)
+        || (r.category || '').toLowerCase().includes(q));
+  }, [inventoryList, historyListSearch]);
 
   const lowStock = inventoryList.filter((i) => i.status === 'Low' || i.status === 'Out');
 
@@ -1787,7 +1796,15 @@ export default function Inventory() {
             label: <Space><HistoryOutlined />Stock History</Space>,
             children: historyItem ? renderItemHistoryScreen() : (
               <Card style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)' }} styles={{ body: { padding: 16 } }}>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 14 }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                  <Input
+                    prefix={<SearchOutlined style={{ color: '#B11E6A' }} />}
+                    placeholder="Search item, code, category..."
+                    allowClear
+                    value={historyListSearch}
+                    onChange={(e) => setHistoryListSearch(e.target.value)}
+                    style={{ width: 260, borderRadius: 8 }}
+                  />
                   <Button
                     icon={<DownloadOutlined />}
                     type="primary"

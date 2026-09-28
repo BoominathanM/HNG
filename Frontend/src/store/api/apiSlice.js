@@ -335,6 +335,13 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/dispatch', params }),
       providesTags: ['Dispatch'],
     }),
+    // Every distinct transport/carrier name ever entered across ALL dispatch records, leads and
+    // orders — feeds the Transport Name dropdown on Dispatch Details and on the Add Lead form so
+    // both list names used on OTHER orders, not just ones explicitly added via their "+ Add" box.
+    getDispatchTransportNames: builder.query({
+      query: () => ({ url: '/dispatch/transport-names' }),
+      providesTags: ['Dispatch', 'Leads', 'Orders'],
+    }),
     getDispatch: builder.query({
       query: (id) => ({ url: `/dispatch/${id}` }),
       providesTags: (result, error, id) => [{ type: 'Dispatch', id }],
@@ -396,16 +403,29 @@ export const apiSlice = createApi({
     verifyInvoice: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/dispatch/${id}/verify-invoice`, method: 'post', data }),
     }),
+    // The three box-photo uploads run a duplicate check server-side; a near-match hands it to the AI,
+    // which can take longer than axios's 30s default — 120s matches the backend's own AI timeout.
     uploadBoxPhotos: builder.mutation({
-      query: ({ id, formData }) => ({ url: `/dispatch/${id}/box-photos`, method: 'post', data: formData }),
+      query: ({ id, formData }) => ({ url: `/dispatch/${id}/box-photos`, method: 'post', data: formData, timeout: 120000 }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     uploadItemBoxPhotos: builder.mutation({
-      query: ({ id, itemId, formData }) => ({ url: `/dispatch/${id}/items/${itemId}/box-photos`, method: 'post', data: formData }),
+      query: ({ id, itemId, formData }) => ({ url: `/dispatch/${id}/items/${itemId}/box-photos`, method: 'post', data: formData, timeout: 120000 }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     uploadKitBoxPhotos: builder.mutation({
-      query: ({ id, kitDispatchId, formData }) => ({ url: `/dispatch/${id}/kits/${kitDispatchId}/box-photos`, method: 'post', data: formData }),
+      query: ({ id, kitDispatchId, formData }) => ({ url: `/dispatch/${id}/kits/${kitDispatchId}/box-photos`, method: 'post', data: formData, timeout: 120000 }),
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
+    }),
+    // AI "Verify photos" scan across every photo on the shipment (backend gives the OpenAI call up to
+    // 240s for large sets — override axios's 30s default, same treatment as scanDispatchLR).
+    scanDispatchPhotos: builder.mutation({
+      query: ({ id }) => ({ url: `/dispatch/${id}/box-photos/scan`, method: 'post', timeout: 260000 }),
+      invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
+    }),
+    // Removes a photo the scan flagged as a duplicate (the backend refuses anything else).
+    removeDispatchPhoto: builder.mutation({
+      query: ({ id, url }) => ({ url: `/dispatch/${id}/box-photos/remove`, method: 'post', data: { url } }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
     addBoxPhotoUrl: builder.mutation({
@@ -1476,6 +1496,9 @@ export const apiSlice = createApi({
     verifyGstin: builder.query({
       query: (gstin) => ({ url: `/settings/gst/verify/${encodeURIComponent(gstin)}` }),
     }),
+    verifyPincode: builder.query({
+      query: (pincode) => ({ url: `/settings/pincode/${encodeURIComponent(pincode)}` }),
+    }),
 
     // ── AI Integration (OpenAI) ──────────────────────────────────────────────
     getAiConfig: builder.query({
@@ -1586,6 +1609,7 @@ export const {
   useGetPurchaseHistoryQuery,
   // Dispatch
   useGetDispatchesQuery,
+  useGetDispatchTransportNamesQuery,
   useGetDispatchQuery,
   useCreateDispatchMutation,
   useSaveAsDraftMutation,
@@ -1595,6 +1619,8 @@ export const {
   useUploadBoxPhotosMutation,
   useUploadItemBoxPhotosMutation,
   useUploadKitBoxPhotosMutation,
+  useScanDispatchPhotosMutation,
+  useRemoveDispatchPhotoMutation,
   useAddBoxPhotoUrlMutation,
   useGetTodaysDispatchesQuery,
   useGetPendingDispatchesQuery,
@@ -1856,6 +1882,7 @@ export const {
   useTestGstConnectionMutation,
   useVerifyGstinQuery,
   useLazyVerifyGstinQuery,
+  useLazyVerifyPincodeQuery,
 
   // AI Integration
   useGetAiConfigQuery,

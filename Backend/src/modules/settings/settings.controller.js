@@ -485,6 +485,55 @@ exports.verifyGstin = asyncHandler(async (req, res, next) => {
   }
 });
 
+// ─── Pincode lookup (api.postalpincode.in — free, no key required) ───────────
+const callPincodeApi = async (pincode) => {
+  const url = `https://api.postalpincode.in/pincode/${pincode}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(url, { method: 'GET', headers: { 'Accept': 'application/json' }, signal: controller.signal });
+    clearTimeout(timer);
+    let body;
+    try { body = await res.json(); } catch { body = null; }
+    return { statusCode: res.status, body };
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') throw new Error('Pincode API request timed out');
+    throw err;
+  }
+};
+
+// GET /api/settings/pincode/:pincode — proxy Indian PIN code lookup (city/state/country)
+exports.verifyPincode = asyncHandler(async (req, res, next) => {
+  const { pincode } = req.params;
+  const cleaned = (pincode || '').trim();
+  if (!/^[1-9][0-9]{5}$/.test(cleaned)) {
+    return next(new AppError('Pincode must be a valid 6-digit Indian PIN code', 400));
+  }
+
+  try {
+    const result = await callPincodeApi(cleaned);
+    const entry = Array.isArray(result.body) ? result.body[0] : null;
+    const office = entry?.Status === 'Success' ? entry.PostOffice?.[0] : null;
+    if (!office) {
+      return next(new AppError('No location details found for this pincode', 404));
+    }
+    res.status(200).json({
+      success: true,
+      data: {
+        pincode: cleaned,
+        area: office.Name || '',
+        city: office.District || office.Name || '',
+        district: office.District || '',
+        state: office.State || '',
+        country: office.Country || 'India',
+      },
+    });
+  } catch (err) {
+    return next(new AppError(`Pincode lookup failed: ${err.message}`, 502));
+  }
+});
+
 // ─── AI Integration (OpenAI) ─────────────────────────────────────────────────
 // Same shape as GST above (configured/keyPreview/source), but the key itself is
 // AES-256-GCM encrypted at rest and select:false on the model — the WhatsApp

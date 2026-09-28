@@ -27,6 +27,7 @@ const SCALAR_FIELDS = {
   city: 'City',
   state: 'State',
   pincode: 'Pincode',
+  billingLocation: 'Billing Location',
   hotelLogoUrl: 'Hotel Logo',
 };
 

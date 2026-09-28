@@ -49,7 +49,7 @@ exports.getParties = asyncHandler(async (req, res) => {
       { clientName: { $in: partyNames.map((n) => new RegExp(`^${n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')) } },
     ],
   })
-    .select('clientPartyId clientName total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection items products kitOrders kitPrice kitOverallQty forwardingCharge forwardingChargeAmount packagingIncludes packagingIncludesQty')
+    .select('clientPartyId clientName total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection items products kitOrders kitPrice kitOverallQty forwardingCharge forwardingChargeAmount packagingIncludes packagingIncludesQty transportationBy')
     .lean();
 
   // Only needed for orders using "Select Kit(s) to Include" (packagingIncludes) — fetched once

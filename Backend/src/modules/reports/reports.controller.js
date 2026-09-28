@@ -1079,13 +1079,13 @@ exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
     .populate('partyId', 'name')
     .populate({
       path: 'orderId',
-      select: 'forwardingChargeAmount paymentCollection leadId',
-      populate: { path: 'leadId', select: 'paymentCollection' },
+      select: 'forwardingChargeAmount paymentCollection leadId transportationBy',
+      populate: { path: 'leadId', select: 'paymentCollection transportationBy' },
     })
     .populate({
       path: 'quotationId',
       select: 'paymentCollection leadId',
-      populate: { path: 'leadId', select: 'paymentCollection' },
+      populate: { path: 'leadId', select: 'paymentCollection transportationBy' },
     })
     .sort('-invoiceDate');
 
@@ -1093,10 +1093,20 @@ exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
   const monthlyHotelMap = {};
   const invoiceIdsPerGroup = {};
 
-  const addToGroup = (month, year, hotel, forwardingCharge, courierCharge, invId) => {
-    const groupKey = `${month}-${year}|${hotel}`;
+  // Transport Cost Scope ('CLIENT' | 'HNG'), set on Lead/Order creation — order first, then its
+  // lead, falling back to the quotation's lead when there's no linked order at all. Same
+  // resolution chain used across Billing/Sales/Dispatch, so this report's scope always agrees
+  // with what those screens show for the same order.
+  const resolveScope = (order, quotation) => {
+    const orderLead = order?.leadId && typeof order.leadId === 'object' ? order.leadId : null;
+    const quotLead = quotation?.leadId && typeof quotation.leadId === 'object' ? quotation.leadId : null;
+    return order?.transportationBy || orderLead?.transportationBy || quotLead?.transportationBy || 'Unspecified';
+  };
+
+  const addToGroup = (month, year, hotel, scope, forwardingCharge, courierCharge, invId) => {
+    const groupKey = `${month}-${year}|${hotel}|${scope}`;
     if (!monthlyHotelMap[groupKey]) {
-      monthlyHotelMap[groupKey] = { key: groupKey, month, year, hotel, forwardingCharge: 0, courierCharge: 0, totalCharge: 0, invoiceCount: 0 };
+      monthlyHotelMap[groupKey] = { key: groupKey, month, year, hotel, transportCostScope: scope, forwardingCharge: 0, courierCharge: 0, totalCharge: 0, invoiceCount: 0 };
       invoiceIdsPerGroup[groupKey] = new Set();
     }
     const g = monthlyHotelMap[groupKey];
@@ -1114,6 +1124,7 @@ exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
     const quotation = inv.quotationId && typeof inv.quotationId === 'object' ? inv.quotationId : null;
     const hotel = inv.partyId?.name || 'Unknown';
     const invId = String(inv._id);
+    const scope = resolveScope(order, quotation);
 
     const forwardingCharge = Number(order?.forwardingChargeAmount) || 0;
     if (forwardingCharge && inRange(inv.invoiceDate)) {
@@ -1127,11 +1138,12 @@ exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
         invoiceNo: inv.invoiceNumber || '',
         invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10) || '',
         chargeType: 'Forwarding',
+        transportCostScope: scope,
         forwardingCharge: r2(forwardingCharge),
         courierCharge: 0,
         totalCharge: r2(forwardingCharge),
       });
-      addToGroup(month, year, hotel, forwardingCharge, 0, invId);
+      addToGroup(month, year, hotel, scope, forwardingCharge, 0, invId);
     }
 
     mergeCourierEntries(order, quotation).forEach((e, idx) => {
@@ -1152,11 +1164,12 @@ exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
         invoiceNo: inv.invoiceNumber || '',
         invoiceDate: inv.invoiceDate?.toISOString().slice(0, 10) || '',
         chargeType: 'Courier',
+        transportCostScope: scope,
         forwardingCharge: 0,
         courierCharge: r2(courierCharge),
         totalCharge: r2(courierCharge),
       });
-      addToGroup(month, year, hotel, 0, courierCharge, invId);
+      addToGroup(month, year, hotel, scope, 0, courierCharge, invId);
     });
   });
 
@@ -1167,10 +1180,30 @@ exports.getForwardingCourierReport = asyncHandler(async (req, res) => {
   const totalForwarding = monthlyHotelData.reduce((s, r) => s + r.forwardingCharge, 0);
   const totalCourier = monthlyHotelData.reduce((s, r) => s + r.courierCharge, 0);
 
+  // Scope-level totals (Client/HNG/Unspecified) — lets the report answer "how much of our
+  // forwarding/courier spend is CLIENT-billed vs HNG-borne" without the frontend having to
+  // re-derive it from the row-level data itself.
+  const scopeSummaryMap = {};
+  monthlyHotelData.forEach((r) => {
+    const key = r.transportCostScope;
+    if (!scopeSummaryMap[key]) scopeSummaryMap[key] = { scope: key, forwardingCharge: 0, courierCharge: 0, totalCharge: 0, invoiceCount: 0 };
+    scopeSummaryMap[key].forwardingCharge += r.forwardingCharge;
+    scopeSummaryMap[key].courierCharge += r.courierCharge;
+    scopeSummaryMap[key].totalCharge += r.totalCharge;
+    scopeSummaryMap[key].invoiceCount += r.invoiceCount;
+  });
+  const scopeData = Object.values(scopeSummaryMap).map((s) => ({
+    ...s,
+    forwardingCharge: r2(s.forwardingCharge),
+    courierCharge: r2(s.courierCharge),
+    totalCharge: r2(s.totalCharge),
+  }));
+
   res.status(200).json({
     success: true,
     data,
     monthlyHotelData,
+    scopeData,
     summary: {
       totalForwarding: r2(totalForwarding),
       totalCourier: r2(totalCourier),

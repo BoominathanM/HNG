@@ -37,6 +37,9 @@ router.delete('/gst-config', ctrl.deleteGstConfig);
 router.post('/gst-config/test', ctrl.testGstConnection);
 router.get('/gst/verify/:gstin', ctrl.verifyGstin);
 
+// Pincode lookup (free, no key — city/state/country auto-fill)
+router.get('/pincode/:pincode', ctrl.verifyPincode);
+
 // AI Integration (OpenAI)
 router.get('/ai-config', ctrl.getAiConfig);
 router.get('/ai-config/credentials', ctrl.getAiCredentials);   // returns actual key for edit flow
