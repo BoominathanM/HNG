@@ -558,13 +558,13 @@ exports.getInvoices = asyncHandler(async (req, res) => {
       .populate('partyId', 'name phone gstNumber address city state panNumber')
       .populate({
         path: 'orderId',
-        select: 'orderCode orderCategory isEmergency leadId products kitOrders forwardingCharge forwardingChargeAmount items total amount gstAmount paymentCollection paidAmount advancePaid advancePaidAmount billType type clientName billingName clientPhone phone gstNumber detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType',
-        populate: { path: 'leadId', select: 'leadType products kitOrders forwardingCharge forwardingChargeAmount total paymentCollection paidAmount advancePaid items hotelName billingName phone gstNumber locationCity detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType' },
+        select: 'orderCode orderCategory isEmergency leadId products kitOrders forwardingCharge forwardingChargeAmount items total amount gstAmount paymentCollection paidAmount advancePaid advancePaidAmount billType type clientName billingName clientPhone phone gstNumber detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType paymentTerms paymentReminderDate creditDueDate createdAt',
+        populate: { path: 'leadId', select: 'leadType products kitOrders forwardingCharge forwardingChargeAmount total paymentCollection paidAmount advancePaid items hotelName billingName phone gstNumber locationCity detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType paymentTerms paymentReminderDate creditDueDate createdAt' },
       })
       .populate({
         path: 'quotationId',
-        select: 'quotCode leadId products kitOrders forwardingCharge forwardingChargeAmount items total amount gstAmount advancePaid type paymentCollection paidAmount kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType',
-        populate: { path: 'leadId', select: 'leadType products kitOrders forwardingCharge forwardingChargeAmount total paymentCollection paidAmount advancePaid items hotelName billingName phone gstNumber locationCity detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType' },
+        select: 'quotCode leadId products kitOrders forwardingCharge forwardingChargeAmount items total amount gstAmount advancePaid type paymentCollection paidAmount kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType paymentTerms paymentReminderDate creditDueDate',
+        populate: { path: 'leadId', select: 'leadType products kitOrders forwardingCharge forwardingChargeAmount total paymentCollection paidAmount advancePaid items hotelName billingName phone gstNumber locationCity detailedAddress city state pincode kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType paymentTerms paymentReminderDate creditDueDate createdAt' },
       })
       .sort('-invoiceDate').skip((page - 1) * limit).limit(limit),
     Invoice.countDocuments(filter),
@@ -1107,7 +1107,7 @@ exports.getQuotationsInProcess = asyncHandler(async (req, res) => {
   // Return all non-deleted quotations regardless of status so newly created
   // (Unpaid / In Process) quotations appear immediately in the Billing tab.
   const quotations = await Quotation.find({ deletedAt: null })
-    .populate('leadId', 'hotelName contactPerson phone locationCity detailedAddress address city state pincode billingName gstNumber leadType products kitOrders forwardingCharge forwardingChargeAmount paymentCollection paidAmount advancePaid total kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType items')
+    .populate('leadId', 'hotelName contactPerson phone locationCity detailedAddress address city state pincode billingName gstNumber leadType products kitOrders forwardingCharge forwardingChargeAmount paymentCollection paidAmount advancePaid total kitPrice kitOverallQty packagingIncludes packagingIncludesQty selectedKits selectedKit productType items paymentTerms paymentReminderDate creditDueDate createdAt')
     .sort('-createdAt');
 
   // Exclude quotations already converted to a billing invoice.

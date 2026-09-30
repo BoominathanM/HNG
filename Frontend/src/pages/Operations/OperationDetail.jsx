@@ -84,6 +84,7 @@ import {
   getCheckStateMap,
   getProgressFromChecks,
   inferItemLogoType,
+  isStickerOnlyKit,
   normYNOps,
   ORDER_CATEGORY_META,
   PAYMENT_LABELS,
@@ -934,8 +935,13 @@ export default function OperationDetail() {
   // (personalized outer + separate kits inside), the inner items read as Separate Kit/Product, so
   // NO spec-table row carries category='personalized' — without this the personalized approval would
   // never surface. We pull it out separately and pin it to the first personalized-included row below.
+  // A Sticker-tab kit request is only the OUTER one when it carries the 'Personalized Kit' label —
+  // a sticker-only personalized kit (e.g. a Dental kit) files its own Sticker request under its kit
+  // name, and must not be mistaken for the outer unit's approval.
   const personalizedKitSR = useMemo(
-    () => kitSRList.find((sr) => (sr.category || '') === 'personalized') || null,
+    () => kitSRList.find((sr) => (sr.category || '') === 'personalized'
+        && (sr.stickerType !== 'Sticker' || (sr.kitType || '').toLowerCase() === 'personalized kit'))
+      || null,
     [kitSRList],
   );
   // First item that is packed inside the personalized outer — the row we attach the personalized
@@ -1480,8 +1486,24 @@ export default function OperationDetail() {
   // its own approval — so match the row's category and kit type, not just the tab. Match precedence:
   // tab+category+kitType → tab+category → tab+kitType → tab → any. This keeps both approvals visible
   // side-by-side in the Ops Approval column instead of one replacing the other.
+  // Sticker-tab kit request (product 'Kit', stickerType 'Sticker') of a sticker-only kit — matched
+  // strictly on category + kitType, the same key index.jsx's Sticker-tab kit parent files it under
+  // (srKitType from data.js: the kit's name, else the Personalized/Separate Kit label), so a
+  // personalized Dental kit and the personalized outer unit never share one request.
+  const stickerKitSRFor = (record) => {
+    const cat = record.category || '';
+    const kt = (record.kitName || (cat === 'personalized' ? 'Personalized Kit' : 'Separate Kit')).toLowerCase();
+    return kitSRList.find((sr) => sr.stickerType === 'Sticker' && (sr.category || '') === cat
+      && (sr.kitType || '').toLowerCase() === kt) || null;
+  };
+
   const resolveKitSR = (record) => {
     if (!(record.isKit || record.kitType)) return null;
+    // A sticker-only kit (Sticker=Yes, Printing≠Yes) is designed/approved from the Sticker tab (see
+    // isStickerOnlyKit in data.js); a kit whose work had already started in its display-unit tab
+    // has no Sticker request and falls through to that tab's request below.
+    const stickerSR = isStickerOnlyKit(record) ? stickerKitSRFor(record) : null;
+    if (stickerSR) return stickerSR;
     const duTab = record.displayUnitTab || '';
     const st = duTab === 'Ziplock' ? 'Frosted Ziplock' : duTab === 'Butter Paper' ? 'Butter Paper'
       : duTab === 'Wooden Brush' ? 'Wooden Brush' : duTab === 'Other' ? 'Other' : 'Box';
@@ -2348,7 +2370,10 @@ export default function OperationDetail() {
         // resolveKitSR can miss the invoice because its stickerType filter may not align.
         // Use personalizedKitSR directly — it's already found from kitSRList by category only.
         if ((record.isKit || record.kitType) && (record.category || '') === 'personalized') {
-          const inv = personalizedKitSR?.invoiceFile;
+          // A sticker-only personalized kit with its OWN Sticker-tab request shows that invoice,
+          // not the outer unit's.
+          const ownStickerSR = isStickerOnlyKit(record) ? stickerKitSRFor(record) : null;
+          const inv = (ownStickerSR || personalizedKitSR)?.invoiceFile;
           const catMeta = ORDER_CATEGORY_META.personalized;
           return inv?.url ? invBlock(inv, catMeta) : noInvBlock(catMeta);
         }
@@ -2799,7 +2824,11 @@ export default function OperationDetail() {
     const persSR = (personalizedKitSR && record.isIncludedInPersonalized && personalizedKitSR._id !== sr?._id)
       ? personalizedKitSR : null;
     const ownInvoice = (() => {
-      if (isKitItem && (record.category || '') === 'personalized') return personalizedKitSR?.invoiceFile;
+      if (isKitItem && (record.category || '') === 'personalized') {
+        // Same as the Invoice column: a sticker-only personalized kit's own Sticker-tab request wins.
+        const ownStickerSR = isStickerOnlyKit(record) ? stickerKitSRFor(record) : null;
+        return (ownStickerSR || personalizedKitSR)?.invoiceFile;
+      }
       if (isKitItem) {
         const tabSr = resolveKitSR(record);
         if (tabSr?.invoiceFile?.url) return tabSr.invoiceFile;

@@ -591,6 +591,11 @@ export default function Operations() {
     packagingIncludesQty: (o.packagingIncludesQty && Object.keys(o.packagingIncludesQty).length ? o.packagingIncludesQty : (o.leadId?.packagingIncludesQty || {})) || {},
     kitOrders: (o.kitOrders?.length ? o.kitOrders : (o.leadId?.kitOrders || [])) || [],
     kitOverallQty: o.kitOverallQty ?? o.leadId?.kitOverallQty ?? 0,
+    // Personalized OUTER unit's own Sticker/Printing (top-level customization, not per-kit) —
+    // stamped onto the personalized-packing copies below so a Sticker=Yes, Printing≠Yes outer
+    // unit routes to the Sticker tab (see isStickerOnlyOuterPacking in data.js).
+    kitSticker: normYNOps(o.kitSticker || o.leadId?.kitSticker || ''),
+    kitPrinting: normYNOps(o.kitPrinting || o.leadId?.kitPrinting || ''),
     // Kit display fields — fall back to the populated leadId fields for orders created
     // before kitDisplayUnit was copied onto the Order document itself.
     kitDisplayUnit: o.kitDisplayUnit || o.displayUnit || o.leadId?.kitDisplayUnit || o.leadId?.displayUnit || '',
@@ -659,6 +664,8 @@ export default function Operations() {
           displayUnit: persDU,
           displayUnitTab: persTab,
           isPersonalizedPacking: true,
+          outerSticker: o.kitSticker || '',
+          outerPrinting: o.kitPrinting || '',
         }));
       return persCopies.length ? { ...o, items: [...o.items, ...persCopies] } : o;
     });
@@ -702,6 +709,14 @@ export default function Operations() {
     const matches = stickerRequests.filter(
       (s) => s.orderId?.orderCode === item.orderId && s.stickerType === stickerType && (s.product || '').toLowerCase() === pLower,
     );
+    // Sticker-tab kit parent (sticker-only kit / outer unit): one order can hold TWO such parents in
+    // the SAME category (e.g. a personalized Dental kit AND the personalized outer Box), both filed as
+    // product 'Kit' — the request's kitType (srKitType) tells them apart. Strict match, no fallback,
+    // so one kit never borrows the other's design/approval.
+    if (item.srKitType) {
+      const kt = item.srKitType.toLowerCase();
+      return matches.find((s) => (s.category || '') === cat && (s.kitType || '').toLowerCase() === kt);
+    }
     // Category-scoped approval: when the same product shows twice in one tab (once as Separate Kit,
     // once as Personalized), each row gets its OWN approval. Prefer the request with the matching
     // category; fall back to a legacy request that has no category (orders created before this).
@@ -1437,6 +1452,11 @@ export default function Operations() {
                       quantity: record.qty,
                       stickerSize: record.stickerSize || record.size,
                       vendorId: val || null,
+                      // Sticker-tab kit parent — see findStickerReq's srKitType note.
+                      ...(record.srKitType && {
+                        kitType: record.srKitType,
+                        kitProducts: (record.children || []).map((c) => c.product || c.itemName || '').filter(Boolean),
+                      }),
                     }).unwrap();
                   }
                   enqueueSnackbar('Printing supplier reassigned — existing design & approval stay attached', { variant: 'success' });
@@ -1464,8 +1484,8 @@ export default function Operations() {
           const existingHotelDesign = findHotelDesign(record);
           // Kit context: derive kit type name and products list for kit parent rows
           const kitTypeName = record.isKitParent
-            ? (record.category === 'personalized' ? 'Personalized Kit'
-              : (record.children?.[0]?.kitName || record.children?.[0]?.kitType || 'Separate Kit'))
+            ? (record.srKitType || (record.category === 'personalized' ? 'Personalized Kit'
+              : (record.children?.[0]?.kitName || record.children?.[0]?.kitType || 'Separate Kit')))
             : '';
           const kitProductsList = record.isKitParent
             ? (record.children || []).map((c) => c.product || c.itemName || '').filter(Boolean)
@@ -1772,6 +1792,8 @@ export default function Operations() {
                             stickerType: 'Sticker',
                             quantity: record.qty,
                             stickerSize: record.stickerSize || record.size,
+                            // Sticker-tab kit parent — see findStickerReq's srKitType note.
+                            ...(record.srKitType && { kitType: record.srKitType, kitProducts: kitProductsList }),
                           }).unwrap();
                           srId = created.data._id;
                         }
@@ -2115,6 +2137,66 @@ export default function Operations() {
             children: group.map((r) => ({ ...r, isKitChild: true })),
           });
         }
+      });
+    } else {
+      // Sticker tab: a sticker-only KIT (Sticker=Yes, Printing≠Yes) and a sticker-only personalized
+      // OUTER unit (its outer-packing copies) are re-routed here from their display-unit tab (see
+      // routedToSticker in data.js). Each needs ONE sticker for its display unit, not one per
+      // product — group its rows under a single kit parent (same shape as the packaging tabs' kit
+      // parents above) so it gets one shared design upload/approval/print. Always a parent, even
+      // for a one-product kit, so its request is the kit's ('Kit' + srKitType) and never collides
+      // with that product's own sticker request. The key has no -box/-frosted/-butter suffix, so
+      // queueTypeFromKey resolves it to 'Sticker'. Every other Sticker row stays as before.
+      const kitGroups = new Map();
+      tableSource = [];
+      activeRows.forEach((row) => {
+        if (!row.groupAsKitSticker) { tableSource.push(row); return; }
+        const gkey = `${row.orderId}|${row.category || ''}|${row.stickerKitKey || ''}`;
+        if (!kitGroups.has(gkey)) kitGroups.set(gkey, []);
+        kitGroups.get(gkey).push(row);
+      });
+      kitGroups.forEach((group) => {
+        const first = group[0];
+        const order = apiOrders.find((o) => o.id === first.orderId);
+        const isOuter = first.stickerKitKey === 'outer';
+        const kitCfg = isOuter ? null : (order?.kitOrders || []).find((ko) =>
+          (first.kitId && String(ko.kitId || '') === String(first.kitId))
+          || (!first.kitId && first.kitName && (ko.kitName || ko.kitType || '') === first.kitName));
+        const kitSize = kitCfg?.size || order?.kitSize || null;
+        tableSource.push({
+          key: `${first.orderId}-${first.category || 'kit'}-${first.stickerKitKey || 'kit'}-kit-sticker`,
+          orderId: first.orderId,
+          orderCategory: first.orderCategory,
+          hotelLogo: first.hotelLogo,
+          logoRequired: first.logoRequired,
+          logoUrl: first.logoUrl,
+          isUrgent: first.isUrgent,
+          isEmergencyProduct: group.some((r) => r.isEmergencyProduct),
+          isEmergencyGated: group.every((r) => r.isEmergencyGated),
+          // Kit count (one sticker per kit), not the sum of per-product quantities inside it.
+          qty: Number(kitCfg?.overallQty)
+            || ((isOuter || first.category === 'personalized') && Number(order?.kitOverallQty))
+            || group.reduce((sum, r) => sum + Number(r.qty || 0), 0),
+          product: 'Kit',
+          category: first.category,
+          kitId: isOuter ? '' : (first.kitId || ''),
+          kitName: isOuter ? '' : (first.kitName || ''),
+          srKitType: first.srKitType,
+          itemIndex: first.itemIndex,
+          childItemIndexes: group.map((r) => r.itemIndex).filter((n) => Number.isInteger(n)),
+          size: kitSize,
+          packingSize: first.packingSize || kitSize || '',
+          // An outer-packing copy's stickerSize is its PRODUCT's label size, not the outer unit's.
+          stickerSize: kitCfg?.stickerSize || (isOuter ? '' : (first.stickerSize || '')),
+          stickerPrinting: first.stickerPrinting,
+          packagingType: first.packagingType,
+          displayUnit: first.displayUnit || '',
+          sticker: first.sticker || '',
+          printing: first.printing || '',
+          packingMaterial: isOuter ? '' : (first.packingMaterial || ''),
+          isKitParent: true,
+          children: group.map((r) => ({ ...r, isKitChild: true })),
+        });
       });
     }
 

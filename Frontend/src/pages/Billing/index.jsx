@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Row, Col, Card, Table, Tag, Button, Drawer, Form, Input, Select,
-  Typography, Space, Divider, InputNumber, Tabs, Tooltip, Modal, DatePicker, Upload, Checkbox, Radio,
+  Typography, Space, Divider, InputNumber, Tabs, Tooltip, Modal, DatePicker, Upload, Checkbox,
   Dropdown, Switch,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
@@ -22,6 +22,7 @@ import DocumentTemplate, { generatePrintHTML } from '../../components/templates/
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
 import { computeRecordBuckets, computeRecordGrandTotal, kitOrderValue } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
+import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import useDebouncedValue from '../../hooks/useDebouncedValue';
@@ -438,6 +439,12 @@ export default function Billing() {
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       rawDate: inv.invoiceDate || null,
       dueDate: inv.dueDate ? new Date(inv.dueDate).toLocaleString() : '—',
+      // Payment-terms date printed beside the Invoice Date — the invoice's own order first.
+      ...resolvePaymentTermDate({
+        sources: [linkedOrder, fullOrder, linkedLead, quotationLead, linkedQuotation],
+        lead: linkedLead || quotationLead || fullOrder?.leadId,
+        isSample: fullOrder?.orderCategory === 'SAMPLE' || linkedLead?.leadType === 'SAMPLE' || quotationLead?.leadType === 'SAMPLE',
+      }),
       amount: kitMoney.taxable || inv.subtotal,
       gst: kitMoney.gst || inv.gstAmount,
       gstPercent: inv.gstPercent,
@@ -617,10 +624,12 @@ export default function Billing() {
       isEmergency: false,
       date: q.quoteDate ? new Date(q.quoteDate).toLocaleString() : '—',
       rawDate: q.quoteDate || null,
-      expectedDeliveryDate: (() => {
-        const d = q.orderDeliveryDate || lead?.orderDeliveryDate || linkedOrder?.expectedDeliveryDate;
-        return d && dayjs(d).isValid() ? dayjs(d).format('DD/MM/YYYY') : '';
-      })(),
+      // Payment-terms date printed beside the Quotation Date (replaces Expected Delivery Date).
+      ...resolvePaymentTermDate({
+        sources: [editOrder || linkedOrder, lead, q],
+        lead: lead || (editOrder || linkedOrder)?.leadId,
+        isSample: lead?.leadType === 'SAMPLE',
+      }),
       amount: kitMoney.taxable || q.amount,
       gst: kitMoney.gst || q.gstAmount,
       total,
@@ -740,6 +749,11 @@ export default function Billing() {
       orderCategory: o.orderCategory || 'ORDER',
       isEmergency: o.isEmergency || false,
       date: o.createdAt ? dayjs(o.createdAt).format('DD/MM/YYYY') : '—',
+      ...resolvePaymentTermDate({
+        sources: [o, o.leadId],
+        lead: o.leadId,
+        isSample: o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE',
+      }),
       amount: subtotal,
       gst: effectiveGst,
       total,
@@ -813,17 +827,13 @@ export default function Billing() {
   // is collected with this payment (counted as received). Unpaid (default): it only raises the total —
   // nothing is credited as paid for it, so it stays due until a later payment.
   const [payCourierPaid, setPayCourierPaid] = useState(false);
+  // Round Off is no longer typed in: ticking it drops the paise from the total (see signedRoundOff
+  // below), so there is no Addition/Discount choice or amount field any more.
   const [payRoundOffVisible, setPayRoundOffVisible] = useState(false);
-  const [payRoundOffAmount, setPayRoundOffAmount] = useState(0);
-  const [payRoundOffType, setPayRoundOffType] = useState('addition'); // 'addition' | 'discount'
   // Paid / Unpaid switch. Paid: the round off is counted as received, so it never moves the
   // balance (the original behaviour). Unpaid (default): it only adjusts the total — nothing is
-  // credited as paid for it, so an Addition leaves that much still due and a Discount shrinks it.
+  // credited as paid for it, so the round off just shrinks what is still due.
   const [payRoundOffPaid, setPayRoundOffPaid] = useState(false);
-  // Signed round-off value: Addition grows the payable total, Discount shrinks it.
-  // Kept signed so every downstream sum (net payable, invoice total, saved entry) can
-  // keep doing plain addition without knowing about the Addition/Discount choice.
-  const signedRoundOff = (payRoundOffType === 'discount' ? -1 : 1) * (Number(payRoundOffAmount) || 0);
   const [paymentRefNum] = useState('176');
   const [payLinkedInvoices, setPayLinkedInvoices] = useState([]);
 
@@ -928,8 +938,6 @@ export default function Billing() {
     setPayCourierAmount(0);
     setPayCourierPaid(false);
     setPayRoundOffVisible(false);
-    setPayRoundOffAmount(0);
-    setPayRoundOffType('addition');
     setPayRoundOffPaid(false);
     setRecordPayOpen(true);
   };
@@ -940,6 +948,13 @@ export default function Billing() {
   // HNG bears the transport cost itself, so a courier charge recorded here must not touch this
   // invoice/quotation/order's own total. CLIENT (or unset, for older records) is unaffected.
   const courierScopeIsHNG = recordPayInv?.transportationBy === 'HNG';
+  // Round Off drops the paise from the record's total — including the courier charge being added in
+  // this save (unless HNG bears it) — so the total lands on a whole rupee: ₹2,70,045.15 → ₹2,70,045.00
+  // is a round off of −₹0.15. 0 when the total is already whole. Saved as the same signed `roundOff`
+  // as before, so every module that reads it (backend, Sales, PDFs, reports) is unchanged.
+  const roundOffBase = r2((Number(recordPayInv?.total) || 0)
+    + (payCourierVisible && !courierScopeIsHNG ? Number(payCourierAmount) || 0 : 0));
+  const signedRoundOff = r2(Math.floor(roundOffBase) - roundOffBase) || 0;
   const paymentAmounts = () => resolvePaymentAmounts({
     amount: payAmount,
     courier: payCourierVisible ? Number(payCourierAmount) || 0 : 0,
@@ -1095,7 +1110,7 @@ export default function Billing() {
     const unpaidRoundOff = !roundOffPaid && roundOff !== 0;
     const adjustmentOnly = (unpaidCourier || unpaidRoundOff) && net === 0;
     // The record's total once this entry lands. An Unpaid round off / courier charge moves the total
-    // (a courier charge and an Addition raise it, a Discount lowers it) without adding anything to
+    // (a courier charge raises it, a round off lowers it) without adding anything to
     // what's paid, so the stored balance/status below must be measured against THIS total —
     // `recordPayInv.total` is the pre-entry figure and would leave the stored balance off by that
     // amount. Every other entry (no round off/courier, or Paid ones) is measured exactly as before.
@@ -2304,40 +2319,29 @@ export default function Billing() {
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Checkbox
                   checked={payRoundOffVisible}
-                  onChange={(e) => { setPayRoundOffVisible(e.target.checked); if (!e.target.checked) { setPayRoundOffAmount(0); setPayRoundOffType('addition'); setPayRoundOffPaid(false); } }}
+                  onChange={(e) => { setPayRoundOffVisible(e.target.checked); if (!e.target.checked) setPayRoundOffPaid(false); }}
                 >
                   <Text style={{ fontSize: 13, fontWeight: 500 }}>Round Off</Text>
                 </Checkbox>
-                {payRoundOffVisible && (
-                  <Radio.Group
-                    value={payRoundOffType}
-                    onChange={(e) => setPayRoundOffType(e.target.value)}
-                    optionType="button"
-                    buttonStyle="solid"
-                    size="small"
-                  >
-                    <Radio.Button value="addition">Addition</Radio.Button>
-                    <Radio.Button value="discount">Discount</Radio.Button>
-                  </Radio.Group>
-                )}
               </div>
-              {payRoundOffVisible && (
+              {payRoundOffVisible && signedRoundOff === 0 && (
+                <Text style={{ fontSize: 12, color: '#888', display: 'block', marginTop: 8 }}>
+                  Total ₹{roundOffBase.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} is already a whole amount — nothing to round off.
+                </Text>
+              )}
+              {payRoundOffVisible && signedRoundOff !== 0 && (
                 <div style={{ marginTop: 8 }}>
-                  <Text style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 4 }}>Round Off Amount</Text>
-                  <InputNumber
-                    prefix="₹"
-                    value={payRoundOffAmount}
-                    onChange={(v) => setPayRoundOffAmount(v ?? 0)}
-                    step={0.1}
-                    precision={2}
-                    min={0}
-                    style={{ width: '100%', borderRadius: 8 }}
-                    controls={false}
-                  />
-                  <Text style={{ fontSize: 12, color: payRoundOffType === 'discount' ? '#e53935' : '#16a34a', display: 'block', marginTop: 4 }}>
-                    {payRoundOffType === 'discount'
-                      ? `− ₹${(Number(payRoundOffAmount) || 0).toLocaleString()} will be subtracted from the total`
-                      : `+ ₹${(Number(payRoundOffAmount) || 0).toLocaleString()} will be added to the total`}
+                  {/* Worked out from the total (paise dropped) — nothing to type or choose. */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', borderRadius: 8, background: '#fafafa', border: '1px solid #ececf3' }}>
+                    <Text style={{ fontSize: 13, color: '#555' }}>
+                      Total{payCourierVisible && !courierScopeIsHNG && Number(payCourierAmount) ? ' (incl. courier)' : ''}
+                    </Text>
+                    <Text style={{ fontSize: 13 }}>
+                      ₹{roundOffBase.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} → <Text strong style={{ fontSize: 13 }}>₹{r2(roundOffBase + signedRoundOff).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</Text>
+                    </Text>
+                  </div>
+                  <Text style={{ fontSize: 12, color: '#e53935', display: 'block', marginTop: 4 }}>
+                    {`− ₹${Math.abs(signedRoundOff).toFixed(2)} will be subtracted from the total`}
                   </Text>
                   {/* Paid / Unpaid — whether the round off also counts as money received */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, padding: '8px 10px', borderRadius: 8, background: '#f7f7fb', border: '1px solid #ececf3' }}>

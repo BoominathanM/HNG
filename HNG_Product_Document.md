@@ -470,7 +470,7 @@ Once paid, the "Paid" status appears consistently on the Financial page, the Dis
 
 **Route:** Reports. All reports carry a rich date filter (Today, This/Last Week, Last 7 / 365 days, This/Last Month, This/Last Quarter, Current / Previous Fiscal Year) and export to **Excel (CSV)** and **PDF (print)**. See the [Reports Catalogue](#10-reports-catalogue) for what each one shows. Tabs:
 
-Sales Report · Purchase Report · Local Purchase Report · Profit & Loss · Bill-wise P&L · Performance · Monthly GST · Forwarding & Courier Charges · Transportation Charge Report · Auditor Tax Report · Approval Report · Switch Report · Damaged Report · Task Management Performance.
+Sales Report · Purchase Report · Local Purchase Report · Profit & Loss · Bill-wise P&L · Performance · Monthly GST · Forwarding & Courier Charges · Auditor Tax Report · Approval Report · Switch Report · Damaged Report · Task Management Performance.
 
 ---
 
@@ -658,7 +658,6 @@ Scheduled background jobs run the time-based reminders (payment due, follow-up, 
 | **Performance** | Sales leaderboard, top performer, team revenue, average target achieved, total complaints; target vs achievement and monthly trend | Excel / PDF |
 | **Monthly GST** | Output vs input GST by month with CGST / SGST / IGST columns; net GST payable | Excel / PDF |
 | **Forwarding & Courier Charges** | Courier charges captured on payments, grouped by invoice date | Excel / PDF |
-| **Transportation Charge Report** | Transport / lorry charges per dispatch | Excel / PDF |
 | **Auditor Tax Report** | Formal sales + purchase tax statement laid out for a CA / auditor | Excel / PDF |
 | **Approval Report** | Log of emergency-dispatch and other approvals (who, when, outcome) | Excel / PDF |
 | **Switch Report** | Sticker → Box / Frosted routing switches and their approvals | Excel / PDF |

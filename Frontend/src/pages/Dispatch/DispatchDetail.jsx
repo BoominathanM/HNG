@@ -45,6 +45,7 @@ import {
 import { buildDocComposition, computePersonalizedComposition } from '../../utils/docComposition';
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
+import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDispatchGroupedProducts, summarizeDispatchVerification, getRowPendingQty } from '../../utils/dispatchGrouping';
 import { fingerprintFile } from '../../utils/photoFingerprint';
@@ -554,10 +555,20 @@ export default function DispatchDetail() {
       excludeInvoiceId: inv._id,
     });
 
+    // Payment-terms date printed beside the Invoice Date — the invoice's own order, then the
+    // dispatch's populated order, then their lead (see resolvePaymentTermDate).
+    const dispatchOrder = dispatchData?.data?.orderId && typeof dispatchData.data.orderId === 'object' ? dispatchData.data.orderId : null;
+    const paymentTermDateFields = resolvePaymentTermDate({
+      sources: [linkedOrder, dispatchOrder, linkedOrder?.leadId, dispatchOrder?.leadId],
+      lead: [linkedOrder?.leadId, dispatchOrder?.leadId].find((l) => l && typeof l === 'object'),
+      isSample: !!order?.isSample,
+    });
+
     return {
       inv: inv.invoiceNumber,
       pendingDue,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
+      ...paymentTermDateFields,
       type: inv.invoiceType || 'GST',
       total: liveTotal > 0 ? liveTotal : (inv.total || 0),
       gst: composition ? composition.gst : (inv.gstAmount || 0),

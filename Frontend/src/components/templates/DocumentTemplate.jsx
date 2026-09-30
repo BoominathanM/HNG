@@ -390,8 +390,11 @@ function computeModel(type, data, settings) {
 
   const docNumber = isQuotation ? (data.quot || data.number || '2122') : (data.inv || data.number || 'INV-001');
   const docDate = data.date || '08/05/2026';
-  // Expected Delivery Date is shown next to the Quotation Date only — invoices show no second date.
-  const secondDate = isQuotation ? (data.expectedDeliveryDate || '') : '';
+  // Payment-terms date (replaces the old Expected Delivery Date) — shown next to the Quotation /
+  // Invoice date on both documents. Callers resolve it from the Lead's Payment Terms via
+  // resolvePaymentTermDate (utils/paymentTermDate.js); no label/date → nothing is shown.
+  const secondDateLabel = data.paymentTermDate ? (data.paymentTermDateLabel || '') : '';
+  const secondDate = secondDateLabel ? data.paymentTermDate : '';
 
   // Other outstanding dues for this same hotel (from its other unpaid invoices), pre-fetched
   // by the caller (Billing/Sales/Dispatch) and attached as data.pendingDue = { amount, hotelName }.
@@ -414,7 +417,7 @@ function computeModel(type, data, settings) {
 
   return {
     cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
-    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
+    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate, secondDateLabel,
     pendingDue, grandTotalWithPending, paidAmount, balanceAmount,
   };
 }
@@ -609,7 +612,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
 export function generatePrintHTML(type, data = {}, settings = {}) {
   const m = computeModel(type, data, settings);
   const { cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
-    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
+    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate, secondDateLabel,
     pendingDue, grandTotalWithPending, paidAmount, balanceAmount } = m;
   const ACCENT = cfg.theme.accent;
   const LIGHT = cfg.theme.light;
@@ -777,7 +780,7 @@ export function generatePrintHTML(type, data = {}, settings = {}) {
     <div style="display:flex;padding:10px 20px;border-bottom:1px solid ${BORDER};background:${LIGHT};gap:40px;font-size:11px;flex-wrap:wrap;">
       <div><strong>${isQuotation ? 'Quotation No.:' : 'Invoice No.:'}</strong> ${docNumber}</div>
       <div><strong>${isQuotation ? 'Quotation Date:' : 'Invoice Date:'}</strong> ${docDate}</div>
-      ${isQuotation && secondDate ? `<div><strong>Expected Delivery Date:</strong> ${secondDate}</div>` : ''}
+      ${secondDate ? `<div><strong>${secondDateLabel}:</strong> ${secondDate}</div>` : ''}
     </div>
 
     <!-- Bill To / Ship To -->
@@ -1050,7 +1053,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
 export default function DocumentTemplate({ type = 'quotation', data = {}, settings = {} }) {
   const m = computeModel(type, data, settings);
   const { cfg, isQuotation, items, sections, totalQty, totalTax, subtotalAmt, taxableAmount,
-    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate,
+    forwardingCharge, courierCharge, roundOff, taxRows, totalAmount, customer, docNumber, docDate, secondDate, secondDateLabel,
     pendingDue, grandTotalWithPending, paidAmount, balanceAmount } = m;
   const ACCENT = cfg.theme.accent;
   const LIGHT = cfg.theme.light;
@@ -1101,7 +1104,7 @@ export default function DocumentTemplate({ type = 'quotation', data = {}, settin
       <div style={{ display: 'flex', padding: '10px 20px', borderBottom: `1px solid ${BORDER}`, background: LIGHT, gap: 40, fontSize: 11, flexWrap: 'wrap' }}>
         <div><strong>{isQuotation ? 'Quotation No.:' : 'Invoice No.:'}</strong> {docNumber}</div>
         <div><strong>{isQuotation ? 'Quotation Date:' : 'Invoice Date:'}</strong> {docDate}</div>
-        {isQuotation && secondDate && <div><strong>Expected Delivery Date:</strong> {secondDate}</div>}
+        {secondDate && <div><strong>{secondDateLabel}:</strong> {secondDate}</div>}
       </div>
 
       {/* Bill To / Ship To */}

@@ -1362,10 +1362,6 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/forwarding-courier', params }),
       providesTags: ['Reports'],
     }),
-    getTransportationChargeReport: builder.query({
-      query: (params) => ({ url: '/reports/transportation-charge', params }),
-      providesTags: ['Reports'],
-    }),
     getMyPerformance: builder.query({
       query: (params) => ({ url: '/reports/my-performance', params }),
       providesTags: ['Reports'],
@@ -1842,7 +1838,6 @@ export const {
   useGetMonthlyGstQuery,
   useGetAuditorTaxQuery,
   useGetForwardingCourierReportQuery,
-  useGetTransportationChargeReportQuery,
   useGetMyPerformanceQuery,
   useGetPerformanceQuery,
   useGetTaskPerformanceReportQuery,

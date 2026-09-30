@@ -26,6 +26,7 @@ import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition } from '../../utils/docComposition';
 import { sumRoundOff, sumCourierCharges } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
+import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import useDebouncedValue from '../../hooks/useDebouncedValue';
@@ -2491,6 +2492,16 @@ export default function Sales() {
     }
   };
 
+  // The originating Lead of a quotation/negotiation/order — used for its created date on
+  // 100%-payment documents. Prefers a populated leadId that carries createdAt, else leadsData.
+  const leadForDoc = (rec) => {
+    const lid = rec?.leadId;
+    const populated = lid && typeof lid === 'object' ? lid : null;
+    if (populated?.createdAt) return populated;
+    const id = String(populated?._id || lid || '');
+    return (id && leadsData.find((l) => String(l._id || l.key) === id)) || populated;
+  };
+
   const handleDownloadQuotation = async (order) => {
     // findLinkedQuotation handles both raw ObjectId and populated {_id, quotCode} objects
     const linkedQuot = findLinkedQuotation(order);
@@ -2540,6 +2551,15 @@ export default function Sales() {
       composition,
       quot: linkedQuot?.qid || quotCodeFromPopulated || order.quotCode || src.qid || src.quotCode || order.oid,
       date: src.date ? dayjs(src.date).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY'),
+      // Payment-terms date printed beside the document date (replaces Expected Delivery Date).
+      ...(() => {
+        const lead = leadForDoc(order) || leadForDoc(linkedQuot);
+        return resolvePaymentTermDate({
+          sources: [order, lead, linkedQuot],
+          lead,
+          isSample: order.orderCategory === 'SAMPLE' || lead?.leadType === 'SAMPLE',
+        });
+      })(),
       taxableAmount: composition ? composition.taxable : r2(calcTotal(products)),
       cgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
       sgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
@@ -2622,6 +2642,16 @@ export default function Sales() {
       composition,
       quot: docCode,
       date: rec.date ? dayjs(rec.date).format('DD/MM/YYYY') : dayjs().format('DD/MM/YYYY'),
+      // Payment-terms date printed beside the document date — the lead's own selection first,
+      // then the quotation/negotiation's copy of it.
+      ...(() => {
+        const lead = leadForDoc(rec);
+        return resolvePaymentTermDate({
+          sources: [lead, rec],
+          lead,
+          isSample: lead?.leadType === 'SAMPLE' || rec.orderCategory === 'SAMPLE',
+        });
+      })(),
       taxableAmount: composition ? composition.taxable : r2(calcTotal(products)),
       cgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),
       sgst: composition ? r2(composition.gst / 2) : r2(gstAmt / 2),

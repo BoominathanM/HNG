@@ -308,9 +308,9 @@ const itemNeedsPrintStep = (item) => itemNeedsSticker(item) || itemNeedsPrinting
 
 // Whether an item must pass through the Sticker/Print tab BEFORE it appears in its
 // box/ziplock/butter packaging tab.
-//   • GENUINE KITS (separate + personalized): NEVER — a kit always routes DIRECTLY to its
-//     display-unit tab (Box/Ziplock/Butter); any sticker/printing is a sub-step done within
-//     that tab.
+//   • GENUINE KITS (separate + personalized): NEVER — a kit routes DIRECTLY to its display-unit
+//     tab (Box/Ziplock/Butter) with any printing done within that tab. (A Sticker=Yes,
+//     Printing≠Yes kit goes to the Sticker tab INSTEAD, not before — see isStickerOnlyKit.)
 //   • Standalone products (including a standalone product's synthesized "personalized packing"
 //     copy — see isPersonalizedPacking/underlyingIsKit in index.jsx): only Sticker=Yes routes
 //     through the Sticker tab — but a Sticker=Yes product's destination IS the sticker tab (it
@@ -331,6 +331,28 @@ const mustPrintBeforePackaging = (item) => {
   if (isGenuineKit) return false;
   return itemNeedsSticker(item);
 };
+
+// A GENUINE kit (not a synthesized personalized-packing copy) whose own Sticker=Yes and
+// Printing≠Yes. Its display unit (Box/Ziplock/Butter Paper pouch) is NOT printed — the only design
+// job is the sticker printed and stuck onto it — so, exactly like a standalone Sticker=Yes product
+// (see getItemPackagingType), it belongs in the Sticker tab ONLY, not its display-unit tab.
+// Printing=Yes kits (the display unit itself is printed) still route to the display-unit tab.
+// Exported so OperationDetail.jsx resolves the same kit's approval from the Sticker tab.
+export const isStickerOnlyKit = (item) => !!item
+  && !!(item.isKit || item.kitType)
+  && !item.isPersonalizedPacking
+  && itemNeedsSticker(item)
+  && !itemNeedsPrinting(item);
+
+// A synthesized "personalized packing" copy (see index.jsx productionQueues) whose personalized
+// OUTER unit is itself Sticker=Yes, Printing≠Yes — the order-level kitSticker/kitPrinting, stamped
+// onto the copy as outerSticker/outerPrinting. The outer box/pouch gets a sticker, not a print, so
+// its packing step is Sticker-tab work only, same as isStickerOnlyKit.
+const isStickerOnlyOuterPacking = (item) => !!item?.isPersonalizedPacking
+  && normYNOps(item.outerSticker) === 'YES'
+  && normYNOps(item.outerPrinting) !== 'YES';
+
+const isStickerOnlyItem = (item) => isStickerOnlyKit(item) || isStickerOnlyOuterPacking(item);
 
 // Determine an item's ultimate packaging destination (after sticker step completes).
 const getItemPackagingType = (item, order) => {
@@ -628,6 +650,43 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
     return false;
   };
 
+  // StickerRequest.stickerType each packaging tab's design work is filed under.
+  const PACK_TYPE_TO_SR_TYPE = {
+    box: 'Box', frosted: 'Frosted Ziplock', butter: 'Butter Paper', wooden_brush: 'Wooden Brush', other: 'Other',
+  };
+  // True when this item's design work was already started in the given packaging tab — a kit-level
+  // 'Kit' request, or one for the item itself, of that tab's type and category (matched the same way
+  // index.jsx's findStickerReq resolves a tab row's request). Such work finishes where it started
+  // instead of vanishing from that tab mid-flow when the item becomes sticker-only.
+  const startedInTab = (order, item, packType) => {
+    const srType = PACK_TYPE_TO_SR_TYPE[packType];
+    if (!srType) return false;
+    const cat = itemCategoryOf(item);
+    const pLower = String(item.product || item.itemName || '').toLowerCase();
+    return stickerRequests.some((s) =>
+      (s.orderId?.orderCode === order.id || s.orderId === order.id)
+      && s.stickerType === srType
+      && ['kit', pLower].includes(String(s.product || '').toLowerCase())
+      && (!s.category || s.category === cat));
+  };
+  // True when a sticker-only kit / outer-packing copy (isStickerOnlyItem) is re-routed from its
+  // display-unit tab to the Sticker tab. Kits already resolving to 'sticker' (legacy, no resolvable
+  // display unit) and work already started in the display-unit tab are left where they were.
+  const routedToSticker = (item, order) => {
+    if (!isStickerOnlyItem(item)) return false;
+    const base = getItemPackagingType(item, order);
+    return base !== 'sticker' && !startedInTab(order, item, base);
+  };
+  // Final queue destination: 'sticker' for a re-routed sticker-only item, otherwise unchanged.
+  const packTypeOf = (item, order) =>
+    (routedToSticker(item, order) ? 'sticker' : getItemPackagingType(item, order));
+  // The personalized individual-packing step (an item's own packing material differs from its
+  // display-unit tab — see the Box/Ziplock/Butter/Other queues) is skipped for an item re-routed to
+  // the Sticker tab: "Sticker tab only" means it appears in no packaging tab, unless work already
+  // started in that tab.
+  const innerPackingAllowed = (item, order, packType) =>
+    !routedToSticker(item, order) || startedInTab(order, item, packType);
+
   return {
     // Sticker queue: all items that need sticker printing (logoType=Sticker or sticker=YES),
     // excluding pure frosted/ziplock items that don't need sticker printing.
@@ -642,6 +701,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       );
       const items = (order.items || []).map((item, idx) => ({ item, idx }))
         .filter(({ item }) => {
+          // Sticker-only kit / sticker-only personalized outer unit re-routed here (routedToSticker).
+          // An outer-packing copy qualifies on the OUTER unit's Sticker=Yes, not the product's own.
+          if (routedToSticker(item, order)) return true;
           // Sticker tab shows ONLY items where sticker printing was explicitly requested.
           // sticker='NO' or sticker unset (empty/undefined) → never route to Sticker tab,
           // regardless of logoType inference or getItemPackagingType fallback.
@@ -650,7 +712,15 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
           return itemNeedsPrintStep(item);
         })
         .flatMap(({ item, idx }) => {
-          const packagingType = getItemPackagingType(item, order);
+          const packagingType = packTypeOf(item, order);
+          // Re-routed kit / outer unit: index.jsx groups its rows under ONE kit parent (one sticker
+          // for the display unit, one shared design/approval/print) — same shape as the packaging
+          // tabs' kit parents. stickerKitKey identifies the group; srKitType is the StickerRequest
+          // kitType that tells this kit's request apart from another kit parent of the same order +
+          // category (e.g. a personalized Dental kit AND the personalized outer Box).
+          const groupAsKitSticker = routedToSticker(item, order);
+          const isOuterCopy = groupAsKitSticker && !!item.isPersonalizedPacking;
+          const itemCat = itemCategoryOf(item);
           const productName = item.product || item.itemName;
           const pKey = (productName || '').toLowerCase();
           const eQty = emergencyQtyMap.get(pKey);
@@ -674,7 +744,9 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             qty,
             size: item.size || getDefaultSize(productName),
             unit: item.unit || '',
-            status: findSR(order.id, productName, 'Sticker')?.status || 'Pending',
+            // Grouped rows: category-scoped, so an outer-packing copy doesn't borrow the product's
+            // own (separate_product) sticker status.
+            status: findSR(order.id, productName, 'Sticker', groupAsKitSticker ? itemCat : null)?.status || 'Pending',
             sent: order.printingStatus === 'Not Started' ? 0 : Math.round(qty * 0.7),
             verified: order.stockStatus === 'Received',
             note: (order.notifications || [])[0] || '',
@@ -687,10 +759,18 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
             logoUrl: order.logoUrl || '',
             // Detail fields surfaced in the queue table
             isKit: !!(item.isKit || item.kitType),
+            kitId: item.kitId || '',
+            kitName: item.kitName || '',
+            groupAsKitSticker,
+            stickerKitKey: groupAsKitSticker ? (isOuterCopy ? 'outer' : String(item.kitId || item.kitName || '')) : '',
+            srKitType: groupAsKitSticker
+              ? (isOuterCopy ? 'Personalized Kit'
+                : (item.kitName || (itemCat === 'personalized' ? 'Personalized Kit' : 'Separate Kit')))
+              : '',
             displayUnit: item.displayUnit || kitDuNameOf(item, order) || '',
-            sticker: item.sticker || '',
+            sticker: isOuterCopy ? normYNOps(item.outerSticker) : (item.sticker || ''),
             stickerSize: item.stickerSize || '',
-            printing: item.printing || '',
+            printing: isOuterCopy ? normYNOps(item.outerPrinting) : (item.printing || ''),
             packingMaterial: item.packingMaterial || item.packaging || '',
           });
 
@@ -725,7 +805,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
-        const packType = getItemPackagingType(item, order);
+        const packType = packTypeOf(item, order);
         // Kit items can appear in BOTH Box and Frosted tabs simultaneously:
         //   - displayUnitTab drives the KIT ASSEMBLY step (e.g. Frosted for a Ziplock kit)
         //   - packingMaterialTab drives the INDIVIDUAL PRODUCT PACKING step (e.g. Box for paper-box products)
@@ -735,7 +815,8 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // so it is routed SOLELY by its display unit and must never leak into a different tab.
         const needsBoxPacking = packType === 'box' ||
           (isKitItem && itemCategoryOf(item) === 'personalized'
-            && item.packingMaterialTab === 'Box' && kitTabOf(item, order) !== 'Box');
+            && item.packingMaterialTab === 'Box' && kitTabOf(item, order) !== 'Box'
+            && innerPackingAllowed(item, order, 'box'));
         if (!needsBoxPacking) return;
         const product = item.product || item.itemName;
         // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
@@ -835,7 +916,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
-        const packType = getItemPackagingType(item, order);
+        const packType = packTypeOf(item, order);
         // Kit items can appear in BOTH Box and Frosted tabs simultaneously (dual-step flow).
         // When a PERSONALIZED kit item has packingMaterialTab='Ziplock' but the display unit
         // routes to Box, include it here for the individual packing step — independent of the kit
@@ -845,7 +926,8 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // never leak into Frosted even if their packing material string contains 'ziplock'.
         const needsFrostedPacking = packType === 'frosted' ||
           (isKitItem && itemCategoryOf(item) === 'personalized'
-            && item.packingMaterialTab === 'Ziplock' && kitTabOf(item, order) !== 'Ziplock');
+            && item.packingMaterialTab === 'Ziplock' && kitTabOf(item, order) !== 'Ziplock'
+            && innerPackingAllowed(item, order, 'frosted'));
         if (!needsFrostedPacking) return;
         const product = item.product || item.itemName;
         // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
@@ -948,7 +1030,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
-        const packType = getItemPackagingType(item, order);
+        const packType = packTypeOf(item, order);
         // PERSONALIZED kit items can appear in multiple packaging tabs simultaneously (dual-step
         // flow): when such a kit has packingMaterialTab='Butter Paper' but the display unit routes
         // elsewhere, include it here for the individual packing step. Restricted to personalized
@@ -956,7 +1038,8 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
         // different tab.
         const needsButterPacking = packType === 'butter' ||
           (isKitItem && itemCategoryOf(item) === 'personalized'
-            && item.packingMaterialTab === 'Butter Paper' && kitTabOf(item, order) !== 'Butter Paper');
+            && item.packingMaterialTab === 'Butter Paper' && kitTabOf(item, order) !== 'Butter Paper'
+            && innerPackingAllowed(item, order, 'butter'));
         if (!needsButterPacking) return;
         const product = item.product || item.itemName;
         // "Has print/sticker work" — drives the queue note + the no-reason exclusion below.
@@ -1057,7 +1140,7 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
-        const packType = getItemPackagingType(item, order);
+        const packType = packTypeOf(item, order);
         // Kit items can appear in BOTH this tab and another packaging tab simultaneously:
         //   - displayUnitTab drives the KIT ASSEMBLY step
         //   - packingMaterialTab drives the INDIVIDUAL PRODUCT PACKING step
@@ -1162,10 +1245,11 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
       const result = [];
       (order.items || []).forEach((item, idx) => {
         const isKitItem = !!(item.isKit || item.kitType);
-        const packType = getItemPackagingType(item, order);
+        const packType = packTypeOf(item, order);
         const needsOtherPacking = packType === 'other' ||
           (isKitItem && itemCategoryOf(item) === 'personalized'
-            && item.packingMaterialTab === 'Other' && kitTabOf(item, order) !== 'Other');
+            && item.packingMaterialTab === 'Other' && kitTabOf(item, order) !== 'Other'
+            && innerPackingAllowed(item, order, 'other'));
         if (!needsOtherPacking) return;
         const product = item.product || item.itemName;
         const needsPrint = itemNeedsPrintStep(item);
