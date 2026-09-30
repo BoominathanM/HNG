@@ -1386,6 +1386,10 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/damaged', params }),
       providesTags: ['Reports'],
     }),
+    getPaymentBankReport: builder.query({
+      query: (params) => ({ url: '/reports/payment-bank', params }),
+      providesTags: ['Reports'],
+    }),
 
     // ── WhatsApp ────────────────────────────────────────────────────────────
     getWhatsAppConfig: builder.query({
@@ -1844,6 +1848,7 @@ export const {
   useGetEmergencyApprovalsReportQuery,
   useGetSwitchReportQuery,
   useGetDamagedReportQuery,
+  useGetPaymentBankReportQuery,
   useUploadFilesMutation,
   useDeleteFileMutation,
   // WhatsApp

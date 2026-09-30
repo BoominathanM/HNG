@@ -1,4 +1,5 @@
 import React from 'react';
+import { resolveInvoiceBankAccount } from '../../utils/bankAccounts';
 
 const COMPANY = {
   name: 'HealNGlow.Pvt.Ltd',
@@ -96,7 +97,9 @@ function resolveConfig(settings = {}, data = {}) {
     email: settings.email || COMPANY.email,
   };
   const logoUrl = settings.logoUrl || data.logoUrl || DEFAULT_LOGO;
-  const rawBank = asPlainObject(settings.bankDetails);
+  // The account chosen under Settings → Invoice Settings → Bank Accounts ("Show on invoice"),
+  // falling back to the legacy single bankDetails object for settings saved before it existed.
+  const rawBank = resolveInvoiceBankAccount(settings) || asPlainObject(settings.bankDetails);
   const bank = {
     name: rawBank.name || BANK.name,
     ifsc: rawBank.ifsc || BANK.ifsc,

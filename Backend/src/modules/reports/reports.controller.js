@@ -10,6 +10,12 @@ const User = require('../../models/User');
 const Complaint = require('../../models/Complaint');
 const DamageLog = require('../../models/DamageLog');
 const CompanySettings = require('../../models/CompanySettings');
+const Lead = require('../../models/Lead');
+const Quotation = require('../../models/Quotation');
+const Negotiation = require('../../models/Negotiation');
+const Payment = require('../../models/Payment');
+const Kit = require('../../models/Kit');
+const { computeCompositionGrandTotal, storedTotalWithRoundOff } = require('../../utils/orderCalc');
 const asyncHandler = require('../../utils/asyncHandler');
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
@@ -1971,4 +1977,372 @@ exports.exportGstReport = asyncHandler(async (req, res) => {
   res.setHeader('Content-Type', 'text/csv');
   res.setHeader('Content-Disposition', 'attachment; filename=gst-report.csv');
   res.send(csv);
+});
+
+// ─── PAYMENT BANK DETAILS REPORT ──────────────────────────────────────────────
+// How much each receiving bank account (Settings → Invoice Settings → bankAccounts) has
+// collected, and how much is still pending on the orders/invoices expected to pay into it.
+//
+// Received: a customer payment is written to several places — Sales' payment entries land on
+// the Lead/Quotation/Negotiation/Order paymentCollection (and are copied along the chain on
+// conversion), Billing's Record Payment In copies its entry onto every linked record, and an
+// invoice payment also creates a Payment document. Each copy carries the same client-generated
+// recordedAt, so recordedAt + amount identifies one payment across all of them (the same
+// identity Sales' combinedPaymentCollection and mergeCourierEntries above dedupe on). Entries
+// with no recordedAt (older data) fall back to chain + day + amount; a Payment document with
+// no recordedAt is matched to its Order copy (source 'Billing Invoice') by amount and time.
+//
+// Pending: per confirmed order (not Cancelled, not a Sample) — total from the kit-aware
+// composition (stored total when that can't be derived), paid = the larger of the order's own
+// collection and its invoices' advance (as resolveOrderPaymentStatus does) — plus invoices
+// with no linked order. It is attributed to the bank account of the most recent bank-tagged
+// payment on that deal; a deal with none is expected in the account printed on invoices.
+// Pending is a live snapshot and ignores the date range; Received honours it.
+const PAYMENT_MODE_LABELS = {
+  UPI: 'UPI', CARD: 'Card', CASH: 'Cash', CHEQUE: 'Cheque', BANK_TRANSFER: 'Bank Transfer',
+  NEFT_RTGS: 'NEFT / RTGS', NET_BANKING: 'Net Banking', OTHER: 'Other', BANK_ACCOUNT: 'Bank Account',
+};
+const normalizePaymentMode = (m) => {
+  const k = String(m || '').trim().toUpperCase().replace(/[\s/]+/g, '_');
+  return PAYMENT_MODE_LABELS[k] || (m ? String(m) : '—');
+};
+const CASH_BUCKET = '__cash__';
+const UNASSIGNED_BUCKET = '__unassigned__';
+const maskAccountNo = (acc) => {
+  const digits = String(acc || '').replace(/\s/g, '');
+  return digits ? `****${digits.slice(-4)}` : '';
+};
+const bankAccountDisplayName = (a) => {
+  const base = (a?.label || a?.bank || 'Bank Account').trim();
+  const masked = maskAccountNo(a?.account);
+  return masked ? `${base} — ${masked}` : base;
+};
+const idStr = (v) => (v && typeof v === 'object' ? String(v._id || '') : String(v || ''));
+
+exports.getPaymentBankReport = asyncHandler(async (req, res) => {
+  const { startDate, endDate } = req.query;
+  const rangeStart = startDate ? new Date(startDate) : null;
+  const rangeEnd = endDate ? new Date(endDate) : null;
+  const inRange = (d) => {
+    if (!rangeStart && !rangeEnd) return true;
+    const t = d ? new Date(d).getTime() : NaN;
+    if (Number.isNaN(t)) return false;
+    if (rangeStart && t < rangeStart.getTime()) return false;
+    if (rangeEnd && t > rangeEnd.getTime()) return false;
+    return true;
+  };
+
+  const withPayments = { deletedAt: null, 'paymentCollection.0': { $exists: true } };
+  const [settings, kits, leads, quotations, negotiations, orders, invoices, payments] = await Promise.all([
+    CompanySettings.findOne().select('bankAccounts invoiceBankAccountId').lean(),
+    Kit.find().lean(),
+    Lead.find(withPayments).select('leadCode hotelName paymentCollection createdAt').lean(),
+    Quotation.find(withPayments).select('quotCode clientName leadId paymentCollection createdAt').lean(),
+    Negotiation.find(withPayments).select('negCode clientName leadId paymentCollection createdAt').lean(),
+    Order.find({ deletedAt: null })
+      .select('orderCode clientName leadId quotationId status orderCategory createdAt total amount paidAmount advancePaid advancePaidAmount paymentCollection products items kitOrders kitPrice kitOverallQty packagingIncludes packagingIncludesQty forwardingCharge forwardingChargeAmount transportationBy')
+      .lean(),
+    Invoice.find({ deletedAt: null })
+      .select('invoiceNumber invoiceDate partyId orderId quotationId total advanceAmount balanceDue isComplementary')
+      .populate('partyId', 'name')
+      .lean(),
+    Payment.find({})
+      .select('paymentRef invoiceId amount netAmount paymentMode bankAccountId bankAccountName recordedAt paymentDate createdAt transactionRef upiReference chequeNumber note createdBy')
+      .populate('createdBy', 'fullName name email')
+      .lean(),
+  ]);
+
+  const accounts = settings?.bankAccounts || [];
+  const accountById = new Map(accounts.map((a) => [a.accountId, a]));
+  const invoiceAccountId = settings?.invoiceBankAccountId && accountById.has(settings.invoiceBankAccountId)
+    ? settings.invoiceBankAccountId : null;
+
+  const orderById = new Map(orders.map((o) => [String(o._id), o]));
+  // Newest order per quotation — the same "latest wins" resolution Billing uses to link an
+  // invoice/quotation to its order.
+  const orderByQuotation = new Map();
+  [...orders].sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt)).forEach((o) => {
+    if (o.quotationId) orderByQuotation.set(String(o.quotationId), o);
+  });
+  const invoiceOrder = (inv) => orderById.get(idStr(inv.orderId)) || (inv.quotationId ? orderByQuotation.get(idStr(inv.quotationId)) : null) || null;
+  const invoiceById = new Map(invoices.map((i) => [String(i._id), i]));
+  const invoicesByOrder = new Map();
+  const standaloneInvoices = [];
+  invoices.forEach((inv) => {
+    const order = invoiceOrder(inv);
+    if (order) {
+      const k = String(order._id);
+      if (!invoicesByOrder.has(k)) invoicesByOrder.set(k, []);
+      invoicesByOrder.get(k).push(inv);
+    } else standaloneInvoices.push(inv);
+  });
+  const invoiceNosFor = (orderId) => (invoicesByOrder.get(orderId) || []).map((i) => i.invoiceNumber).filter(Boolean).join(', ');
+
+  // ── Received: every payment once ──
+  const received = new Map();
+  const dayKey = (d) => {
+    const t = d ? new Date(d) : null;
+    return t && !Number.isNaN(t.getTime()) ? t.toISOString().slice(0, 10) : 'nodate';
+  };
+  // rank: which copy's document is shown as the payment's reference (downstream wins).
+  const addEntry = (e, ctx) => {
+    const amount = r2(Number(e?.paidAmount) || 0);
+    if (amount <= 0) return; // an Unpaid round off / courier adjustment moves no money
+    const date = e.paymentDate || e.recordedAt || e.date || ctx.fallbackDate || null;
+    const key = e.recordedAt ? `rec:${e.recordedAt}|${amount}` : `leg:${ctx.chainKey}|${dayKey(date)}|${amount}`;
+    const existing = received.get(key);
+    if (existing) {
+      if (!existing.bankAccountId && e.bankAccountId) {
+        existing.bankAccountId = e.bankAccountId;
+        existing.bankAccountName = e.bankAccountName || '';
+      }
+      if (ctx.rank > existing.rank) Object.assign(existing, { docType: ctx.docType, docRef: ctx.docRef, rank: ctx.rank, orderId: ctx.orderId || existing.orderId });
+      return;
+    }
+    received.set(key, {
+      key,
+      date,
+      amount,
+      mode: normalizePaymentMode(e.paymentMode || e.paymentMethod),
+      bankAccountId: e.bankAccountId || null,
+      bankAccountName: e.bankAccountName || '',
+      client: ctx.client || '—',
+      docType: ctx.docType,
+      docRef: ctx.docRef || '',
+      rank: ctx.rank,
+      chainKey: ctx.chainKey,
+      orderId: ctx.orderId || null,
+      source: e.source || '',
+      reference: e.referenceNo || e.notes || e.note || '',
+      recordedBy: e.recordedByName || '',
+    });
+  };
+
+  orders.forEach((o) => (o.paymentCollection || []).forEach((e) => addEntry(e, {
+    rank: 4, docType: 'Order', docRef: o.orderCode, client: o.clientName, chainKey: idStr(o.leadId) || String(o._id), orderId: String(o._id), fallbackDate: o.createdAt,
+  })));
+  negotiations.forEach((n) => (n.paymentCollection || []).forEach((e) => addEntry(e, {
+    rank: 3, docType: 'Negotiation', docRef: n.negCode, client: n.clientName, chainKey: idStr(n.leadId) || String(n._id), fallbackDate: n.createdAt,
+  })));
+  quotations.forEach((q) => (q.paymentCollection || []).forEach((e) => addEntry(e, {
+    rank: 2, docType: 'Quotation', docRef: q.quotCode, client: q.clientName, chainKey: idStr(q.leadId) || String(q._id), fallbackDate: q.createdAt,
+  })));
+  leads.forEach((l) => (l.paymentCollection || []).forEach((e) => addEntry(e, {
+    rank: 1, docType: 'Lead', docRef: l.leadCode, client: l.hotelName, chainKey: String(l._id), fallbackDate: l.createdAt,
+  })));
+
+  // Billing invoice payments (Payment documents).
+  const FUZZY_MS = 5 * 60 * 1000;
+  payments.forEach((p) => {
+    const amount = r2(Number(p.netAmount ?? p.amount) || 0);
+    if (amount <= 0) return;
+    const inv = invoiceById.get(idStr(p.invoiceId));
+    const order = inv ? invoiceOrder(inv) : null;
+    const byName = p.createdBy?.fullName || p.createdBy?.name || p.createdBy?.email || '';
+    const reference = p.transactionRef || p.upiReference || p.chequeNumber || p.note || '';
+    const ctx = {
+      rank: 5,
+      docType: 'Invoice',
+      docRef: inv?.invoiceNumber || p.paymentRef,
+      client: inv?.partyId?.name || order?.clientName || '—',
+      chainKey: order ? (idStr(order.leadId) || String(order._id)) : `inv:${idStr(p.invoiceId)}`,
+      orderId: order ? String(order._id) : null,
+    };
+    let match = p.recordedAt ? received.get(`rec:${p.recordedAt}|${amount}`) : null;
+    if (!match && !p.recordedAt) {
+      const t = new Date(p.createdAt || p.paymentDate).getTime();
+      match = [...received.values()].find((r) => r.source === 'Billing Invoice' && r.amount === amount
+        && !r.matchedPayment && Math.abs(new Date(r.date).getTime() - t) <= FUZZY_MS);
+    }
+    if (match) {
+      match.matchedPayment = true;
+      if (!match.bankAccountId && p.bankAccountId) {
+        match.bankAccountId = p.bankAccountId;
+        match.bankAccountName = p.bankAccountName || '';
+      }
+      Object.assign(match, { docType: ctx.docType, docRef: ctx.docRef, rank: ctx.rank, reference: match.reference || reference, recordedBy: match.recordedBy || byName });
+      return;
+    }
+    const key = `pay:${p._id}`;
+    received.set(key, {
+      key,
+      date: p.paymentDate || p.createdAt,
+      amount,
+      mode: normalizePaymentMode(p.paymentMode),
+      bankAccountId: p.bankAccountId || null,
+      bankAccountName: p.bankAccountName || '',
+      ...ctx,
+      source: 'Billing Invoice',
+      reference,
+      recordedBy: byName,
+      matchedPayment: true,
+    });
+  });
+
+  const allPayments = [...received.values()];
+
+  // ── Buckets ──
+  const buckets = new Map();
+  const ensureBucket = (key, seed = {}) => {
+    if (!buckets.has(key)) {
+      buckets.set(key, {
+        key, accountId: null, label: '', bank: '', accountMasked: '', ifsc: '', upiId: '', active: true,
+        isInvoiceAccount: false, removed: false, kind: 'account',
+        received: 0, paymentCount: 0, lastPaymentDate: null, pending: 0, pendingCount: 0, modes: {},
+        ...seed,
+      });
+    }
+    return buckets.get(key);
+  };
+  accounts.forEach((a) => ensureBucket(a.accountId, {
+    accountId: a.accountId,
+    label: bankAccountDisplayName(a),
+    bank: a.bank || '',
+    accountMasked: maskAccountNo(a.account),
+    ifsc: a.ifsc || '',
+    upiId: a.upiId || '',
+    active: a.active !== false,
+    isInvoiceAccount: a.accountId === invoiceAccountId,
+  }));
+  const bucketFor = (bankAccountId, bankAccountName, mode) => {
+    if (bankAccountId) {
+      if (buckets.has(bankAccountId)) return buckets.get(bankAccountId);
+      return ensureBucket(bankAccountId, { accountId: bankAccountId, label: `${bankAccountName || 'Bank Account'} (removed)`, removed: true, active: false });
+    }
+    if (mode === 'Cash') return ensureBucket(CASH_BUCKET, { label: 'Cash — no bank account', kind: 'cash' });
+    return ensureBucket(UNASSIGNED_BUCKET, { label: 'Bank not selected', kind: 'unassigned' });
+  };
+
+  const paymentRows = [];
+  allPayments.forEach((p) => {
+    if (!inRange(p.date)) return;
+    const b = bucketFor(p.bankAccountId, p.bankAccountName, p.mode);
+    b.received = r2(b.received + p.amount);
+    b.paymentCount += 1;
+    b.modes[p.mode] = r2((b.modes[p.mode] || 0) + p.amount);
+    if (!b.lastPaymentDate || new Date(p.date) > new Date(b.lastPaymentDate)) b.lastPaymentDate = p.date;
+    paymentRows.push({
+      key: p.key,
+      date: p.date,
+      amount: p.amount,
+      mode: p.mode,
+      bankKey: b.key,
+      bankLabel: b.label,
+      client: p.client,
+      docType: p.docType,
+      docRef: p.docRef,
+      // Invoice number(s) of the order the payment belongs to, so searching an invoice finds
+      // payments recorded on its order/quotation too.
+      invoiceNo: p.docType === 'Invoice' ? p.docRef : (p.orderId ? invoiceNosFor(p.orderId) : ''),
+      reference: p.reference,
+      recordedBy: p.recordedBy,
+    });
+  });
+  paymentRows.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+  // ── Pending ──
+  // Latest bank-tagged payment per order and per chain (lead), from ALL payments (not only the
+  // date range) — where the customer has been paying is where the balance is expected.
+  const latestTagged = new Map();
+  const noteTagged = (k, p) => {
+    if (!k || !p.bankAccountId) return;
+    const cur = latestTagged.get(k);
+    if (!cur || new Date(p.date || 0) > new Date(cur.date || 0)) latestTagged.set(k, p);
+  };
+  allPayments.forEach((p) => { noteTagged(p.orderId && `o:${p.orderId}`, p); noteTagged(p.chainKey && `c:${p.chainKey}`, p); });
+
+  const pendingRows = [];
+  const addPending = (row, tagged) => {
+    if (!(row.pending > 0.99)) return; // paise left by a round off are not a real receivable
+    let b;
+    let basis;
+    if (tagged) {
+      b = bucketFor(tagged.bankAccountId, tagged.bankAccountName, tagged.mode);
+      basis = 'Last payment account';
+    } else if (invoiceAccountId) {
+      b = buckets.get(invoiceAccountId);
+      basis = 'Invoice bank account';
+    } else {
+      b = ensureBucket(UNASSIGNED_BUCKET, { label: 'Bank not selected', kind: 'unassigned' });
+      basis = 'No bank account yet';
+    }
+    b.pending = r2(b.pending + row.pending);
+    b.pendingCount += 1;
+    pendingRows.push({ ...row, bankKey: b.key, bankLabel: b.label, basis });
+  };
+
+  orders.forEach((o) => {
+    if (o.status === 'Cancelled' || o.orderCategory === 'SAMPLE') return;
+    const linkedInvoices = invoicesByOrder.get(String(o._id)) || [];
+    if (linkedInvoices.length && linkedInvoices.every((i) => i.isComplementary)) return;
+    const composition = computeCompositionGrandTotal(o, kits);
+    const total = r2(composition > 0 ? composition : storedTotalWithRoundOff(Number(o.total) || Number(o.amount) || 0, o, kits));
+    const collPaid = (o.paymentCollection || []).reduce((s, e) => s + (Number(e?.paidAmount) || 0), 0);
+    const orderPaid = collPaid > 0 ? collPaid : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
+    const invPaid = linkedInvoices.reduce((s, i) => s + (Number(i.advanceAmount) || 0), 0);
+    const paid = r2(Math.max(orderPaid, invPaid));
+    const pending = r2(Math.max(0, total - paid));
+    const tagged = latestTagged.get(`o:${o._id}`) || latestTagged.get(`c:${idStr(o.leadId) || String(o._id)}`) || null;
+    addPending({
+      key: `order-${o._id}`,
+      docType: 'Order',
+      docRef: o.orderCode || '',
+      invoiceNo: linkedInvoices.map((i) => i.invoiceNumber).filter(Boolean).join(', '),
+      client: o.clientName || '—',
+      date: o.createdAt,
+      total,
+      paid,
+      pending,
+    }, tagged);
+  });
+
+  standaloneInvoices.forEach((inv) => {
+    if (inv.isComplementary) return;
+    const total = r2(Number(inv.total) || 0);
+    const paid = r2(Number(inv.advanceAmount) || 0);
+    const pending = r2(inv.balanceDue != null ? Number(inv.balanceDue) || 0 : Math.max(0, total - paid));
+    addPending({
+      key: `invoice-${inv._id}`,
+      docType: 'Invoice',
+      docRef: inv.invoiceNumber || '',
+      invoiceNo: inv.invoiceNumber || '',
+      client: inv.partyId?.name || '—',
+      date: inv.invoiceDate,
+      total,
+      paid,
+      pending,
+    }, latestTagged.get(`c:inv:${inv._id}`) || null);
+  });
+  pendingRows.sort((a, b) => b.pending - a.pending);
+
+  // Configured accounts first (invoice account on top), then removed ones, cash, unassigned —
+  // a removed / cash / unassigned bucket only when it actually holds money.
+  const kindOrder = { account: 0, cash: 1, unassigned: 2 };
+  const accountRows = [...buckets.values()]
+    .filter((b) => (b.kind === 'account' && !b.removed) || b.received > 0 || b.pending > 0)
+    .sort((a, b) => (kindOrder[a.kind] - kindOrder[b.kind])
+      || (Number(b.isInvoiceAccount) - Number(a.isInvoiceAccount))
+      || (Number(a.removed) - Number(b.removed))
+      || a.label.localeCompare(b.label));
+
+  const bankRows = accountRows.filter((b) => b.kind === 'account');
+  res.status(200).json({
+    success: true,
+    data: {
+      accounts: accountRows,
+      payments: paymentRows,
+      pending: pendingRows,
+      summary: {
+        totalReceived: r2(accountRows.reduce((s, b) => s + b.received, 0)),
+        totalPending: r2(accountRows.reduce((s, b) => s + b.pending, 0)),
+        paymentCount: paymentRows.length,
+        bankReceived: r2(bankRows.reduce((s, b) => s + b.received, 0)),
+        cashReceived: r2(buckets.get(CASH_BUCKET)?.received || 0),
+        unassignedReceived: r2(buckets.get(UNASSIGNED_BUCKET)?.received || 0),
+        accountCount: accounts.length,
+        pendingDeals: pendingRows.length,
+      },
+      invoiceBankAccountId: invoiceAccountId,
+    },
+  });
 });

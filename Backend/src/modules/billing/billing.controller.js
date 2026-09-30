@@ -1065,6 +1065,11 @@ exports.recordPayment = asyncHandler(async (req, res, next) => {
       recordedBy: req.user._id,
       recordedByName: req.user.fullName || req.user.name || req.user.email,
       source: 'Billing Invoice',
+      paymentRef: payRef,
+      // Receiving bank account (Settings → Invoice Settings) — read by the Payment Bank Details
+      // report and shown in Sales' payment history.
+      ...(req.body.bankAccountId ? { bankAccountId: req.body.bankAccountId, bankAccountName: req.body.bankAccountName || '' } : {}),
+      ...(req.body.referenceNo ? { referenceNo: req.body.referenceNo } : {}),
     }).catch(() => {});
   }
   let taskPaymentStatus = null;

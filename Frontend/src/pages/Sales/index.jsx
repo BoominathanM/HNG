@@ -92,6 +92,9 @@ import SelectWithAdd from '../../components/common/SelectWithAdd';
 import PhoneInput from '../../components/common/PhoneInput';
 import { emailRules, phoneValidator } from '../../utils/validation';
 import { formatQty } from '../../utils/numberFormat';
+import BankAccountSelect from '../../components/common/BankAccountSelect';
+import useBankAccounts from '../../hooks/useBankAccounts';
+import { entryBankLabel, isBankAccountMode, withBankAccountName } from '../../utils/bankAccounts';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -121,7 +124,12 @@ const COLLECTION_METHODS = [
   { value: 'BANK_TRANSFER', label: 'Bank Transfer' },
   { value: 'NEFT_RTGS', label: 'NEFT / RTGS' },
   { value: 'OTHER', label: 'Other' },
+  { value: 'BANK_ACCOUNT', label: 'Bank Account' },
 ];
+// What a NEW payment entry can be: Cash, or Bank Account (then the receiving account is picked —
+// see renderPayRowBankField). COLLECTION_METHODS above still labels entries saved with older modes.
+// Bank Account first — it is also the default for a new entry.
+const PAYMENT_ENTRY_METHODS = ['BANK_ACCOUNT', 'CASH'].map(v => COLLECTION_METHODS.find(m => m.value === v));
 
 const STATUS_COLORS = {
   New: '#C94F8A', Interested: '#D85C9E', 'Quotation Sent': '#B11E6A', Converted: '#52c41a',
@@ -2467,6 +2475,45 @@ export default function Sales() {
   const [payEntryProof, setPayEntryProof] = useState(null); // { name, url } after upload
   const [payEntryProofUploading, setPayEntryProofUploading] = useState(false);
   const [leadPayEntryProofUploadingMap, setLeadPayEntryProofUploadingMap] = useState({});
+  // Receiving bank accounts (Settings → Invoice Settings) for every payment entry form below.
+  const { accounts: bankAccounts, activeAccounts: activeBankAccounts } = useBankAccounts();
+  // Form rule: a Bank Account payment entry must name the account the money went into.
+  const bankAccountRule = (getMethod) => ({
+    validator: (_, v) => (v || !isBankAccountMode(getMethod())
+      ? Promise.resolve()
+      : Promise.reject(new Error(activeBankAccounts.length
+        ? 'Select the bank account'
+        : 'No bank accounts configured — add one in Settings → Invoice Settings, or choose Cash'))),
+  });
+  // Bank account a recorded payment entry went into, shown in the payment history lists.
+  const renderEntryBankTag = (entry) => {
+    const label = entryBankLabel(entry, bankAccounts);
+    return label ? (
+      <Tag icon={<BankOutlined />} style={{ fontSize: 10, lineHeight: '16px', padding: '0 5px', margin: 0 }} color="geekblue">{label}</Tag>
+    ) : null;
+  };
+  // "Bank Account" row for a paymentCollection Form.List entry (lead / quotation / negotiation /
+  // order forms) — shown only when the entry's method is Bank Account. Saved as bankAccountId;
+  // the save handlers add bankAccountName (and drop it again for a row switched back to Cash).
+  const renderPayRowBankField = (name, rest, size = 'small') => (
+    <Form.Item noStyle dependencies={[['paymentCollection', name, 'paymentMethod']]}>
+      {({ getFieldValue }) => {
+        if (!isBankAccountMode(getFieldValue(['paymentCollection', name, 'paymentMethod']))) return null;
+        return (
+          <Form.Item
+            {...rest}
+            name={[name, 'bankAccountId']}
+            label="Bank Account"
+            style={{ marginBottom: 0, marginTop: 6 }}
+            required
+            rules={[bankAccountRule(() => getFieldValue(['paymentCollection', name, 'paymentMethod']))]}
+          >
+            <BankAccountSelect size={size} placeholder="Select the bank account the money went into" />
+          </Form.Item>
+        );
+      }}
+    </Form.Item>
+  );
 
   // Renders the same invoice/quotation markup used for print/download and rasterizes it to a
   // real PDF Blob (html2pdf = html2canvas + jsPDF under the hood), matching the Billing module's
@@ -2855,7 +2902,7 @@ export default function Sales() {
       // The form's paymentCollection field holds only entries added THIS session (see
       // openOrderEditModal) — append them to the untouched original array rather than replacing
       // it, so previously recorded entries keep their original recordedAt/proof intact.
-      const newEntries = (vals.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }));
+      const newEntries = (vals.paymentCollection || []).filter(e => e.paymentMethod).map(e => withBankAccountName({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }, bankAccounts));
       const newCollection = [...(orderEditTarget.paymentCollection || []), ...newEntries];
       const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
 
@@ -3189,14 +3236,15 @@ export default function Sales() {
     setPayEntrySaving(true);
     try {
       const { type, record } = payEntryTarget;
-      const newEntry = {
+      const newEntry = withBankAccountName({
         paymentMethod: vals.paymentMethod,
         paidAmount: Number(vals.paidAmount),
         notes: vals.notes || '',
         paymentDate: vals.paymentDate ? vals.paymentDate.toISOString() : new Date().toISOString(),
         proof: payEntryProof,
         recordedAt: new Date().toISOString(),
-      };
+        bankAccountId: vals.bankAccountId || null,
+      }, bankAccounts);
       const newCollection = [...(record.paymentCollection || []), newEntry];
       const priorCollectionSum = (record.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const newCollectionSum = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
@@ -3311,9 +3359,9 @@ export default function Sales() {
         <Form form={payEntryForm} layout="vertical">
           <Row gutter={12}>
             <Col xs={12}>
-              <Form.Item name="paymentMethod" label="Payment Method" rules={[{ required: true, message: 'Select method' }]}>
+              <Form.Item name="paymentMethod" label="Payment Method" initialValue="BANK_ACCOUNT" rules={[{ required: true, message: 'Select method' }]}>
                 <Select placeholder="Select method">
-                  {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                  {PAYMENT_ENTRY_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
                 </Select>
               </Form.Item>
             </Col>
@@ -3325,6 +3373,22 @@ export default function Sales() {
           </Row>
           <Form.Item name="paidAmount" label="Amount Received (₹)" rules={[{ required: true, message: 'Enter amount' }, { type: 'number', min: 0.01, message: 'Must be > 0', transform: v => Number(v) }]}>
             <InputNumber style={{ width: '100%' }} min={0} placeholder={balance > 0 ? `e.g. ${balance.toLocaleString()}` : 'e.g. 5000'} />
+          </Form.Item>
+          <Form.Item noStyle dependencies={['paymentMethod']}>
+            {({ getFieldValue }) => {
+              if (!isBankAccountMode(getFieldValue('paymentMethod'))) return null;
+              return (
+                <Form.Item
+                  name="bankAccountId"
+                  label="Bank Account"
+                  required
+                  rules={[bankAccountRule(() => getFieldValue('paymentMethod'))]}
+                  extra={activeBankAccounts.length === 0 ? 'No bank accounts configured — add them in Settings → Invoice Settings.' : undefined}
+                >
+                  <BankAccountSelect placeholder="Select the bank account the money went into" />
+                </Form.Item>
+              );
+            }}
           </Form.Item>
           <Form.Item name="notes" label="Notes (optional)">
             <Input placeholder="UPI ref, cheque no., etc." />
@@ -4569,7 +4633,7 @@ export default function Sales() {
           // proof is set via setFieldValue (not a Form.Item) so validateFields may omit it;
           // fall back to formStore which always has the full store value.
           const storeEntry = (formStore.paymentCollection || [])[idx];
-          return { ...e, proof: e?.proof || storeEntry?.proof, recordedAt: e?.recordedAt || new Date().toISOString() };
+          return withBankAccountName({ ...e, proof: e?.proof || storeEntry?.proof, recordedAt: e?.recordedAt || new Date().toISOString() }, bankAccounts);
         }),
       ],
       paymentStatus: (() => {
@@ -4882,7 +4946,7 @@ export default function Sales() {
       const sectionFormStore = leadForm.getFieldsValue(true);
       const newEntries = (values.paymentCollection || []).filter(e => e?.paymentMethod).map((e, idx) => {
         const storeEntry = (sectionFormStore.paymentCollection || [])[idx];
-        return { ...e, proof: e?.proof || storeEntry?.proof, recordedAt: e?.recordedAt || now };
+        return withBankAccountName({ ...e, proof: e?.proof || storeEntry?.proof, recordedAt: e?.recordedAt || now }, bankAccounts);
       });
       values.paymentCollection = [...(selectedRecord?.paymentCollection || []), ...newEntries];
       const collectionEntries = values.paymentCollection.filter(e => Number(e.paidAmount) > 0);
@@ -6028,7 +6092,7 @@ export default function Sales() {
     const gstAmount = (values.products || []).reduce(
       (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
     const total = subtotal + gstAmount;
-    const newCollection = (values.paymentCollection || []).filter(e => e.paymentMethod).map(e => ({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }));
+    const newCollection = (values.paymentCollection || []).filter(e => e.paymentMethod).map(e => withBankAccountName({ ...e, recordedAt: e.recordedAt || new Date().toISOString() }, bankAccounts));
     const collTotal = newCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const advancePaid = collTotal > 0 ? collTotal : (Number(values.advance) || 0);
     const paymentStatus = total > 0 && advancePaid >= total
@@ -7976,7 +8040,7 @@ export default function Sales() {
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                   {entry._fromLead && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead</Tag>}
-                                  <RoundOffTag entry={entry} />
+                                  <RoundOffTag entry={entry} />{renderEntryBankTag(entry)}
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -8599,7 +8663,7 @@ export default function Sales() {
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                   {entry._fromLinked && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead/Quotation</Tag>}
-                                  <RoundOffTag entry={entry} />
+                                  <RoundOffTag entry={entry} />{renderEntryBankTag(entry)}
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -9655,7 +9719,7 @@ export default function Sales() {
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                   {entry._fromLinked && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="blue">From Lead</Tag>}
-                                  <RoundOffTag entry={entry} />
+                                  <RoundOffTag entry={entry} />{renderEntryBankTag(entry)}
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -10720,7 +10784,7 @@ export default function Sales() {
                       {(orderEditTarget.paymentCollection || []).map((e, i) => (
                         <div key={e.recordedAt || i} style={{ background: 'rgba(0,0,0,0.02)', border: '1px solid rgba(0,0,0,0.08)', borderRadius: 10, padding: '8px 12px', marginTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                           <Space size={16}>
-                            <Text style={{ fontSize: 12 }}>{COLLECTION_METHODS.find(m => m.value === e.paymentMethod)?.label || e.paymentMethod}</Text>
+                            <Text style={{ fontSize: 12 }}>{COLLECTION_METHODS.find(m => m.value === e.paymentMethod)?.label || e.paymentMethod}</Text>{renderEntryBankTag(e)}
                             <Text strong style={{ fontSize: 13 }}>₹{Number(e.paidAmount || 0).toLocaleString()}</Text>
                             {e.notes && <Text type="secondary" style={{ fontSize: 12 }}>{e.notes}</Text>}
                           </Space>
@@ -10739,11 +10803,12 @@ export default function Sales() {
                         {fields.map(({ key, name, ...rest }) => (
                           <div key={key} style={{ background: 'rgba(177,30,106,0.03)', border: '1px solid rgba(177,30,106,0.15)', borderRadius: 10, padding: '10px 12px', marginBottom: 8 }}>
                             <Row gutter={[8, 0]} align="middle">
-                              <Col xs={24} sm={8}><Form.Item {...rest} name={[name, 'paymentMethod']} label="Method" style={{ marginBottom: 0 }} rules={[{ required: true }]}><Select placeholder="Select method" size="small">{COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}</Select></Form.Item></Col>
+                              <Col xs={24} sm={8}><Form.Item {...rest} name={[name, 'paymentMethod']} label="Method" style={{ marginBottom: 0 }} rules={[{ required: true }]}><Select placeholder="Select method" size="small">{PAYMENT_ENTRY_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}</Select></Form.Item></Col>
                               <Col xs={24} sm={8}><Form.Item {...rest} name={[name, 'paidAmount']} label="Amount (₹)" style={{ marginBottom: 0 }}><InputNumber size="small" style={{ width: '100%' }} min={0} placeholder="e.g. 5000" /></Form.Item></Col>
                               <Col xs={24} sm={6}><Form.Item {...rest} name={[name, 'notes']} label="Notes" style={{ marginBottom: 0 }}><Input size="small" placeholder="Ref / notes" /></Form.Item></Col>
                               <Col xs={24} sm={2} style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 20 }}><Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} /></Col>
                             </Row>
+                            {renderPayRowBankField(name, rest)}
                             <Form.Item noStyle shouldUpdate>
                               {({ getFieldValue: gfv }) => {
                                 const proof = gfv(['paymentCollection', name, 'proof']);
@@ -10758,7 +10823,7 @@ export default function Sales() {
                             </Form.Item>
                           </div>
                         ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>+ Add Payment Entry</Button>
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ paymentMethod: 'BANK_ACCOUNT' })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>+ Add Payment Entry</Button>
                       </>
                     )}
                   </Form.List>
@@ -11216,7 +11281,7 @@ export default function Sales() {
                             <Col xs={24} sm={8}>
                               <Form.Item {...rest} name={[name, 'paymentMethod']} label="Method" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Select method' }]}>
                                 <Select placeholder="Select method" size="small">
-                                  {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                                  {PAYMENT_ENTRY_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
                                 </Select>
                               </Form.Item>
                             </Col>
@@ -11234,6 +11299,7 @@ export default function Sales() {
                               <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
                             </Col>
                           </Row>
+                          {renderPayRowBankField(name, rest)}
                           <Form.Item noStyle shouldUpdate>
                             {({ getFieldValue: gfv }) => {
                               const proof = gfv(['paymentCollection', name, 'proof']);
@@ -11248,7 +11314,7 @@ export default function Sales() {
                           </Form.Item>
                         </div>
                       ))}
-                      <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
+                      <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ paymentMethod: 'BANK_ACCOUNT' })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 8 }}>
                         + Add Payment Entry
                       </Button>
                     </>
@@ -12197,7 +12263,7 @@ export default function Sales() {
                               <Col xs={24} sm={10}>
                                 <Form.Item {...rest} name={[name, 'paymentMethod']} label="Method" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Select method' }]}>
                                   <Select placeholder="Select method" size="small">
-                                    {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                                    {PAYMENT_ENTRY_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
                                   </Select>
                                 </Form.Item>
                               </Col>
@@ -12215,9 +12281,10 @@ export default function Sales() {
                                 </Form.Item>
                               </Col>
                             </Row>
+                            {renderPayRowBankField(name, rest)}
                           </div>
                         ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 10 }}>
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ paymentMethod: 'BANK_ACCOUNT' })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 10 }}>
                           + Add Payment Entry
                         </Button>
                       </>
@@ -15070,7 +15137,7 @@ export default function Sales() {
                                         <DollarOutlined style={{ color: '#B11E6A', fontSize: 14 }} />
                                         <Text style={{ fontSize: 13, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                         {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
-                                        <RoundOffTag entry={entry} />
+                                        <RoundOffTag entry={entry} />{renderEntryBankTag(entry)}
                                         {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
                                       </div>
                                       <div style={{ paddingLeft: 24, marginTop: 3 }}>
@@ -15172,7 +15239,7 @@ export default function Sales() {
                                   <DollarOutlined style={{ color: '#B11E6A', fontSize: 13 }} />
                                   <Text style={{ fontSize: 12, fontWeight: 600 }}>{(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}</Text>
                                   {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
-                                  <RoundOffTag entry={entry} />
+                                  <RoundOffTag entry={entry} />{renderEntryBankTag(entry)}
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 11 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 21, marginTop: 3 }}>
@@ -15280,7 +15347,7 @@ export default function Sales() {
                                     {(COLLECTION_METHODS.find(m => m.value === entry.paymentMethod) || {}).label || entry.paymentMethod || '—'}
                                   </Text>
                                   {entry._fromOrder && <Tag style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px' }} color="purple">From Order</Tag>}
-                                  <RoundOffTag entry={entry} />
+                                  <RoundOffTag entry={entry} />{renderEntryBankTag(entry)}
                                   {entry.notes && <Text type="secondary" style={{ fontSize: 12 }}>{entry.notes}</Text>}
                                 </Space>
                                 <div style={{ paddingLeft: 22, marginTop: 5, display: 'flex', flexDirection: 'column', gap: 3 }}>
@@ -15384,7 +15451,7 @@ export default function Sales() {
                               <Col xs={24} sm={6}>
                                 <Form.Item {...rest} name={[name, 'paymentMethod']} label="Payment Method" style={{ marginBottom: 0 }} rules={[{ required: true, message: 'Select method' }]}>
                                   <Select placeholder="Select method" size="small">
-                                    {COLLECTION_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
+                                    {PAYMENT_ENTRY_METHODS.map(m => <Option key={m.value} value={m.value}>{m.label}</Option>)}
                                   </Select>
                                 </Form.Item>
                               </Col>
@@ -15446,9 +15513,10 @@ export default function Sales() {
                                 <Button type="text" danger size="small" icon={<MinusCircleOutlined />} onClick={() => remove(name)} />
                               </Col>
                             </Row>
+                            {renderPayRowBankField(name, rest)}
                           </div>
                         ))}
-                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add()} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 12 }}>
+                        <Button type="dashed" size="small" icon={<PlusOutlined />} onClick={() => add({ paymentMethod: 'BANK_ACCOUNT' })} block style={{ borderColor: '#B11E6A55', color: '#B11E6A', marginBottom: 12 }}>
                           + Add New Payment Entry
                         </Button>
                       </>

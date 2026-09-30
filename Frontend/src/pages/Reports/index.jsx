@@ -13,6 +13,7 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import TaskPerformanceReport from '../../components/reports/TaskPerformanceReport';
 import DamagedReport from '../../components/reports/DamagedReport';
+import PaymentBankReport from '../../components/reports/PaymentBankReport';
 import {
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,
@@ -223,6 +224,8 @@ export default function Reports() {
   const auditorTaxRef = useRef(null);
   const emergencyApprovalsRef = useRef(null);
   const switchReportRef = useRef(null);
+  // Exposes the Payment Bank Details tab's own { excel, pdf } exports to the header buttons.
+  const paymentBankReportRef = useRef(null);
 
   const handlePeriodChange = (period) => {
     setHeaderPeriod(period);
@@ -714,6 +717,7 @@ export default function Reports() {
     auditor_tax: { excel: exportAuditorExcel, pdf: exportAuditorPdf },
     emergency_approvals: { excel: exportEaExcel, pdf: exportEaPdf },
     switch_report: { excel: exportSwExcel, pdf: exportSwPdf },
+    payment_bank_report: { excel: () => paymentBankReportRef.current?.excel(), pdf: () => paymentBankReportRef.current?.pdf() },
   };
 
   return (
@@ -3242,6 +3246,13 @@ export default function Reports() {
             key: 'damaged_report',
             label: 'Damaged Report',
             children: <DamagedReport />,
+          },
+
+          /* ─────────── PAYMENT BANK DETAILS ─────────── */
+          {
+            key: 'payment_bank_report',
+            label: 'Payment Bank Details',
+            children: <PaymentBankReport ref={paymentBankReportRef} headerDateRange={headerDateRange} />,
           },
         ])}
       />

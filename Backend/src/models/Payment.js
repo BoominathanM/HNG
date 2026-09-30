@@ -18,10 +18,19 @@ const paymentSchema = new mongoose.Schema({
   netAmount: Number,
   paymentMode: {
     type: String,
-    enum: ['Cash', 'UPI', 'Card', 'Cheque', 'Bank Transfer'],
+    // Record Payment In now offers only Cash / Bank Account (the account itself is bankAccountId);
+    // the older modes stay valid for payments recorded before that.
+    enum: ['Cash', 'Bank Account', 'UPI', 'Card', 'Cheque', 'Bank Transfer'],
     required: true,
   },
   bankAccount: String,
+  // Which of CompanySettings.bankAccounts received the money (accountId), plus its label at the
+  // time of payment so the Payment Bank Details report can still name it if it is later removed.
+  bankAccountId: String,
+  bankAccountName: String,
+  // Client-generated timestamp shared with the copies of this payment written onto the linked
+  // Order/Lead/Quotation paymentCollection — lets the bank report count the payment once.
+  recordedAt: String,
   upiReference: String,
   cardLast4: String,
   transactionRef: String,

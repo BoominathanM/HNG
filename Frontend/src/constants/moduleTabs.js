@@ -98,6 +98,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'switch_report', label: 'Switch Report' },
     { key: 'damaged_report', label: 'Damaged Report' },
     { key: 'task_performance', label: 'Task Management Performance' },
+    { key: 'payment_bank_report', label: 'Payment Bank Details' },
   ],
   Settings: [
     { key: 'general', label: 'General' },

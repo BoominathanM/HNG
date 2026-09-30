@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Form, Input, Select, Switch, Button, Typography,
-  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber, Empty, Spin
+  Tabs, Tag, Space, Avatar, Modal, Checkbox, Badge, Upload, Divider, Table, Collapse, Tooltip, InputNumber, Empty, Spin,
+  Radio, Popconfirm,
 } from 'antd';
 import { enqueueSnackbar } from 'notistack';
 import {
@@ -16,6 +17,7 @@ import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import PhoneInput from '../../components/common/PhoneInput';
 import { emailRules, normalizeEmail, phoneValidator } from '../../utils/validation';
+import { newBankAccountId } from '../../utils/bankAccounts';
 import useTabAccess from '../../hooks/useTabAccess';
 import { MODULE_TAB_DEFS } from '../../constants/moduleTabs';
 import AlertConfigurationTab from './AlertConfigurationTab';
@@ -234,6 +236,11 @@ export default function Settings() {
   // Form instance for the General tab (so its Save button can persist)
   const [generalForm] = Form.useForm();
   const [notifPrefs, setNotifPrefs] = useState({ pay: true, stock: true, dispatch: true, task: true });
+  // Invoice Settings → Bank Accounts. The dirty flag keeps unsaved edits from being overwritten
+  // when company settings refetch (e.g. after a QR upload).
+  const [bankAccounts, setBankAccounts] = useState([]);
+  const [invoiceBankAccountId, setInvoiceBankAccountId] = useState(null);
+  const bankAccountsDirtyRef = useRef(false);
 
   useEffect(() => {
     const s = companyData?.data;
@@ -244,7 +251,11 @@ export default function Settings() {
       if (s.invoiceTerms) setInvoiceTerms(s.invoiceTerms);
       if (s.invoiceFooter) setInvoiceFooter(s.invoiceFooter);
       if (s.gstComponent) setInvoiceGstConfig(s.gstComponent);
-      if (s.bankDetails) setBankDetails((p) => ({ ...p, ...s.bankDetails }));
+      // Unsaved bank account edits survive a settings refetch (e.g. after a QR upload).
+      if (!bankAccountsDirtyRef.current) {
+        setBankAccounts(Array.isArray(s.bankAccounts) ? s.bankAccounts.map((a) => ({ ...a })) : []);
+        setInvoiceBankAccountId(s.invoiceBankAccountId || null);
+      }
       if (s.signatureUrl) setSignatureUrl(s.signatureUrl);
       setInvoiceCompanyDetails((p) => ({
         address: s.address ?? p.address,
@@ -285,23 +296,67 @@ export default function Settings() {
 
   const saveGeneral = () => generalForm.validateFields().then((v) => persistCompany(v, 'General settings saved'));
   const saveNotifications = () => persistCompany({ notifPrefs }, 'Notification settings saved');
-  const saveInvoiceSettings = () => persistCompany({
-    invoiceTheme,
-    invoiceFontStyle: invoiceFont,
-    gstComponent: invoiceGstConfig,
-    invoiceTerms,
-    invoiceFooter,
-    bankDetails,
-    address: invoiceCompanyDetails.address,
-    gstNumber: invoiceCompanyDetails.gstNumber,
-    panNumber: invoiceCompanyDetails.pan,
-    mobile: invoiceCompanyDetails.mobile,
-    email: invoiceCompanyDetails.email,
-    invoiceToggles: {
-      gstin: invoiceShowGstin, taxRate: invoiceShowTaxRate,
-      logo: invoiceShowLogo, bank: invoiceShowBank, terms: invoiceShowTerms, sign: invoiceShowSign,
-    },
-  }, 'Invoice settings saved');
+  const saveInvoiceSettings = async () => {
+    // Every account needs a name for the dropdowns and something to pay into.
+    const incomplete = bankAccounts.findIndex((a) => !(a.label || a.bank || '').trim() || !(a.account || a.upiId || '').trim());
+    if (incomplete !== -1) {
+      enqueueSnackbar(`Bank account ${incomplete + 1}: enter a Bank Name (or Nickname) and an Account Number or UPI ID`, { variant: 'error' });
+      return;
+    }
+    try {
+      await updateCompanyMutation({
+        invoiceTheme,
+        invoiceFontStyle: invoiceFont,
+        gstComponent: invoiceGstConfig,
+        invoiceTerms,
+        invoiceFooter,
+        // The server mirrors the invoice account onto the legacy bankDetails object.
+        bankAccounts,
+        invoiceBankAccountId,
+        address: invoiceCompanyDetails.address,
+        gstNumber: invoiceCompanyDetails.gstNumber,
+        panNumber: invoiceCompanyDetails.pan,
+        mobile: invoiceCompanyDetails.mobile,
+        email: invoiceCompanyDetails.email,
+        invoiceToggles: {
+          gstin: invoiceShowGstin, taxRate: invoiceShowTaxRate,
+          logo: invoiceShowLogo, bank: invoiceShowBank, terms: invoiceShowTerms, sign: invoiceShowSign,
+        },
+      }).unwrap();
+      bankAccountsDirtyRef.current = false;
+      enqueueSnackbar('Invoice settings saved', { variant: 'success' });
+    } catch (e) {
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to save settings', { variant: 'error' });
+    }
+  };
+
+  // ─── Bank accounts (Invoice Settings) ───
+  const updateBankAccounts = (fn) => {
+    bankAccountsDirtyRef.current = true;
+    setBankAccounts(fn);
+  };
+  const updateBankAccount = (accountId, patch) => updateBankAccounts((list) => list.map((a) => (a.accountId === accountId ? { ...a, ...patch } : a)));
+  const addBankAccount = () => {
+    const accountId = newBankAccountId();
+    updateBankAccounts((list) => [...list, { accountId, label: '', name: '', bank: '', account: '', ifsc: '', upiId: '', qrCodeUrl: '', active: true }]);
+    // The first account is the one printed on invoices until another is chosen.
+    if (!bankAccounts.some((a) => a.active !== false)) setInvoiceBankAccountId(accountId);
+  };
+  // When the invoice account is removed/deactivated, the next active account takes its place.
+  const nextInvoiceAccount = (list, excludeId) => list.find((a) => a.accountId !== excludeId && a.active !== false)?.accountId || null;
+  const removeBankAccount = (accountId) => {
+    if (invoiceBankAccountId === accountId) setInvoiceBankAccountId(nextInvoiceAccount(bankAccounts, accountId));
+    updateBankAccounts((list) => list.filter((a) => a.accountId !== accountId));
+  };
+  const setBankAccountActive = (accountId, active) => {
+    if (!active && invoiceBankAccountId === accountId) setInvoiceBankAccountId(nextInvoiceAccount(bankAccounts, accountId));
+    if (active && !bankAccounts.some((a) => a.active !== false)) setInvoiceBankAccountId(accountId);
+    updateBankAccount(accountId, { active });
+  };
+  const chooseInvoiceBankAccount = (accountId) => {
+    bankAccountsDirtyRef.current = true;
+    setInvoiceBankAccountId(accountId);
+  };
 
   const handleLogoUpload = async (file) => {
     // Local preview immediately, then persist to the server.
@@ -336,15 +391,18 @@ export default function Settings() {
     return false;
   };
 
-  const handleQrCodeUpload = async (file) => {
+  // Per-account UPI QR: previewed at once, then uploaded. The server stores it on an already-saved
+  // account straight away; for a new account it stays in the form until Save.
+  const handleQrCodeUpload = async (accountId, file) => {
     const reader = new FileReader();
-    reader.onload = (e) => setBankDetails(p => ({ ...p, qrCodeUrl: e.target.result }));
+    reader.onload = (e) => updateBankAccount(accountId, { qrCodeUrl: e.target.result });
     reader.readAsDataURL(file);
     try {
       const fd = new FormData();
+      fd.append('accountId', accountId);
       fd.append('qrcode', file);
       const res = await uploadQrCodeMutation(fd).unwrap();
-      if (res?.qrCodeUrl) setBankDetails(p => ({ ...p, qrCodeUrl: res.qrCodeUrl }));
+      if (res?.qrCodeUrl) updateBankAccount(accountId, { qrCodeUrl: res.qrCodeUrl });
       enqueueSnackbar('QR code uploaded', { variant: 'success' });
     } catch (e) {
       enqueueSnackbar(e?.data || 'QR code upload failed', { variant: 'error' });
@@ -380,7 +438,6 @@ export default function Settings() {
   const [invoiceTerms, setInvoiceTerms]             = useState(
     '1. Goods once sold will not be taken back or exchanged.\n2. All disputes are subject to local jurisdiction only.\n3. Payment should be made within the due date mentioned on the invoice.\n4. Interest @ 18% p.a. will be charged on overdue payments.\n5. E. & O.E.'
   );
-  const [bankDetails, setBankDetails] = useState({ name: '', ifsc: '', account: '', bank: '', upiId: '', qrCodeUrl: '' });
   const [signatureUrl, setSignatureUrl] = useState(null);
   const [invoiceCompanyDetails, setInvoiceCompanyDetails] = useState({ address: '', gstNumber: '', pan: '', mobile: '', email: '' });
 
@@ -1290,91 +1347,155 @@ export default function Settings() {
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0' }}>
                       <div>
                         <Text strong style={{ color: textColor, display: 'block', fontSize: 13 }}>Show Bank Details</Text>
-                        <Text style={{ fontSize: 12, color: '#aaa' }}>Include bank account info for payment</Text>
+                        <Text style={{ fontSize: 12, color: '#aaa' }}>Print the selected bank account and its UPI QR on invoices &amp; quotations</Text>
                       </div>
                       <Switch checked={invoiceShowBank} onChange={setInvoiceShowBank} style={{ background: invoiceShowBank ? '#B11E6A' : undefined, flexShrink: 0, marginLeft: 16 }} />
                     </div>
-                    {invoiceShowBank && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        style={{ overflow: 'hidden', paddingBottom: 16 }}
-                      >
-                        <div style={{ background: subBg, borderRadius: 10, padding: 14, border: `1px solid ${borderColor}` }}>
-                          <Text strong style={{ fontSize: 12, color: '#B11E6A', display: 'block', marginBottom: 10 }}>Bank Account Details</Text>
-                          <Row gutter={12}>
-                            <Col xs={24} sm={12}>
-                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Account Holder Name</Text>
-                              <Input
-                                value={bankDetails.name}
-                                onChange={e => setBankDetails(p => ({ ...p, name: e.target.value }))}
-                                placeholder="e.g. Heal n Glow"
-                                style={{ borderRadius: 8, marginBottom: 10 }}
-                              />
-                            </Col>
-                            <Col xs={24} sm={12}>
-                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Bank Name &amp; Branch</Text>
-                              <Input
-                                value={bankDetails.bank}
-                                onChange={e => setBankDetails(p => ({ ...p, bank: e.target.value }))}
-                                placeholder="e.g. Kotak Mahindra Bank, MADURAI"
-                                style={{ borderRadius: 8, marginBottom: 10 }}
-                              />
-                            </Col>
-                            <Col xs={24} sm={12}>
-                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Account Number</Text>
-                              <Input
-                                value={bankDetails.account}
-                                onChange={e => setBankDetails(p => ({ ...p, account: e.target.value }))}
-                                placeholder="e.g. 8056766743"
-                                style={{ borderRadius: 8 }}
-                              />
-                            </Col>
-                            <Col xs={24} sm={12}>
-                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>IFSC Code</Text>
-                              <Input
-                                value={bankDetails.ifsc}
-                                onChange={e => setBankDetails(p => ({ ...p, ifsc: e.target.value }))}
-                                placeholder="e.g. KKBK0008716"
-                                style={{ borderRadius: 8, marginBottom: 10 }}
-                              />
-                            </Col>
-                            <Col xs={24} sm={12}>
-                              <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>UPI ID</Text>
-                              <Input
-                                value={bankDetails.upiId}
-                                onChange={e => setBankDetails(p => ({ ...p, upiId: e.target.value }))}
-                                placeholder="e.g. healnglow@okhdfcbank"
-                                style={{ borderRadius: 8 }}
-                              />
-                            </Col>
-                          </Row>
-                          <Divider style={{ margin: '10px 0' }} />
-                          <Text strong style={{ fontSize: 12, color: '#B11E6A', display: 'block', marginBottom: 10 }}>UPI QR Code</Text>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 20, flexWrap: 'wrap' }}>
-                            <div style={{ width: 90, height: 90, borderRadius: 10, border: `2px dashed ${isDark ? '#444' : '#ddd'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: cardBg }}>
-                              {bankDetails.qrCodeUrl
-                                ? <img src={bankDetails.qrCodeUrl} alt="UPI QR" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
-                                : <Text style={{ fontSize: 11, color: '#bbb' }}>No QR</Text>}
+
+                    {/* Bank Accounts — always editable: the payment dropdowns (Billing → Record
+                        Payment, Sales → Add Payment Entry) use them even when the invoice hides them. */}
+                    <div style={{ paddingBottom: 16 }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <Text strong style={{ fontSize: 12, color: '#B11E6A', display: 'block' }}>Bank Accounts ({bankAccounts.length})</Text>
+                          <Text style={{ fontSize: 11, color: '#999' }}>
+                            Active accounts appear in every payment dropdown. Choose which one prints on invoices.
+                          </Text>
+                        </div>
+                        <Button size="small" icon={<PlusOutlined />} onClick={addBankAccount} style={{ color: '#B11E6A', borderColor: '#B11E6A55' }}>
+                          Add Bank Account
+                        </Button>
+                      </div>
+
+                      {bankAccounts.length === 0 && (
+                        <div style={{ background: subBg, borderRadius: 10, padding: 16, border: `1px dashed ${isDark ? '#444' : '#ddd'}`, textAlign: 'center' }}>
+                          <Text style={{ fontSize: 12, color: '#999' }}>No bank accounts yet. Add one to print it on invoices and to record payments against it.</Text>
+                        </div>
+                      )}
+
+                      {bankAccounts.map((acc, idx) => {
+                        const isInvoice = acc.accountId === invoiceBankAccountId && acc.active !== false;
+                        const inactive = acc.active === false;
+                        return (
+                          <div
+                            key={acc.accountId}
+                            style={{
+                              background: subBg, borderRadius: 10, padding: 14, marginBottom: 10,
+                              border: `1px solid ${isInvoice ? '#B11E6A88' : borderColor}`,
+                              opacity: inactive ? 0.7 : 1,
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                              <Space size={8} wrap>
+                                <Text strong style={{ fontSize: 12, color: textColor }}>Account {idx + 1}</Text>
+                                {isInvoice && <Tag color="magenta" style={{ margin: 0 }}>Shown on invoice</Tag>}
+                                {inactive && <Tag style={{ margin: 0 }}>Inactive</Tag>}
+                              </Space>
+                              <Space size={12} wrap>
+                                <Radio
+                                  checked={isInvoice}
+                                  disabled={inactive}
+                                  onChange={() => chooseInvoiceBankAccount(acc.accountId)}
+                                >
+                                  <Text style={{ fontSize: 12 }}>Show on invoice</Text>
+                                </Radio>
+                                <Space size={4}>
+                                  <Text style={{ fontSize: 12, color: '#888' }}>Active</Text>
+                                  <Switch size="small" checked={!inactive} onChange={(v) => setBankAccountActive(acc.accountId, v)} />
+                                </Space>
+                                <Popconfirm
+                                  title="Remove this bank account?"
+                                  description="Payments already recorded against it keep its name in reports. To only hide it from dropdowns, switch it off instead."
+                                  okText="Remove"
+                                  okButtonProps={{ danger: true }}
+                                  onConfirm={() => removeBankAccount(acc.accountId)}
+                                >
+                                  <Button size="small" type="text" danger icon={<DeleteOutlined />} />
+                                </Popconfirm>
+                              </Space>
                             </div>
-                            <div>
-                              <Upload
-                                accept="image/*"
-                                showUploadList={false}
-                                beforeUpload={handleQrCodeUpload}
-                              >
-                                <Button icon={<UploadOutlined />} style={{ marginBottom: 8, display: 'block', color: '#B11E6A', borderColor: '#B11E6A55' }}>
-                                  {bankDetails.qrCodeUrl ? 'Change QR Code' : 'Upload QR Code'}
-                                </Button>
-                              </Upload>
-                              <Text style={{ fontSize: 12, color: '#aaa', display: 'block' }}>PNG, JPG up to 2MB</Text>
-                              <Text style={{ fontSize: 12, color: '#aaa' }}>Shown next to Bank Details on the invoice</Text>
+                            <Row gutter={12}>
+                              <Col xs={24} sm={12}>
+                                <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Nickname (shown in dropdowns)</Text>
+                                <Input
+                                  value={acc.label}
+                                  onChange={e => updateBankAccount(acc.accountId, { label: e.target.value })}
+                                  placeholder="e.g. HDFC Current"
+                                  style={{ borderRadius: 8, marginBottom: 10 }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={12}>
+                                <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Account Holder Name</Text>
+                                <Input
+                                  value={acc.name}
+                                  onChange={e => updateBankAccount(acc.accountId, { name: e.target.value })}
+                                  placeholder="e.g. Heal n Glow"
+                                  style={{ borderRadius: 8, marginBottom: 10 }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={12}>
+                                <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Bank Name &amp; Branch</Text>
+                                <Input
+                                  value={acc.bank}
+                                  onChange={e => updateBankAccount(acc.accountId, { bank: e.target.value })}
+                                  placeholder="e.g. Kotak Mahindra Bank, MADURAI"
+                                  style={{ borderRadius: 8, marginBottom: 10 }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={12}>
+                                <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>Account Number</Text>
+                                <Input
+                                  value={acc.account}
+                                  onChange={e => updateBankAccount(acc.accountId, { account: e.target.value })}
+                                  placeholder="e.g. 8056766743"
+                                  style={{ borderRadius: 8, marginBottom: 10 }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={12}>
+                                <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>IFSC Code</Text>
+                                <Input
+                                  value={acc.ifsc}
+                                  onChange={e => updateBankAccount(acc.accountId, { ifsc: e.target.value.toUpperCase() })}
+                                  placeholder="e.g. KKBK0008716"
+                                  style={{ borderRadius: 8, marginBottom: 10 }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={12}>
+                                <Text style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>UPI ID</Text>
+                                <Input
+                                  value={acc.upiId}
+                                  onChange={e => updateBankAccount(acc.accountId, { upiId: e.target.value })}
+                                  placeholder="e.g. healnglow@okhdfcbank"
+                                  style={{ borderRadius: 8, marginBottom: 10 }}
+                                />
+                              </Col>
+                            </Row>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+                              <div style={{ width: 72, height: 72, borderRadius: 10, border: `2px dashed ${isDark ? '#444' : '#ddd'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', background: cardBg, flexShrink: 0 }}>
+                                {acc.qrCodeUrl
+                                  ? <img src={acc.qrCodeUrl} alt="UPI QR" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+                                  : <Text style={{ fontSize: 11, color: '#bbb' }}>No QR</Text>}
+                              </div>
+                              <div>
+                                <Upload
+                                  accept="image/*"
+                                  showUploadList={false}
+                                  beforeUpload={(file) => handleQrCodeUpload(acc.accountId, file)}
+                                >
+                                  <Button size="small" icon={<UploadOutlined />} style={{ marginBottom: 6, display: 'block', color: '#B11E6A', borderColor: '#B11E6A55' }}>
+                                    {acc.qrCodeUrl ? 'Change UPI QR Code' : 'Upload UPI QR Code'}
+                                  </Button>
+                                </Upload>
+                                <Text style={{ fontSize: 11, color: '#aaa', display: 'block' }}>PNG, JPG up to 2MB — printed next to this account on the invoice</Text>
+                              </div>
                             </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    )}
+                        );
+                      })}
+                      {bankAccounts.length > 0 && (
+                        <Text style={{ fontSize: 11, color: '#aaa' }}>Click Save Invoice Settings below to apply bank account changes.</Text>
+                      )}
+                    </div>
                   </div>
 
                   {/* Terms & Conditions — toggle + editable textarea */}

@@ -26,6 +26,9 @@ import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import useDebouncedValue from '../../hooks/useDebouncedValue';
+import useBankAccounts from '../../hooks/useBankAccounts';
+import BankAccountSelect from '../../components/common/BankAccountSelect';
+import { BILLING_PAYMENT_MODES, bankAccountLabel, entryBankLabel, isBankAccountMode } from '../../utils/bankAccounts';
 import {
   useGetInvoicesQuery,
   useGetQuotationsInProcessQuery,
@@ -805,14 +808,9 @@ export default function Billing() {
   const [recordPayInv, setRecordPayInv] = useState(null);
   const [payParty, setPayParty] = useState(null);
   const [payAmount, setPayAmount] = useState(0);
-  const [payMode, setPayMode] = useState('Cash');
+  const [payMode, setPayMode] = useState('Bank Account');
   const [payBankAccount, setPayBankAccount] = useState(null);
-  const [payUpiRef, setPayUpiRef] = useState('');
-  const [payCardLast4, setPayCardLast4] = useState('');
   const [payTransactionRef, setPayTransactionRef] = useState('');
-  const [payChequeNo, setPayChequeNo] = useState('');
-  const [payChequeBank, setPayChequeBank] = useState('');
-  const [payChequeDate, setPayChequeDate] = useState(null);
   const [quotStatusFilter, setQuotStatusFilter] = useState('all');
   const [quotSearch, setQuotSearch] = useState('');
   const [quotDateRange, setQuotDateRange] = useState(null);
@@ -916,7 +914,10 @@ export default function Billing() {
     }, {})
   );
 
-  const bankAccounts = ['HDFC Bank - ****1234', 'SBI Bank - ****5678', 'Axis Bank - ****9012'];
+  // Receiving bank accounts from Settings → Invoice Settings. payBankAccount holds the accountId.
+  const { accounts: bankAccounts, activeAccounts: activeBankAccounts } = useBankAccounts();
+  // Payment Mode is Cash or Bank Account; a Bank Account payment must name the account it went into.
+  const payIsBank = isBankAccountMode(payMode);
 
   const openRecordPay = (inv) => {
     const party = partiesList.find(p => p.name === inv.client) || { name: inv.client, balance: inv.balance };
@@ -924,14 +925,9 @@ export default function Billing() {
     setPayParty(party);
     setPayAmount(inv.balance);
     setPayLinkedInvoices([inv]);
-    setPayMode('Cash');
+    setPayMode('Bank Account');
     setPayBankAccount(null);
-    setPayUpiRef('');
-    setPayCardLast4('');
     setPayTransactionRef('');
-    setPayChequeNo('');
-    setPayChequeBank('');
-    setPayChequeDate(null);
     setPayNote('');
     setPayNoteVisible(false);
     setPayCourierVisible(false);
@@ -1089,6 +1085,20 @@ export default function Billing() {
       );
       return;
     }
+    // A Bank Account payment must name the account it went into (an Unpaid courier / round off
+    // adjustment moves no money, so it needs none).
+    if (net > 0 && payIsBank && !payBankAccount) {
+      enqueueSnackbar(
+        activeBankAccounts.length
+          ? 'Select the bank account this payment was received in'
+          : 'No bank accounts configured — add one in Settings → Invoice Settings, or choose Cash',
+        { variant: 'error' },
+      );
+      return;
+    }
+    const payBankAcc = payIsBank && payBankAccount ? bankAccounts.find((a) => a.accountId === payBankAccount) : null;
+    const payBankFields = payBankAcc ? { bankAccountId: payBankAcc.accountId, bankAccountName: bankAccountLabel(payBankAcc) } : {};
+    const payReferenceNo = payIsBank ? payTransactionRef.trim() : '';
     const newEntry = {
       paidAmount: net,
       baseAmount,
@@ -1105,6 +1115,9 @@ export default function Billing() {
       date: new Date().toISOString(),
       recordedBy: currentUser?._id || currentUser?.id,
       recordedByName: currentUserName,
+      // Receiving bank account — the Payment Bank Details report groups by it.
+      ...payBankFields,
+      ...(payReferenceNo ? { referenceNo: payReferenceNo } : {}),
     };
     const unpaidCourier = !courierPaid && billableCourier !== 0;
     const unpaidRoundOff = !roundOffPaid && roundOff !== 0;
@@ -1171,20 +1184,15 @@ export default function Billing() {
           courierPaid,
           roundOff,
           roundOffPaid,
-          paymentMode: payMode === 'Net Banking' ? 'Bank Transfer' : (payMode || 'Cash'),
+          paymentMode: payMode || 'Cash',
           note: payNote || '',
           // Shared with the paymentCollection entry syncBillingChain appends to the linked
           // Lead below — so both sides carry the same recordedAt and Sales' Orders tab dedup
           // (which matches on recordedAt+paidAmount) recognizes them as the same payment
           // instead of double-counting it.
           recordedAt: newEntry.recordedAt,
-          ...(payBankAccount ? { bankAccount: payBankAccount } : {}),
-          ...(payUpiRef ? { upiReference: payUpiRef } : {}),
-          ...(payCardLast4 ? { cardLast4: payCardLast4 } : {}),
-          ...(payTransactionRef ? { transactionRef: payTransactionRef } : {}),
-          ...(payChequeNo ? { chequeNumber: payChequeNo } : {}),
-          ...(payChequeBank ? { chequeBank: payChequeBank } : {}),
-          ...(payChequeDate ? { chequeDate: payChequeDate.format ? payChequeDate.format('YYYY-MM-DD') : payChequeDate } : {}),
+          ...(payBankAcc ? { ...payBankFields, bankAccount: payBankFields.bankAccountName } : {}),
+          ...(payReferenceNo ? { referenceNo: payReferenceNo, transactionRef: payReferenceNo } : {}),
           ...(payParty?.key ? { partyId: payParty.key } : {}),
         }).unwrap();
         // Sync to linked Sales records — use advance (= total paid so far) as the base.
@@ -2428,116 +2436,45 @@ export default function Billing() {
             })}
           </div>
 
-          {/* ── Payment Mode ── */}
+          {/* ── Payment Mode ── Cash, or Bank Account (then the account the money went into, from
+              Settings → Invoice Settings — the Payment Bank Details report groups by it). */}
           <div style={{ background: '#fff', padding: '16px', borderBottom: '1px solid #ebebeb' }}>
             <Text style={{ fontSize: 14, fontWeight: 600, color: '#1a1a2e', display: 'block', marginBottom: 10 }}>Payment Mode</Text>
             <Select
               value={payMode}
-              onChange={(v) => { setPayMode(v); setPayBankAccount(null); setPayUpiRef(''); setPayCardLast4(''); setPayTransactionRef(''); setPayChequeNo(''); setPayChequeBank(''); setPayChequeDate(null); }}
-              style={{ width: '100%', height: 44, marginBottom: 12 }}
+              onChange={(v) => { setPayMode(v); setPayTransactionRef(''); if (!isBankAccountMode(v)) setPayBankAccount(null); }}
+              style={{ width: '100%', height: 44, marginBottom: isBankAccountMode(payMode) ? 12 : 0 }}
             >
-              {['Cash', 'UPI', 'Card', 'Net Banking', 'Bank Transfer', 'Cheque'].map(m => (
+              {BILLING_PAYMENT_MODES.map(m => (
                 <Option key={m} value={m}>{m}</Option>
               ))}
             </Select>
-            {payMode === 'UPI' && (
+            {isBankAccountMode(payMode) && (
               <div>
-                <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>UPI Reference / Transaction ID <span style={{ color: '#e53935' }}>*</span></Text>
+                <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>
+                  Bank Account <span style={{ color: '#e53935' }}>*</span>
+                </Text>
+                <BankAccountSelect
+                  value={payBankAccount}
+                  onChange={setPayBankAccount}
+                  placeholder="Select the bank account the money went into"
+                  style={{ height: 40 }}
+                />
+                {activeBankAccounts.length === 0 && (
+                  <Text style={{ fontSize: 11, color: '#fa8c16', display: 'block', marginTop: 4 }}>
+                    No bank accounts configured — add them in Settings → Invoice Settings.
+                  </Text>
+                )}
+                <Text style={{ fontSize: 12, color: '#555', display: 'block', marginTop: 12, marginBottom: 4 }}>
+                  Transaction Reference <span style={{ color: '#999' }}>(optional)</span>
+                </Text>
                 <Input
-                  placeholder="Enter UPI reference number"
-                  value={payUpiRef}
-                  onChange={(e) => setPayUpiRef(e.target.value)}
+                  placeholder="UTR / UPI Ref / Cheque No."
+                  value={payTransactionRef}
+                  onChange={(e) => setPayTransactionRef(e.target.value)}
                   style={{ borderRadius: 8, height: 40 }}
                 />
               </div>
-            )}
-            {payMode === 'Card' && (
-              <Row gutter={12}>
-                <Col span={12}>
-                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Card Last 4 Digits <span style={{ color: '#e53935' }}>*</span></Text>
-                  <Input
-                    placeholder="e.g. 4321"
-                    maxLength={4}
-                    value={payCardLast4}
-                    onChange={(e) => setPayCardLast4(e.target.value.replace(/\D/g, ''))}
-                    style={{ borderRadius: 8, height: 40 }}
-                  />
-                </Col>
-                <Col span={12}>
-                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Auth / Reference Code</Text>
-                  <Input
-                    placeholder="Auth code"
-                    value={payTransactionRef}
-                    onChange={(e) => setPayTransactionRef(e.target.value)}
-                    style={{ borderRadius: 8, height: 40 }}
-                  />
-                </Col>
-              </Row>
-            )}
-            {(payMode === 'Net Banking' || payMode === 'Bank Transfer') && (
-              <Row gutter={12}>
-                <Col span={12}>
-                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Transaction Reference No. <span style={{ color: '#e53935' }}>*</span></Text>
-                  <Input
-                    placeholder="UTR / Reference No."
-                    value={payTransactionRef}
-                    onChange={(e) => setPayTransactionRef(e.target.value)}
-                    style={{ borderRadius: 8, height: 40 }}
-                  />
-                </Col>
-                <Col span={12}>
-                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Bank Account <span style={{ color: '#e53935' }}>*</span></Text>
-                  <Select
-                    placeholder="Select Bank Account"
-                    value={payBankAccount}
-                    onChange={(v) => setPayBankAccount(v)}
-                    style={{ width: '100%', height: 40 }}
-                  >
-                    {bankAccounts.map(b => <Option key={b} value={b}>{b}</Option>)}
-                  </Select>
-                </Col>
-              </Row>
-            )}
-            {payMode === 'Cheque' && (
-              <Row gutter={[12, 10]}>
-                <Col span={12}>
-                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Cheque Number <span style={{ color: '#e53935' }}>*</span></Text>
-                  <Input
-                    placeholder="Enter cheque number"
-                    value={payChequeNo}
-                    onChange={(e) => setPayChequeNo(e.target.value)}
-                    style={{ borderRadius: 8, height: 40 }}
-                  />
-                </Col>
-                <Col span={12}>
-                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Bank Name <span style={{ color: '#e53935' }}>*</span></Text>
-                  <Input
-                    placeholder="e.g. HDFC Bank"
-                    value={payChequeBank}
-                    onChange={(e) => setPayChequeBank(e.target.value)}
-                    style={{ borderRadius: 8, height: 40 }}
-                  />
-                </Col>
-                <Col span={12}>
-                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Cheque Date <span style={{ color: '#e53935' }}>*</span></Text>
-                  <DatePicker
-                    value={payChequeDate}
-                    onChange={(d) => setPayChequeDate(d)}
-                    style={{ width: '100%', height: 40, borderRadius: 8 }}
-                  />
-                </Col>
-                <Col span={12}>
-                  <Text style={{ fontSize: 12, color: '#555', display: 'block', marginBottom: 4 }}>Bank Account</Text>
-                  <Select
-                    placeholder="Select Bank Account"
-                    value={payBankAccount}
-                    onChange={(v) => setPayBankAccount(v)}
-                    style={{ width: '100%', height: 40 }}
-                  >
-                    {bankAccounts.map(b => <Option key={b} value={b}>{b}</Option>)}
-                  </Select>
-                </Col>
-              </Row>
             )}
           </div>
 
@@ -2597,6 +2534,7 @@ export default function Billing() {
                 roundOffPaid: p.roundOffPaid,
                 net: p.netAmount,
                 by: p.createdBy?.fullName || p.createdBy?.name || p.createdBy?.email || '—',
+                bank: entryBankLabel(p, bankAccounts),
                 note: p.note,
               }))
             : (paymentHistoryRecord.paymentCollection || []).map((e, idx) => ({
@@ -2610,6 +2548,7 @@ export default function Billing() {
                 roundOffPaid: e.roundOffPaid,
                 net: e.paidAmount,
                 by: e.recordedByName || '—',
+                bank: entryBankLabel(e, bankAccounts),
                 note: e.note || e.notes,
               }));
           return (
@@ -2627,6 +2566,7 @@ export default function Billing() {
                 columns={[
                   { title: 'Date & Time', dataIndex: 'when', width: 160, render: (v) => v ? dayjs(v).format('D MMM YYYY, h:mm A') : '—' },
                   { title: 'Mode', dataIndex: 'mode', width: 100 },
+                  { title: 'Bank Account', dataIndex: 'bank', width: 170, render: (v) => v || <Text type="secondary">—</Text> },
                   { title: 'Amount', dataIndex: 'amount', width: 100, render: (v) => v != null ? `₹${Number(v).toLocaleString()}` : '—' },
                   {
                     title: 'Courier Charge', dataIndex: 'courierCharge', width: 150,

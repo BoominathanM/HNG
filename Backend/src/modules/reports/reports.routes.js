@@ -25,5 +25,6 @@ router.get('/emergency-approvals', ctrl.getEmergencyApprovalsReport);
 router.get('/switches', ctrl.getSwitchReport);
 router.get('/damaged', ctrl.getDamagedReport);
 router.get('/damaged/export', ctrl.exportDamagedReport);
+router.get('/payment-bank', ctrl.getPaymentBankReport);
 
 module.exports = router;

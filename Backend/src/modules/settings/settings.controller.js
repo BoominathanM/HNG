@@ -7,6 +7,7 @@ const AiConfig = require('../../models/AiConfig');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 const COUNTRY_CODES = require('./countrycodes');
 const aiService = require('../../services/aiService');
 const { encrypt, decrypt } = require('../../utils/encryption');
@@ -110,16 +111,67 @@ exports.getPublicBranding = asyncHandler(async (req, res) => {
 });
 
 // ─── Company Settings ───────────────────────────────────────────────────────
+const BANK_FIELDS = ['name', 'ifsc', 'account', 'bank', 'upiId', 'qrCodeUrl'];
+const newBankAccountId = () => `ba_${Date.now().toString(36)}${crypto.randomBytes(3).toString('hex')}`;
+const pickBankFields = (src = {}) => Object.fromEntries(BANK_FIELDS.map((k) => [k, String(src?.[k] ?? '').trim()]));
+const hasBankData = (src) => !!src && BANK_FIELDS.some((k) => String(src[k] ?? '').trim());
+
+// Settings saved before multiple bank accounts existed carry one bankDetails object. Promote it
+// to the first bankAccounts entry (and the invoice account) the first time settings are read,
+// so every payment dropdown offers it without an admin having to re-enter it.
+// A targeted $set (not a full save()) so an unrelated invalid field can't block it, and any
+// failure just leaves the settings as they were — reading settings must never break over this.
+const migrateLegacyBankDetails = async (settings) => {
+  if ((settings.bankAccounts || []).length) return settings;
+  const legacy = settings.toObject().bankDetails;
+  if (!hasBankData(legacy)) return settings;
+  const accountId = newBankAccountId();
+  try {
+    const migrated = await CompanySettings.findOneAndUpdate(
+      { _id: settings._id, $or: [{ bankAccounts: { $exists: false } }, { bankAccounts: { $size: 0 } }] },
+      { $set: { bankAccounts: [{ accountId, label: '', ...pickBankFields(legacy), active: true }], invoiceBankAccountId: accountId } },
+      { new: true }
+    );
+    return migrated || (await CompanySettings.findById(settings._id)) || settings;
+  } catch {
+    return settings;
+  }
+};
+
+// Normalizes a bankAccounts payload (unique accountIds, trimmed fields) and resolves which one
+// is printed on invoices: the requested one when it exists and is active, else the first active
+// account. That account is mirrored onto the legacy bankDetails object.
+const syncInvoiceBank = (body, previousInvoiceId) => {
+  const seen = new Set();
+  body.bankAccounts = body.bankAccounts.filter(Boolean).map((a) => {
+    let accountId = String(a.accountId || '').trim();
+    if (!accountId || seen.has(accountId)) accountId = newBankAccountId();
+    seen.add(accountId);
+    return { accountId, label: String(a.label ?? '').trim(), ...pickBankFields(a), active: a.active !== false };
+  });
+  const active = body.bankAccounts.filter((a) => a.active);
+  const requested = body.invoiceBankAccountId !== undefined ? body.invoiceBankAccountId : previousInvoiceId;
+  const chosen = active.find((a) => a.accountId === requested) || active[0] || null;
+  body.invoiceBankAccountId = chosen ? chosen.accountId : null;
+  body.bankDetails = pickBankFields(chosen || {});
+};
+
 exports.getCompanySettings = asyncHandler(async (req, res) => {
   let settings = await CompanySettings.findOne();
   if (!settings) settings = await CompanySettings.create({});
+  settings = await migrateLegacyBankDetails(settings);
   res.status(200).json({ success: true, data: settings });
 });
 
 exports.updateCompanySettings = asyncHandler(async (req, res) => {
+  const body = { ...req.body };
+  if (Array.isArray(body.bankAccounts)) {
+    const existing = await CompanySettings.findOne().select('invoiceBankAccountId').lean();
+    syncInvoiceBank(body, existing?.invoiceBankAccountId);
+  }
   const settings = await CompanySettings.findOneAndUpdate(
     {},
-    { ...req.body, updatedBy: req.user._id },
+    { ...body, updatedBy: req.user._id },
     { new: true, upsert: true, runValidators: true }
   );
   res.status(200).json({ success: true, data: settings });
@@ -150,6 +202,25 @@ exports.uploadSignature = asyncHandler(async (req, res, next) => {
 exports.uploadQrCode = asyncHandler(async (req, res, next) => {
   if (!req.file) return next(new AppError('Please upload a file', 400));
   const qrCodeUrl = req.file.path;
+  // A QR for one of the bankAccounts entries: store it on that account (and on the bankDetails
+  // mirror when it is the invoice account). An account not saved yet gets the URL back only —
+  // Settings keeps it in the form until Save.
+  const accountId = req.body?.accountId;
+  if (accountId) {
+    const current = await CompanySettings.findOne({ 'bankAccounts.accountId': accountId }).select('invoiceBankAccountId');
+    if (!current) return res.status(200).json({ success: true, qrCodeUrl });
+    const settings = await CompanySettings.findOneAndUpdate(
+      { 'bankAccounts.accountId': accountId },
+      {
+        $set: {
+          'bankAccounts.$.qrCodeUrl': qrCodeUrl,
+          ...(current.invoiceBankAccountId === accountId ? { 'bankDetails.qrCodeUrl': qrCodeUrl } : {}),
+        },
+      },
+      { new: true }
+    );
+    return res.status(200).json({ success: true, qrCodeUrl, data: settings });
+  }
   const settings = await CompanySettings.findOneAndUpdate(
     {},
     { 'bankDetails.qrCodeUrl': qrCodeUrl },
