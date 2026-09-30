@@ -1260,6 +1260,16 @@ video {
   .ant-drawer-body .ant-select {
     width: 100% !important;
   }
+  /* ...except PhoneInput's country-code Select, which must stay narrow so the
+     number box beside it keeps the rest of the row */
+  .ant-modal-body .phone-input .phone-input-cc.ant-select,
+  .ant-drawer-body .phone-input .phone-input-cc.ant-select {
+    width: 105px !important;
+    flex: 0 0 105px;
+  }
+  .phone-input > .ant-input {
+    min-width: 0;
+  }
 }
 
 /* ----------------------------------------------------------------------------
