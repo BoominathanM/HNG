@@ -1632,17 +1632,19 @@ export default function Billing() {
     }
   };
 
-  // Enriches document data with the hotel's outstanding due from its OTHER unpaid invoices (if
+  // Enriches document data with the hotel's outstanding due from its OTHER sales orders (if
   // any) before rendering — shared by Print/Download/View so the "Pending Amount" line is
-  // consistent everywhere a document is generated from this page. `key` is the real Invoice
-  // document id only for invoiceList rows (no `docType`) — quotationList/salesOrdersList rows
-  // are Quotation/Order docs, not invoices, so nothing is excluded for those (there's no
-  // invoice of their own yet to exclude).
+  // consistent everywhere a document is generated from this page. The document's own order is
+  // excluded via its `key`: the Invoice id for invoiceList rows (no `docType` — the backend
+  // resolves that invoice's own order), the Quotation id for quotation rows (→ the order
+  // converted from it), the Order id itself for salesOrdersList rows.
   const withPendingDue = async (data) => {
     const clientName = data?.customer?.name || data?.client;
     if (!clientName || clientName === '—') return data;
     const excludeInvoiceId = !data?.docType ? data?.key : undefined;
-    const pendingDue = await fetchHotelPendingDue({ clientName, excludeInvoiceId });
+    const excludeQuotationId = data?.docType === 'Quotation' ? data?.key : undefined;
+    const excludeOrderId = data?.docType === 'Order' ? data?.key : undefined;
+    const pendingDue = await fetchHotelPendingDue({ clientName, excludeInvoiceId, excludeQuotationId, excludeOrderId });
     return pendingDue ? { ...data, pendingDue } : data;
   };
 

@@ -1,12 +1,14 @@
+const mongoose = require('mongoose');
 const Party = require('../../models/Party');
 const LedgerEntry = require('../../models/LedgerEntry');
 const Invoice = require('../../models/Invoice');
 const Payment = require('../../models/Payment');
 const Order = require('../../models/Order');
+const Negotiation = require('../../models/Negotiation');
 const Kit = require('../../models/Kit');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
-const { computeCompositionGrandTotal } = require('../../utils/orderCalc');
+const { computeCompositionGrandTotal, storedTotalWithRoundOff } = require('../../utils/orderCalc');
 // Consumption Forecast math lives in utils/consumptionForecast.js so the Alert
 // Configuration 'consumption_forecast' group fires on exactly the same "Reorder Now"
 // status the getConsumptionForecast endpoint returns.
@@ -145,70 +147,91 @@ const computeOrderPaid = (o) => {
   return collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
 };
 
-// Total outstanding due for a hotel/party across its UNPAID INVOICES (Invoice.balanceDue,
-// kept authoritative by Invoice's own pre-save hook: total - advanceAmount). Deliberately
-// reads Invoice documents rather than Order documents — Order.total is not reliably kept in
-// sync with the final kit-aware total (a real case: an order's stored `total` was ₹60,030
-// while its actual Invoice.total was ₹78,930, because kit pricing was folded in at invoice
-// time but the Order.total field was never re-saved), so summing Order totals silently
-// undercounts. Invoice.total/balanceDue is always the correct, final figure.
-// Matches by partyId when given, else resolves the Party by case-insensitive exact name —
-// Invoice.partyId is a required reference (unlike Order.clientName, which is free text), so
-// once the party is resolved the match is a direct partyId lookup, no OR-matching needed.
-// excludeInvoiceId keeps the invoice currently being viewed/printed/downloaded out of its own
-// "other pending" total — excluding by INVOICE, not by order, matters when one order has more
-// than one invoice against it (e.g. a re-issued invoice): excluding the whole order would hide
-// a sibling invoice's genuine outstanding balance from the other.
+// Total outstanding due for a hotel/party across its OTHER SALES ORDERS only — the "Pending
+// Amount (hotel)" line on every Billing / Sales / Dispatch invoice & quotation. Leads,
+// negotiations and quotations are never counted (nothing is owed until the deal is a confirmed
+// order), and invoices aren't the source either: an invoice is only the bill for an order, and
+// an order is owed from the moment it's confirmed whether or not Billing has raised its invoice
+// yet — summing invoices silently missed every hotel whose order was still waiting on one.
+// Cancelled orders and Sample orders (no payment is expected for samples) are skipped.
 //
-// A payment recorded straight onto the linked Order does NOT always sync back onto the
-// Invoice — e.g. syncOrderPaymentCollection (fired from a Quotation-stage payment via
-// updateQuotation) writes only to Order.paymentCollection/paidAmount via findByIdAndUpdate,
-// bypassing the Invoice-sync block that only lives in Sales' own updateOrder handler. Left
-// unchecked, Invoice.advanceAmount can under-report a payment that Sales/Operations/Dispatch
-// already show as received, making an ALREADY-PAID invoice look pending here. So for every
-// invoice with a linked order, reconcile against that order the same way the codebase's own
-// resolveOrderPaymentStatus already does (utils/syncOrderPayment.js): take the larger of
-// Invoice vs Order paid, and the larger of Invoice vs Order total, before computing the due.
+// Per order: total = the kit-aware composition total (computeOrderTotal — the same figure the
+// Billing invoice prints for that order), falling back to the stored Order.total only when
+// there's nothing to compute from. The stored total goes stale: it can miss the forwarding
+// charge or kit pricing, or still carry a courier charge whose Transport Cost Scope is HNG.
+// paid = the order's own payment record (the larger of its paymentCollection sum and stored
+// paid field, like Billing's sumPaid) — every Billing Record Payment In is pushed onto the
+// order via syncOrderPaymentCollection, so the order alone has the full paid figure.
+//
+// Hotel match mirrors getParties: orders referencing the party, plus name-matched orders that
+// carry no party reference at all. The document's OWN order is excluded so it never shows as
+// its own "other" pending — by excludeOrderId directly, by excludeInvoiceId (→ that invoice's
+// order / quotation), or by excludeQuotationId / excludeNegotiationId (→ the order converted
+// from that quotation / negotiation, when it's been converted).
 exports.getHotelPendingDue = asyncHandler(async (req, res) => {
-  const { partyId: partyIdParam, clientName, excludeInvoiceId } = req.query;
-  let partyId = partyIdParam;
-  if (!partyId && clientName && clientName.trim()) {
-    const nameRe = new RegExp(`^${clientName.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i');
+  const { partyId: partyIdParam, clientName, excludeInvoiceId, excludeOrderId, excludeQuotationId, excludeNegotiationId } = req.query;
+  const validId = (id) => (id && mongoose.isValidObjectId(id) ? id : null);
+  let name = (clientName || '').trim();
+  let partyId = validId(partyIdParam);
+  if (partyId && !name) {
+    const party = await Party.findById(partyId).select('name').lean();
+    name = (party?.name || '').trim();
+  }
+  const nameRe = name ? new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i') : null;
+  if (!partyId && nameRe) {
     const party = await Party.findOne({ name: nameRe, deletedAt: null }).select('_id').lean();
-    partyId = party?._id;
+    partyId = party?._id || null;
   }
-  if (!partyId) {
-    return res.status(200).json({ success: true, data: { pending: 0, hotelName: clientName || null, invoiceCount: 0 } });
+  if (!partyId && !nameRe) {
+    return res.status(200).json({ success: true, data: { pending: 0, hotelName: clientName || null, orderCount: 0 } });
   }
 
-  const filter = { partyId };
-  if (excludeInvoiceId) filter._id = { $ne: excludeInvoiceId };
+  const excludedOrderIds = [validId(excludeOrderId)].filter(Boolean);
+  const excludedLinks = [];
+  if (validId(excludeQuotationId)) excludedLinks.push({ quotationId: excludeQuotationId });
+  if (validId(excludeNegotiationId)) {
+    excludedLinks.push({ negotiationId: excludeNegotiationId });
+    // Orders are converted from the quotation and carry only its quotationId — reach the
+    // negotiation's order through the quotation it links to.
+    const neg = await Negotiation.findById(excludeNegotiationId).select('quotationId').lean();
+    if (neg?.quotationId) excludedLinks.push({ quotationId: neg.quotationId });
+  }
+  if (validId(excludeInvoiceId)) {
+    const inv = await Invoice.findById(excludeInvoiceId).select('orderId quotationId').lean();
+    if (inv?.orderId) excludedOrderIds.push(inv.orderId);
+    if (inv?.quotationId) excludedLinks.push({ quotationId: inv.quotationId });
+  }
 
-  const invoices = await Invoice.find(filter).select('total advanceAmount balanceDue isComplementary orderId').lean();
+  const filter = {
+    deletedAt: null,
+    status: { $ne: 'Cancelled' },
+    orderCategory: { $ne: 'SAMPLE' },
+    $or: partyId
+      ? [{ clientPartyId: partyId }, ...(nameRe ? [{ clientPartyId: null, clientName: nameRe }] : [])]
+      : [{ clientName: nameRe }],
+  };
+  if (excludedOrderIds.length) filter._id = { $nin: excludedOrderIds };
+  if (excludedLinks.length) filter.$nor = excludedLinks;
 
-  const orderIds = invoices.map((inv) => inv.orderId).filter(Boolean);
-  const orders = orderIds.length
-    ? await Order.find({ _id: { $in: orderIds } })
-        .select('paymentCollection paidAmount advancePaidAmount advancePaid total amount')
-        .lean()
+  const orders = await Order.find(filter)
+    .select('total amount paidAmount advancePaidAmount advancePaid paymentCollection items products kitOrders kitPrice kitOverallQty forwardingCharge forwardingChargeAmount packagingIncludes packagingIncludesQty transportationBy')
+    .lean();
+  // Only needed for orders using "Select Kit(s) to Include" (packagingIncludes).
+  const kitsData = orders.some((o) => (o.packagingIncludes || []).length > 0)
+    ? await Kit.find().lean()
     : [];
-  const orderById = new Map(orders.map((o) => [o._id.toString(), o]));
 
-  const pending = invoices.reduce((s, inv) => {
-    if (inv.isComplementary) return s;
-    let paid = Number(inv.advanceAmount) || 0;
-    let total = Number(inv.total) || 0;
-    const order = inv.orderId ? orderById.get(inv.orderId.toString()) : null;
-    if (order) {
-      paid = Math.max(paid, computeOrderPaid(order));
-      total = Math.max(total, Number(order.total) || Number(order.amount) || 0);
-    }
+  const pending = orders.reduce((s, o) => {
+    const computed = computeOrderTotal(o, kitsData);
+    const total = computed > 0 ? computed : storedTotalWithRoundOff(o.total || o.amount, o, kitsData);
+    const collTotal = (o.paymentCollection || []).reduce((cs, e) => cs + Number(e?.paidAmount || 0), 0);
+    const paid = Math.max(collTotal, Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
     return s + Math.max(0, total - paid);
   }, 0);
 
   res.status(200).json({
     success: true,
-    data: { pending: Math.round(pending * 100) / 100, hotelName: clientName || null, invoiceCount: invoices.length },
+    data: { pending: Math.round(pending * 100) / 100, hotelName: clientName || null, orderCount: orders.length },
   });
 });
 

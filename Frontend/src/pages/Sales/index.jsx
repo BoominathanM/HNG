@@ -2632,9 +2632,8 @@ export default function Sales() {
     setDownloadingOrderKey(rowKey);
     try {
       const clientPartyId = order?.clientPartyId?._id || order?.clientPartyId || src?.clientPartyId?._id || src?.clientPartyId;
-      // Sales doesn't track a linked Invoice id on the order, so there's nothing reliable to
-      // exclude here — matches everywhere else the hotel has an unpaid invoice on file.
-      const pendingDue = await fetchHotelPendingDue({ clientPartyId, clientName: data.customer.name });
+      // The hotel's OTHER orders only — this order itself is excluded.
+      const pendingDue = await fetchHotelPendingDue({ clientPartyId, clientName: data.customer.name, excludeOrderId: order?._id || order?.key });
       const pdfBlob = await generateOrderDocPdfBlob(pendingDue ? { ...data, pendingDue } : data);
       const blobUrl = URL.createObjectURL(pdfBlob);
       const a = document.createElement('a');
@@ -2721,9 +2720,15 @@ export default function Sales() {
     setDownloadingOrderKey(rowKey);
     try {
       const clientPartyId = rec?.clientPartyId?._id || rec?.clientPartyId;
-      // rec is a Quotation/Negotiation record, not an Invoice, so there's no invoice of its own
-      // to exclude — matches everywhere else the hotel has an unpaid invoice on file.
-      const pendingDue = await fetchHotelPendingDue({ clientPartyId, clientName: data.customer.name });
+      // The hotel's OTHER orders only — once this quotation/negotiation has been converted, its
+      // own order is excluded (the backend finds it through the quotation it came from).
+      const recId = rec?._id || rec?.key;
+      const pendingDue = await fetchHotelPendingDue({
+        clientPartyId,
+        clientName: data.customer.name,
+        excludeQuotationId: rec?.qid ? recId : undefined,
+        excludeNegotiationId: rec?.nid ? recId : undefined,
+      });
       // Same real-PDF pipeline as Orders' "Download Invoice" — rasterized via html2pdf so the
       // logo (a relative /hnglogonew.png URL) resolves against the page origin and the file
       // downloads directly instead of opening as a bare blob: HTML tab.

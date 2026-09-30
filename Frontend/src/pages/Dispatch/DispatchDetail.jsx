@@ -100,6 +100,21 @@ function computeCompositionGrandTotal(rec = {}, kitsData = [], bundleScaleRatio 
   return computeRecordGrandTotal(rec);
 }
 
+// Amount already paid against the order — mirrors Billing's sumPaid (Billing/index.jsx)
+// exactly: the MAX across every linked record's paymentCollection sum and stored paid
+// field, since a payment recorded in one module isn't always synced onto the others. Feeds
+// the printed invoice's "Paid Amount" row so it shows the same figure as Billing's invoice.
+const sumPaid = (...sources) => {
+  let maxPaid = 0;
+  for (const src of sources) {
+    if (!src || typeof src !== 'object') continue;
+    const coll = (src.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
+    const stored = Number(src.paidAmount) || Number(src.totalPaid) || Number(src.amountCollected) || Number(src.advancePaidAmount) || Number(src.advancePaid) || Number(src.advanceAmount) || 0;
+    maxPaid = Math.max(maxPaid, coll, stored);
+  }
+  return r2(maxPaid);
+};
+
 const statusColor = {
   'Ready to Dispatch': '#C94F8A',
   'Payment Pending': '#D85C9E',
@@ -549,10 +564,12 @@ export default function DispatchDetail() {
     const liveTotal = computeCompositionGrandTotal(compositionRec, kits, bundleScaleRatio);
 
     const customerName = inv.partyId?.name || order?.client || '—';
+    // The hotel's OTHER orders only — this dispatch's own order is excluded.
     const pendingDue = await fetchHotelPendingDue({
       clientPartyId: inv.partyId?._id,
       clientName: customerName,
       excludeInvoiceId: inv._id,
+      excludeOrderId: linkedOrder?._id || dispatchOrderId,
     });
 
     // Payment-terms date printed beside the Invoice Date — the invoice's own order, then the
@@ -564,13 +581,26 @@ export default function DispatchDetail() {
       isSample: !!order?.isSample,
     });
 
+    // "Paid Amount" row (DocumentTemplate reads it from `advance`, same field Billing passes) —
+    // resolved from the same order/lead/quotation/invoice sources Billing's sumPaid uses, so the
+    // Full Invoice print shows exactly Billing's paid figure. A dispatched-only print covers just
+    // part of the order, so there it's capped at that print's own total — paid can't read higher
+    // than the document it's printed on.
+    const invoiceTotal = liveTotal > 0 ? liveTotal : (inv.total || 0);
+    const linkedLead = linkedOrder?.leadId && typeof linkedOrder.leadId === 'object' ? linkedOrder.leadId : null;
+    const linkedQuotation = inv.quotationId && typeof inv.quotationId === 'object' ? inv.quotationId : null;
+    const quotationLead = linkedQuotation?.leadId && typeof linkedQuotation.leadId === 'object' ? linkedQuotation.leadId : null;
+    const orderPaid = sumPaid(dispatchOrder, linkedOrder, linkedLead, quotationLead, linkedQuotation, inv);
+    const paidAmount = filterVerified ? r2(Math.min(orderPaid, invoiceTotal)) : orderPaid;
+
     return {
       inv: inv.invoiceNumber,
       pendingDue,
+      advance: paidAmount,
       date: inv.invoiceDate ? new Date(inv.invoiceDate).toLocaleString() : '—',
       ...paymentTermDateFields,
       type: inv.invoiceType || 'GST',
-      total: liveTotal > 0 ? liveTotal : (inv.total || 0),
+      total: invoiceTotal,
       gst: composition ? composition.gst : (inv.gstAmount || 0),
       taxableAmount: composition ? composition.taxable : (inv.subtotal || 0),
       cgst: composition ? r2(composition.gst / 2) : halfGst,
