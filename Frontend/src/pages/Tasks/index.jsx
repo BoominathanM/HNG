@@ -286,6 +286,31 @@ function kitPrintGate() {
   return { blocked: false };
 }
 
+// Today's Checklist "Fully Available" / "Partial Available" sub-tabs — what's still holding one
+// suggested-task card back from being worked right now, read straight off the flags
+// computeSuggestedTasks (Backend tasks.controller.js) already puts on every card: live
+// inventory stock (stockReady), packing material from Material Stocks (materialStockReady) and
+// the product's own sticker/printing arrival (stickerPrintingReady — its Printing Status reaching
+// Received/Closed). Strict `=== false` so a card without a flag (e.g. a kit-packing placeholder)
+// never counts as blocked. The kit's own Display Unit printing status is deliberately NOT a
+// factor — that gate was removed on request (see kitPrintGate above).
+function checklistCardBlockers(s) {
+  if (!s || s.__kitPlaceholder) return [];
+  const reasons = [];
+  if (s.stockReady === false) reasons.push('Stock');
+  if (s.materialStockReady === false) reasons.push('Packing Material');
+  if (s.stickerPrintingReady === false) reasons.push('Sticker / Printing');
+  return reasons;
+}
+
+// Classified per ORDER (all of its cards together): Fully Available when no card has a blocker,
+// OR whenever the order is Emergency — emergency orders are worked first regardless, so they
+// always sit on the Fully Available sub-tab (their cards still mark any shortage in red).
+function isChecklistOrderFullyAvailable(items) {
+  if (items.some((i) => i.isUrgent || i.isEmergencyProduct)) return true;
+  return items.every((i) => checklistCardBlockers(i).length === 0);
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 export default function Tasks() {
   const navigate = useNavigate();
@@ -314,19 +339,27 @@ export default function Tasks() {
   // null = nothing manually (re-)generated yet THIS session, so fall back to the last
   // persisted run. Once the user clicks "Get AI Insight" this session's result wins,
   // even though the persisted copy was also just updated to match it.
-  const [manualInsight, setManualInsight] = useState(null);
   const [manualProductTasks, setManualProductTasks] = useState(null);
-  const taskInsight = manualInsight !== null ? manualInsight : (latestInsightData?.data?.insight ?? null);
   // Per-product AI task recommendations from the last analysis, keyed by
   // `${orderCode}::${product}` (lowercased) — highlights the matching Suggested Tasks
-  // chip on that product's own card instead of leaving the recommendation buried in the
-  // summary text above.
+  // chip on that product's own card. This is the only part of the analysis shown now:
+  // the separate "AI Insight — Today's Priorities" summary card was removed on request
+  // (the AI's call already shows up right on each card's chips).
   const aiProductTasks = manualProductTasks !== null ? manualProductTasks : (latestInsightData?.data?.productTasks ?? {});
   const handleGetTaskInsight = async () => {
     try {
       const res = await fetchTaskInsight().unwrap();
-      setManualInsight(res?.data?.insight || '');
-      setManualProductTasks(res?.data?.productTasks || {});
+      const productTasks = res?.data?.productTasks || {};
+      setManualProductTasks(productTasks);
+      // No summary card any more, so confirm the run here — otherwise the click looks like
+      // it did nothing unless a highlighted chip happens to be on screen.
+      const n = Object.keys(productTasks).length;
+      enqueueSnackbar(
+        n > 0
+          ? `AI Insight updated — recommended tasks highlighted on ${n} product card${n !== 1 ? 's' : ''}.`
+          : 'AI Insight updated — no specific task recommendations this time.',
+        { variant: 'success' },
+      );
     } catch (err) {
       enqueueSnackbar(err?.data?.error || err?.data || 'AI insight failed.', { variant: 'error' });
     }
@@ -931,6 +964,37 @@ export default function Tasks() {
     });
     return map;
   }, [hotelGroups, selectedProduct]);
+
+  // ── Today's Checklist sub-tabs: Fully / Partial Available ─────────────────
+  const [checklistSubTab, setChecklistSubTab] = useState('fully');
+  // Classified on the FULL order (hotelGroups), never the product-filtered view above, so picking
+  // a product in Alternative Suggestions can't move an order from one sub-tab to the other.
+  const fullyAvailableOrderKeys = useMemo(() => {
+    const set = new Set();
+    Object.entries(hotelGroups).forEach(([hotel, orders]) => {
+      Object.entries(orders).forEach(([orderCode, items]) => {
+        if (isChecklistOrderFullyAvailable(items)) set.add(`${hotel}::${orderCode}`);
+      });
+    });
+    return set;
+  }, [hotelGroups]);
+  // displayedHotelGroups split into the two sub-tabs — same { hotelName: { orderCode: [items] } }
+  // shape, so the hotel-card / order-drilldown render below works unchanged on either one. A hotel
+  // with one ready and one waiting order shows up on both, each listing only its own orders.
+  const checklistSplitGroups = useMemo(() => {
+    const fully = {};
+    const partial = {};
+    Object.entries(displayedHotelGroups).forEach(([hotel, orders]) => {
+      Object.entries(orders).forEach(([orderCode, items]) => {
+        const target = fullyAvailableOrderKeys.has(`${hotel}::${orderCode}`) ? fully : partial;
+        if (!target[hotel]) target[hotel] = {};
+        target[hotel][orderCode] = items;
+      });
+    });
+    return { fully, partial };
+  }, [displayedHotelGroups, fullyAvailableOrderKeys]);
+  const checklistHotelGroups = checklistSubTab === 'partial' ? checklistSplitGroups.partial : checklistSplitGroups.fully;
+  const countChecklistOrders = (groups) => Object.values(groups).reduce((n, orders) => n + Object.keys(orders).length, 0);
 
   // Order status lookup (orderId -> status) — used below to catch case 3: a product
   // whose sibling(s) already carried the order to Dispatch Ready while this one was left
@@ -1773,9 +1837,14 @@ export default function Tasks() {
     // checklist is print/design-complete already, so readiness here is purely
     // about stock.
     const readyAlertType = s.stockReady ? 'success' : 'error';
-    const readyText = s.stockReady
-      ? 'All resources ready — safe to assign and start production.'
-      : 'Stock Not Available — insufficient inventory to fully produce this item.';
+    // "All resources ready" only when nothing else holds the card back either (packing material /
+    // sticker-printing — see checklistCardBlockers); otherwise just the stock half is confirmed
+    // and the specific pending item gets its own red alert below.
+    const readyText = !s.stockReady
+      ? 'Stock Not Available — insufficient inventory to fully produce this item.'
+      : checklistCardBlockers(s).length === 0
+        ? 'All resources ready — safe to assign and start production.'
+        : 'Inventory stock available — see the pending item below before starting production.';
     // Own-print gate: a product routed to its own design/packaging destination
     // (Sticker always, or Box/Frosted Ziplock/Butter Paper whenever this item
     // also needs Printing — e.g. Soap: Packing Material=Box, Printing=Yes) can't
@@ -1890,6 +1959,14 @@ export default function Tasks() {
                 style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
               />
             )}
+            {printGateBlocked && (
+              <Alert
+                type="error"
+                showIcon
+                message={`Sticker / Printing Not Received — Printing Status is "${s.itemPrintingStatus || 'not set'}". Needs Received/Closed before its ${s.designType === 'Sticker' ? 'stickering' : 'packing'} task can start.`}
+                style={{ borderRadius: 8, marginBottom: 12, fontSize: 12 }}
+              />
+            )}
             {/* Task Progress — task-wise assigned/required qty (e.g. "250/500 Soap
                 packing"), one badge per distinct task name that has any qty
                 assigned so far (see getTaskProgress). Each task name tracks its
@@ -1933,7 +2010,7 @@ export default function Tasks() {
                 the last "Get AI Insight" run recommended task(s) for THIS exact
                 product (matched via aiProductTasks, keyed by orderCode::product),
                 that chip is moved first and highlighted gold with a robot icon —
-                the AI's product-wise call, not just the summary paragraph above. */}
+                the AI's product-wise call (the only place the analysis shows now). */}
             {(() => {
               const relevantOptions = s.stockReady ? getRelevantTaskOptions(s) : [];
               if (relevantOptions.length === 0) return null;
@@ -2101,7 +2178,6 @@ export default function Tasks() {
                           )}
                         </div>
                       )}
-                      description="Order products grouped by hotel — readiness here is based on inventory stock. Emergency orders are prioritized first, then oldest-placed orders. Stock shortages are marked in red."
                       style={{ borderRadius: 8, width: '100%' }}
                     />
                   </Col>
@@ -2139,23 +2215,37 @@ export default function Tasks() {
                   </Col>
                 </Row>
 
-                {taskInsight && (
-                  <div style={{ marginBottom: 16, padding: '16px 20px', borderRadius: 12, background: 'linear-gradient(135deg,#B11E6A18,#D85C9E10)', border: '1.5px solid #B11E6A44' }}>
-                    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
-                      <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <RobotOutlined style={{ color: '#fff', fontSize: 16 }} />
-                      </div>
-                      <div style={{ flex: 1 }}>
-                        <Text strong style={{ fontSize: 13, color: '#B11E6A', display: 'block', marginBottom: 4 }}>
-                          AI Insight — Today's Priorities
-                        </Text>
-                        <Text style={{ fontSize: 13, color: isDark ? '#e0e0e0' : '#333', lineHeight: 1.7, whiteSpace: 'pre-line' }}>
-                          {taskInsight}
-                        </Text>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                {/* Fully / Partial Available sub-tabs — tab bar only; the hotel list below
+                    renders whichever sub-tab is active from checklistHotelGroups. The intro,
+                    product filter and AI Insight above stay shared by both. */}
+                <Tabs
+                  activeKey={checklistSubTab}
+                  onChange={(k) => { setChecklistSubTab(k); setSelectedHotel(null); }}
+                  size="small"
+                  style={{ marginBottom: 4 }}
+                  items={[
+                    {
+                      key: 'fully',
+                      label: (
+                        <Space size={6}>
+                          <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                          Fully Available Suggested Task
+                          <Badge count={countChecklistOrders(checklistSplitGroups.fully)} showZero style={{ background: '#52c41a' }} />
+                        </Space>
+                      ),
+                    },
+                    {
+                      key: 'partial',
+                      label: (
+                        <Space size={6}>
+                          <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
+                          Partial Available Suggested Task
+                          <Badge count={countChecklistOrders(checklistSplitGroups.partial)} showZero style={{ background: '#fa8c16' }} />
+                        </Space>
+                      ),
+                    },
+                  ]}
+                />
 
                 {suggestedList.length === 0 && Object.keys(hotelGroups).length === 0 ? (
                   <div style={{ textAlign: 'center', padding: '48px 0' }}>
@@ -2167,6 +2257,17 @@ export default function Tasks() {
                     <BulbOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
                     <Text type="secondary">No pending orders currently need "{selectedProduct}"</Text>
                   </div>
+                ) : Object.keys(checklistHotelGroups).length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '48px 0' }}>
+                    {checklistSubTab === 'partial'
+                      ? <CheckCircleOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />
+                      : <ExclamationCircleOutlined style={{ fontSize: 40, color: '#d9d9d9', display: 'block', marginBottom: 12 }} />}
+                    <Text type="secondary">
+                      {checklistSubTab === 'partial'
+                        ? `No orders waiting on stock or sticker${selectedProduct ? ` for "${selectedProduct}"` : ''} — everything is on Fully Available.`
+                        : `No fully available orders${selectedProduct ? ` for "${selectedProduct}"` : ''} right now — see Partial Available for orders still waiting on stock or sticker.`}
+                    </Text>
+                  </div>
                 ) : selectedHotel ? (
                   /* ── Order-wise view for selected hotel ── */
                   <div>
@@ -2174,14 +2275,26 @@ export default function Tasks() {
                       <Button size="small" onClick={() => setSelectedHotel(null)}>← Back to Hotels</Button>
                       <Title level={5} style={{ margin: 0, color: textColor }}>{selectedHotel}</Title>
                     </div>
-                    {Object.entries(displayedHotelGroups[selectedHotel] || {}).map(([orderCode, items]) => (
+                    {/* An open hotel's last order can move to the other sub-tab on refresh
+                        (e.g. its stock or sticker just arrived) — say so instead of a blank page. */}
+                    {!checklistHotelGroups[selectedHotel] && (
+                      <Text type="secondary" style={{ display: 'block', padding: '24px 0' }}>
+                        No orders for this hotel on this tab anymore — check {checklistSubTab === 'partial' ? 'Fully' : 'Partial'} Available.
+                      </Text>
+                    )}
+                    {Object.entries(checklistHotelGroups[selectedHotel] || {}).map(([orderCode, items]) => (
                       <div key={orderCode} style={{ marginBottom: 24 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, flexWrap: 'wrap' }}>
                           <ShoppingOutlined style={{ color: '#B11E6A' }} />
                           <Text strong style={{ color: textColor }}>{orderCode}</Text>
                           <Badge count={items.filter((i) => !i.__kitPlaceholder).length} style={{ background: '#B11E6A' }} />
                           {items.some((i) => i.isUrgent) && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
-                          {items.every((i) => i.fullyReady) && <Tag color="green" style={{ fontSize: 11 }}>All Ready</Tag>}
+                          {(() => {
+                            const blockers = [...new Set(items.flatMap(checklistCardBlockers))];
+                            return blockers.length === 0
+                              ? <Tag color="green" style={{ fontSize: 11 }}>All Ready</Tag>
+                              : <Tag color="orange" style={{ fontSize: 11 }}>Waiting: {blockers.join(', ')}</Tag>;
+                          })()}
                         </div>
 
                         {/* Kit Packing Task Assignment — Separate Kit / Personalized Kit composition
@@ -2373,7 +2486,7 @@ export default function Tasks() {
                 ) : (
                   /* ── Hotel cards view ── */
                   <Row gutter={[24, 24]} align="stretch">
-                    {Object.entries(displayedHotelGroups).map(([hotel, orders]) => {
+                    {Object.entries(checklistHotelGroups).map(([hotel, orders]) => {
                       const allItems = Object.values(orders).flat();
                       // Kit-packing placeholder entries (see hotelGroups above) aren't real
                       // pending products — exclude them from the item/stock counts below, but
@@ -2381,6 +2494,9 @@ export default function Tasks() {
                       // packing still flags the hotel card red.
                       const realItems = allItems.filter((i) => !i.__kitPlaceholder);
                       const readyCount = realItems.filter((i) => i.fullyReady).length;
+                      // The other two Partial Available reasons besides stock (see checklistCardBlockers).
+                      const materialShortCount = realItems.filter((i) => i.materialStockReady === false).length;
+                      const stickerPendingCount = realItems.filter((i) => i.stickerPrintingReady === false).length;
                       const urgentCount = allItems.filter((i) => i.isUrgent).length;
                       const orderCount = Object.keys(orders).length;
 
@@ -2438,6 +2554,8 @@ export default function Tasks() {
                                 <Tag color="default">{realItems.length} item{realItems.length !== 1 ? 's' : ''}</Tag>
                                 {readyCount > 0 && <Tag color="green">{readyCount} stock ready</Tag>}
                                 {realItems.length - readyCount > 0 && <Tag color="red">{realItems.length - readyCount} stock short</Tag>}
+                                {materialShortCount > 0 && <Tag color="volcano">{materialShortCount} packing material short</Tag>}
+                                {stickerPendingCount > 0 && <Tag color="orange">{stickerPendingCount} sticker pending</Tag>}
                               </Space>
 
                               {/* Per-order date + Emergency/Sample/Regular breakdown — scrollable

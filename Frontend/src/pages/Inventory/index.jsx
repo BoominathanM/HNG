@@ -658,6 +658,12 @@ export default function Inventory() {
   }), [itemHistoryRows, itemHistoryTab, itemHistorySearch]);
   const itemHistoryInTotal = useMemo(() => itemHistoryRows.filter((r) => r.isIn).reduce((s, r) => s + (r.qty || 0), 0), [itemHistoryRows]);
   const itemHistoryOutTotal = useMemo(() => itemHistoryRows.filter((r) => !r.isIn).reduce((s, r) => s + (r.qty || 0), 0), [itemHistoryRows]);
+  // Stock In Hand = the item's live currentStock (not In − Out of the loaded rows), so it stays
+  // correct when the Hotel/Party filter narrows the movements or history is capped at 500 rows.
+  const historyItemStock = useMemo(
+    () => inventoryList.find((i) => i.key === historyItem?.id) || null,
+    [inventoryList, historyItem?.id]
+  );
 
   const { data: itemHistoryReportData } = useGetStockHistoryReportQuery(
     { itemId: historyItem?.id, period: itemHistoryPeriod, partyId: itemHistoryPartyFilter || undefined },
@@ -1462,7 +1468,7 @@ export default function Inventory() {
         <Text strong style={{ fontSize: 18, color: '#B11E6A' }}>{historyItem?.name}</Text>
       </div>
 
-      <Row gutter={12} style={{ marginBottom: 14 }}>
+      <Row gutter={[12, 12]} style={{ marginBottom: 14 }}>
         <Col xs={12} sm={8}>
           <Card size="small" style={{ borderRadius: 12, border: '1px solid #52c41a33', background: isDark ? '#12241a' : '#f6ffed' }}>
             <Text type="secondary" style={{ fontSize: 12 }}>Total Stock In</Text>
@@ -1473,6 +1479,19 @@ export default function Inventory() {
           <Card size="small" style={{ borderRadius: 12, border: '1px solid #ff4d4f33', background: isDark ? '#2a1315' : '#fff1f0' }}>
             <Text type="secondary" style={{ fontSize: 12 }}>Total Stock Out</Text>
             <div style={{ fontSize: 22, fontWeight: 700, color: '#ff4d4f' }}>-{formatQty(itemHistoryOutTotal)}</div>
+          </Card>
+        </Col>
+        <Col xs={24} sm={8}>
+          <Card size="small" style={{ borderRadius: 12, border: '1px solid #B11E6A33', background: isDark ? '#2a1322' : '#fff0f6' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
+              <Text type="secondary" style={{ fontSize: 12 }}>Stock In Hand</Text>
+              {historyItemStock?.status === 'Out' && <Tag color="error" style={{ borderRadius: 12, margin: 0, fontSize: 10 }}>Out of Stock</Tag>}
+              {historyItemStock?.status === 'Low' && <Tag icon={<WarningOutlined />} color="warning" style={{ borderRadius: 12, margin: 0, fontSize: 10 }}>Low Stock</Tag>}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: '#B11E6A' }}>
+              {historyItemStock ? formatQty(historyItemStock.current || 0) : '—'}
+              {historyItemStock?.unit && <span style={{ fontSize: 12, fontWeight: 500, color: isDark ? '#aaa' : '#999', marginLeft: 6 }}>{historyItemStock.unit}</span>}
+            </div>
           </Card>
         </Col>
       </Row>
