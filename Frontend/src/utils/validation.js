@@ -5,6 +5,10 @@ export const emailRules = (required = false) => {
   return rules;
 };
 
+// Form.Item `normalize` for email fields: lowercase as the user types, no spaces
+export const normalizeEmail = (value) =>
+  typeof value === 'string' ? value.toLowerCase().replace(/\s+/g, '') : value;
+
 // Number-of-digits rules per dial code (digits after the country prefix, not counting the +XX itself)
 const PHONE_RULES = new Map([
   ['+1',   { min: 10, max: 10 }], // USA / Canada

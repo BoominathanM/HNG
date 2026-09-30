@@ -54,8 +54,9 @@ const PhoneInput = ({ value = '', onChange, placeholder = 'Phone number', style,
   const selected = countries.find((c) => c.dialCode === dialCode) || DEFAULT_COUNTRIES[0];
 
   return (
-    <Space.Compact style={{ width: '100%', ...style }}>
+    <Space.Compact className="phone-input" style={{ width: '100%', ...style }}>
       <Select
+        className="phone-input-cc"
         value={dialCode}
         onChange={handleDialCodeChange}
         disabled={disabled}

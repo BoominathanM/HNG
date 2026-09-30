@@ -15,7 +15,7 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import PhoneInput from '../../components/common/PhoneInput';
-import { emailRules, phoneValidator } from '../../utils/validation';
+import { emailRules, normalizeEmail, phoneValidator } from '../../utils/validation';
 import useTabAccess from '../../hooks/useTabAccess';
 import { MODULE_TAB_DEFS } from '../../constants/moduleTabs';
 import AlertConfigurationTab from './AlertConfigurationTab';
@@ -679,8 +679,15 @@ export default function Settings() {
                           </Form.Item>
                         </Col>
                         <Col xs={24} sm={12}>
-                          <Form.Item label="Email Address" name="email" rules={emailRules(true)}>
-                            <Input placeholder="Enter email" style={{ borderRadius: 8, height: 40 }} />
+                          <Form.Item label="Email Address" name="email" rules={emailRules(true)} normalize={normalizeEmail}>
+                            <Input
+                              placeholder="Enter email"
+                              inputMode="email"
+                              autoCapitalize="none"
+                              autoCorrect="off"
+                              spellCheck={false}
+                              style={{ borderRadius: 8, height: 40 }}
+                            />
                           </Form.Item>
                         </Col>
                       </Row>
