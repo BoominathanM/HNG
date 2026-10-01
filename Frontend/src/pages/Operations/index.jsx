@@ -42,9 +42,7 @@ import {
   MessageOutlined,
   PlusOutlined,
   PrinterOutlined,
-  SafetyOutlined,
   SearchOutlined,
-  SyncOutlined,
   TagsOutlined,
   TeamOutlined,
   ToolOutlined,
@@ -56,6 +54,7 @@ import { motion } from 'framer-motion';
 import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import LogoThumb from '../../components/common/LogoThumb';
 import {
   useGetOperationOrdersQuery,
   useGetStickerRequestsQuery,
@@ -88,7 +87,6 @@ import {
 import {
   buildProductionQueues,
   canAssignTaskFromChecks,
-  designColor,
   ORDER_CATEGORY_META,
   designerCredentials,
   formatSizeWithUnit,
@@ -133,37 +131,11 @@ const INVOICE_TYPE_SLUG = {
   Other: 'other',
 };
 
-// Matches StickerRequest.status (Backend/src/models/StickerRequest.js) — row.status now
-// comes straight from the matching StickerRequest (see buildProductionQueues in ./data),
-// so these buckets must line up with that enum or every count below silently reads 0.
-const queueStatuses = [
-  'Pending',
-  'Waiting for Approval',
-  'Design Confirmation',
-  'Approved',
-  'In Process',
-  'Printing',
-  'Dispatch',
-  'Received',
-  'Design Change',
-  'Done',
-];
-
 const flowStageColors = ['default', 'blue', 'gold', 'magenta', 'green', 'success'];
 const flowNextActions = {
   0: { label: 'Send To Design', tab: 'design' },
   3: { label: 'Verify Stock', tab: 'overview' },
   4: { label: 'Assign Task', tab: 'tasks' },
-};
-
-const statusIcons = {
-  Sent: <MessageOutlined />,
-  'Design Confirmation': <CheckCircleOutlined />,
-  'In Process': <SyncOutlined />,
-  Dispatch: <TruckOutlined />,
-  Received: <InboxOutlined />,
-  'Pending Approval': <SafetyOutlined />,
-  'Design Change': <ToolOutlined />,
 };
 
 export default function Operations() {
@@ -1107,26 +1079,40 @@ export default function Operations() {
   ];
 
 
+  // Design-vendor queues (Sticker/Box/Ziplock/Butter/Brush/Other) show only the print-relevant
+  // columns. Display-only: row data, sorting, search (order ID still matches) and the dimming of
+  // fully-reserved rows are unchanged. Remove a key here to bring that column back.
+  const QUEUE_HIDDEN_COLUMNS = new Set(['orderId', 'category', 'hotelStock', 'stickerPrinting', 'packagingType']);
+
   const queueColumns = (label) => {
     const isStickerTab = label === 'Sticker';
     return [
       {
         title: 'Order',
         dataIndex: 'orderId',
+        render: (value, record) => (
+          <Space size={4}>
+            {record.isUrgent && (
+              <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
+            )}
+            {record.orderCategory === 'SAMPLE' && (
+              <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />
+            )}
+            <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
+          </Space>
+        ),
+      },
+      {
+        // Emergency / Sample / Partial labels live here (not under the Order ID) because the
+        // Order column is hidden in the vendor queues — see QUEUE_HIDDEN_COLUMNS.
+        title: 'Hotel Name',
+        dataIndex: 'hotelLogo',
         render: (value, record) => {
           const ord = apiOrders.find((o) => o.id === record.orderId);
           const isPartial = ord?.deliveryType === 'Partial';
           return (
             <Space size={2} direction="vertical">
-              <Space size={4}>
-                {record.isUrgent && (
-                  <AlertFilled style={{ color: '#ff4d4f', fontSize: 12 }} />
-                )}
-                {record.orderCategory === 'SAMPLE' && (
-                  <ExperimentOutlined style={{ color: '#722ed1', fontSize: 12 }} />
-                )}
-                <Text strong style={{ color: '#B11E6A' }}>{value}</Text>
-              </Space>
+              <Text>{value}</Text>
               {record.isUrgent && (
                 <Tag color="error" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Emergency Order</Tag>
               )}
@@ -1144,11 +1130,14 @@ export default function Operations() {
           );
         },
       },
-      { title: 'Hotel Name', dataIndex: 'hotelLogo' },
       {
+        // The hotel's logo from its Lead (Order.logoUrl → lead.hotelLogoUrl → any other Lead
+        // with the same hotel name, backfilled server-side in operations getOrders). Opens the
+        // file itself in a new tab so images, PDFs and .ai files all behave the same way. The
+        // tile matches the Operation detail page's logo box (shared LogoThumb).
         title: 'Logo',
         key: 'logo',
-        width: 80,
+        width: 120,
         render: (_, record) => {
           if (record.isKitChild) return <Text type="secondary" style={{ fontSize: 11 }}>—</Text>;
           const ord = apiOrders.find((o) => o.id === record.orderId);
@@ -1158,35 +1147,20 @@ export default function Operations() {
               ? <Tag color="orange" style={{ fontSize: 10 }}>Logo Req.</Tag>
               : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>;
           }
-          const isImage = /\.(jpe?g|png|gif|webp|bmp|svg)(\?|$)/i.test(url);
-          if (isImage) {
-            return (
-              <Popover
-                content={
-                  <div style={{ textAlign: 'center' }}>
-                    <img src={url} alt="logo" style={{ maxWidth: 300, maxHeight: 300, borderRadius: 8, objectFit: 'contain' }} />
-                    <div style={{ marginTop: 8 }}>
-                      <a href={url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: '#1890ff' }}>Open full size ↗</a>
-                    </div>
-                  </div>
-                }
-                title="Hotel Logo"
-                trigger="click"
-                placement="left"
-              >
-                <img
-                  src={url}
-                  alt="logo"
-                  style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 6, border: '1px solid #e0d0e8', cursor: 'pointer' }}
-                />
-              </Popover>
-            );
-          }
           return (
-            <a href={url} target="_blank" rel="noopener noreferrer"
-              style={{ fontSize: 11, color: '#B11E6A', display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-              <EyeOutlined style={{ fontSize: 12 }} /> View
-            </a>
+            <Space direction="vertical" size={6} align="center">
+              <LogoThumb url={url} size={48} radius={10} />
+              <Button
+                size="small"
+                icon={<EyeOutlined />}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A55' }}
+              >
+                View Logo
+              </Button>
+            </Space>
           );
         },
       },
@@ -1926,7 +1900,7 @@ export default function Operations() {
           </Popconfirm>
         ),
       }] : []),
-    ];
+    ].filter((c) => !QUEUE_HIDDEN_COLUMNS.has(c.key || c.dataIndex));
   };
 
   const openRequestModal = (type) => {
@@ -2232,7 +2206,6 @@ export default function Operations() {
 
     return (
       <div>
-        {renderQueueSummary(allActive)}
         <Card
           title={<Text strong style={{ color: textColor }}>{label}</Text>}
           extra={
@@ -2330,58 +2303,6 @@ export default function Operations() {
             </div>
           </Card>
         )}
-      </div>
-    );
-  };
-
-  const renderQueueSummary = (rows) => {
-    const countByStatus = Object.fromEntries(queueStatuses.map((status) => [status, 0]));
-    rows.forEach((row) => {
-      if (countByStatus[row.status] !== undefined) countByStatus[row.status] += 1;
-    });
-    return (
-      <div style={{ marginBottom: 24, overflowX: 'auto', padding: '4px 0' }}>
-        <div style={{ display: 'flex', gap: 12, minWidth: 900 }}>
-          {queueStatuses.map((status) => (
-            <Card
-              key={status}
-              size="small"
-              style={{
-                flex: 1,
-                borderRadius: 12,
-                border: 'none',
-                background: cardBg,
-                boxShadow: '0 2px 10px rgba(177,30,106,0.05)',
-                minWidth: 120,
-              }}
-              styles={{ body: { padding: '12px 8px' } }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <div style={{ 
-                  width: 32, 
-                  height: 32, 
-                  borderRadius: 8, 
-                  background: `${designColor[status] || '#B11E6A'}15`,
-                  color: designColor[status] || '#B11E6A',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: 16
-                }}>
-                  {statusIcons[status] || <TagsOutlined />}
-                </div>
-                <div>
-                  <Title level={4} style={{ margin: 0, lineHeight: 1, color: textColor }}>
-                    {countByStatus[status]}
-                  </Title>
-                  <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>
-                    {status}
-                  </Text>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
       </div>
     );
   };

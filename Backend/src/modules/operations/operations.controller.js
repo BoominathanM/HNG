@@ -140,7 +140,9 @@ async function backfillLogoUrlByHotelName(orders) {
   if (!missingNames.length) return;
   const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const fallbackLeads = await Lead.find({
-    hotelName: { $in: missingNames.map((n) => new RegExp(`^${escapeRegex(n)}$`, 'i')) },
+    // Allow stray leading/trailing spaces on the Lead's saved hotelName so "ESSENCE " still
+    // matches an order for "ESSENCE" (the key below is trimmed the same way on both sides).
+    hotelName: { $in: missingNames.map((n) => new RegExp(`^\\s*${escapeRegex(n)}\\s*$`, 'i')) },
     hotelLogoUrl: { $exists: true, $ne: '' },
     deletedAt: null,
   }).sort('-createdAt').select('hotelName hotelLogoUrl').lean();

@@ -667,7 +667,11 @@ export const apiSlice = createApi({
     }),
     updateLead: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/leads/${id}`, method: 'put', data }),
-      invalidatesTags: ['Leads'],
+      // A logo change is copied server-side onto the lead's orders/quotations/negotiations
+      // (sales.controller updateLead) — refresh those too so Operations' Logo column updates.
+      invalidatesTags: (result, error, arg) => ('hotelLogoUrl' in (arg || {})
+        ? ['Leads', 'Orders', 'Operations', 'Quotations', 'Negotiations']
+        : ['Leads']),
     }),
     deleteLead: builder.mutation({
       query: (id) => ({ url: `/sales/leads/${id}`, method: 'delete' }),

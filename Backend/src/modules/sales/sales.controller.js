@@ -135,6 +135,20 @@ exports.updateLead = asyncHandler(async (req, res, next) => {
     { new: true, runValidators: false }
   );
   if (!lead) return next(new AppError('Lead not found', 404));
+
+  // Orders/quotations/negotiations freeze a copy of the hotel logo when they're created
+  // (convertToOrder → Order.logoUrl), and Operations' Logo column reads that copy first. A
+  // logo added or replaced on the lead afterwards must reach them too, or every order raised
+  // before the upload keeps showing no logo / the old one.
+  if ('hotelLogoUrl' in req.body && (req.body.hotelLogoUrl || '') !== (existingLead.hotelLogoUrl || '')) {
+    const newLogo = req.body.hotelLogoUrl || '';
+    await Promise.all([
+      Order.updateMany({ leadId: lead._id, deletedAt: null }, { $set: { logoUrl: newLogo } }),
+      Quotation.updateMany({ leadId: lead._id }, { $set: { logoUrl: newLogo, hotelLogoUrl: newLogo } }),
+      Negotiation.updateMany({ leadId: lead._id }, { $set: { logoUrl: newLogo, hotelLogoUrl: newLogo } }),
+    ]).catch(() => {});
+  }
+
   res.status(200).json({ success: true, data: lead });
 });
 
@@ -188,6 +202,15 @@ exports.getHotelByName = asyncHandler(async (req, res) => {
     const fallbackFilter = { hotelName: nameRe, deletedAt: null };
     if (category) Object.assign(fallbackFilter, categoryMatch(category));
     lead = await Lead.findOne(fallbackFilter).sort('-createdAt').lean();
+  }
+  // The newest lead for a repeat hotel often has no logo of its own (it wasn't re-uploaded)
+  // even though an earlier lead for the same hotel does — carry that logo over so the new
+  // lead, and every order raised from it, still gets the hotel's logo.
+  if (lead && !lead.hotelLogoUrl) {
+    const logoFilter = { hotelName: nameRe, deletedAt: null, hotelLogoUrl: { $exists: true, $ne: '' } };
+    if (category) Object.assign(logoFilter, categoryMatch(category));
+    const withLogo = await Lead.findOne(logoFilter).sort('-createdAt').select('hotelLogoUrl').lean();
+    if (withLogo) lead.hotelLogoUrl = withLogo.hotelLogoUrl;
   }
   let party = null;
   if (!lead) party = await Party.findOne({ name: nameRe, deletedAt: null }).lean();

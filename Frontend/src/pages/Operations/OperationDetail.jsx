@@ -37,7 +37,6 @@ import {
   FileSearchOutlined,
   FileTextOutlined,
   GiftOutlined,
-  MessageOutlined,
   PlusOutlined,
   PrinterOutlined,
   ProfileOutlined,
@@ -76,6 +75,8 @@ import {
 import { estimateSecFor, secToHuman, perUnitLabel } from '../../utils/taskTime';
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import { downloadFile } from '../../utils/fileDownload';
+import LogoThumb from '../../components/common/LogoThumb';
+import { urlExtension } from '../../utils/logoFile';
 import { formatQty } from '../../utils/numberFormat';
 import {
   buildProductionQueues,
@@ -3193,9 +3194,7 @@ export default function OperationDetail() {
                   <Text strong style={{ color: '#ff4d4f', fontSize: 12 }}>Urgent / Emergency Deliveries (Partial)</Text>
                 </div>
               )}
-              <div style={{ width: 80, height: 80, borderRadius: 16, background: '#B11E6A12', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #B11E6A30' }}>
-                <FileImageOutlined style={{ fontSize: 34, color: '#B11E6A' }} />
-              </div>
+              <LogoThumb url={order.logoUrl} size={80} radius={16} />
               <div>
                 <Text type="secondary" style={{ fontSize: 12 }}>Hotel Logo</Text>
                 <Title level={3} style={{ margin: '4px 0 0', color: textColor }}>{order.hotelLogo}</Title>
@@ -3209,8 +3208,19 @@ export default function OperationDetail() {
               </Space>
               <Text style={{ fontSize: 12 }}>{order.operationStage}</Text>
               <Space wrap>
-                <Button icon={<FilePdfOutlined />} style={{ borderColor: '#B11E6A', color: '#B11E6A' }}>Logo PDF</Button>
-                <Button icon={<MessageOutlined />}>Send To Customer</Button>
+                <Tooltip title={order.logoUrl ? 'Download the hotel logo file' : 'No logo uploaded for this hotel yet'}>
+                  <Button
+                    icon={<FilePdfOutlined />}
+                    disabled={!order.logoUrl}
+                    style={order.logoUrl ? { borderColor: '#B11E6A', color: '#B11E6A' } : undefined}
+                    onClick={() => {
+                      const ext = urlExtension(order.logoUrl);
+                      downloadFile(order.logoUrl, `${order.hotelLogo || 'hotel'}-logo${ext ? `.${ext}` : ''}`);
+                    }}
+                  >
+                    Logo PDF
+                  </Button>
+                </Tooltip>
               </Space>
             </Space>
           </Card>

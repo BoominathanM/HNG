@@ -26,6 +26,7 @@ import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDocComposition } from '../../utils/docComposition';
 import { sumRoundOff, sumCourierCharges } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
+import { isImageUrl } from '../../utils/logoFile';
 import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
@@ -535,6 +536,12 @@ function prepareFormValues(data) {
   if (processed.altNumber !== undefined && processed.alternativePhone === undefined) processed.alternativePhone = processed.altNumber;
   // Map backend priorityNote → form mentionPriority
   if (processed.priorityNote !== undefined && processed.mentionPriority === undefined) processed.mentionPriority = processed.priorityNote;
+  // hotelLogoUrl is the canonical saved logo; the "hotelLogo" Upload fileList stored beside it
+  // can be missing (record never had one) or stale. Rebuild the list from the URL so the Hotel
+  // card edit always shows the current logo — and an emptied list on save really means removed.
+  if (processed.hotelLogoUrl && !(Array.isArray(processed.hotelLogo) && processed.hotelLogo.some((f) => f?.url === processed.hotelLogoUrl))) {
+    processed.hotelLogo = [{ uid: '-1', name: 'hotel-logo', status: 'done', url: processed.hotelLogoUrl }];
+  }
   const dateFields = [
     'followUpDate', 'orderDeliveryDate', 'quotationDate',
     'paymentReminderDate', 'creditDueDate', 'date', 'expectedDelivery',
@@ -4570,7 +4577,8 @@ export default function Sales() {
     const shippingPincode = shippingSameAsBilling ? pincode : (values.shippingPincode || formStore.shippingPincode);
     const shippingLocation = shippingSameAsBilling ? billingLocation : (values.shippingLocation || formStore.shippingLocation);
     // Extract Cloudinary URLs from file list fields
-    const hotelLogoUrl = (values.hotelLogo || []).find(f => f.url)?.url || undefined;
+    const hotelLogoFile = (values.hotelLogo || []).find(f => f?.url || f?.response?.url);
+    const hotelLogoUrl = hotelLogoFile ? (hotelLogoFile.url || hotelLogoFile.response.url) : undefined;
     const paymentProofFiles = (values.paymentProofs || []).map(f => ({
       name: f.name || f.originFileObj?.name,
       url: f.url || f.response?.url,
@@ -4911,7 +4919,7 @@ export default function Sales() {
     const now = new Date().toISOString();
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
     const fieldsBySection = {
-      hotel: ['category', 'hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'landlineNumber', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
+      hotel: ['category', 'hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'hotelLogo', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'landlineNumber', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
       billing: ['detailedAddress', 'city', 'state', 'pincode', 'billingLocation', 'billType', 'gstNumber', 'gstPhone'],
       shipping: ['shippingSameAsBilling', 'shippingAddress', 'shippingCity', 'shippingState', 'shippingPincode', 'shippingLocation'],
       leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
@@ -4944,6 +4952,26 @@ export default function Sales() {
     });
     if (values.splitDates) {
       values.splitDates = values.splitDates.map(sd => ({ ...sd, date: toStr(sd.date) }));
+    }
+    if (section === 'hotel') {
+      // The logo Upload holds a fileList, but everything downstream (Operations Logo column,
+      // orders, Old-Hotel lookup) reads hotelLogoUrl — this card used to drop the upload
+      // entirely. Resolve the URL and keep the list in the same lean { uid, name, status, url }
+      // shape the Old-Hotel lookup uses, never raw File/xhr objects.
+      if (Array.isArray(values.hotelLogo)) {
+        if (values.hotelLogo.some((f) => f?.status === 'uploading')) {
+          enqueueSnackbar('Logo is still uploading — please wait a moment and save again', { variant: 'warning' });
+          return;
+        }
+        const logoFile = values.hotelLogo.find((f) => f?.url || f?.response?.url);
+        const logoUrl = logoFile ? (logoFile.url || logoFile.response.url) : '';
+        // Only send it when it changed — a hotelLogoUrl in the patch also re-syncs the lead's
+        // orders/quotations/negotiations and refreshes those caches (see updateLead).
+        if (logoUrl !== (selectedRecord?.hotelLogoUrl || '')) values.hotelLogoUrl = logoUrl;
+        values.hotelLogo = logoUrl ? [{ uid: logoFile.uid || '-1', name: logoFile.name || 'hotel-logo', status: 'done', url: logoUrl }] : [];
+      } else {
+        delete values.hotelLogo;
+      }
     }
     if (section === 'delivery') {
       // Merge existing saved entries with new ones from the form, picking up proof from
@@ -12516,8 +12544,18 @@ export default function Sales() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+              {/* The logo upload also accepts PDF/AI files, which can't render in an <img> —
+                  show those as a View Logo button; images stay a thumbnail that opens full size. */}
               {isDetail && record.hotelLogoUrl && (
-                <img src={record.hotelLogoUrl} alt={`${record.category || 'Hotel'} Logo`} style={{ height: 48, maxWidth: 120, objectFit: 'contain', borderRadius: 8, border: '1px solid #B11E6A22', padding: 4, background: '#fff' }} />
+                isImageUrl(record.hotelLogoUrl) ? (
+                  <a href={record.hotelLogoUrl} target="_blank" rel="noopener noreferrer" title="Open logo in new tab">
+                    <img src={record.hotelLogoUrl} alt={`${record.category || 'Hotel'} Logo`} style={{ height: 48, maxWidth: 120, objectFit: 'contain', borderRadius: 8, border: '1px solid #B11E6A22', padding: 4, background: '#fff' }} />
+                  </a>
+                ) : (
+                  <Button size="small" icon={<EyeOutlined />} href={record.hotelLogoUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#B11E6A', borderColor: '#B11E6A55' }}>
+                    View Logo
+                  </Button>
+                )
               )}
               {isDetail && (
                 <Space>
@@ -12627,6 +12665,13 @@ export default function Sales() {
                       {record.branch && <Descriptions.Item label="Branch">{record.branch}</Descriptions.Item>}
                       <Descriptions.Item label="No. of Rooms">{record.numRooms || record.rowsInHotel || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Occupancy (%)">{record.generalOccupancy ? `${record.generalOccupancy}%` : '—'}</Descriptions.Item>
+                      <Descriptions.Item label={`${record.category || 'Hotel'} Logo`}>
+                        {record.hotelLogoUrl ? (
+                          <Button size="small" icon={<EyeOutlined />} href={record.hotelLogoUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#B11E6A', borderColor: '#B11E6A55' }}>
+                            View Logo
+                          </Button>
+                        ) : '—'}
+                      </Descriptions.Item>
                       <Descriptions.Item label="Contact Person">{record.contactPerson || '—'}</Descriptions.Item>
                       <Descriptions.Item label="POC Designation">{record.pocDesignation || '—'}</Descriptions.Item>
                       <Descriptions.Item label="Phone">{record.phone || '—'}</Descriptions.Item>
