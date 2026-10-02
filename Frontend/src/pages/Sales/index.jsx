@@ -515,6 +515,18 @@ function AttachmentLinks({ files }) {
   );
 }
 
+// Form fields saved by each per-card Edit → Save on the Lead detail page.
+const LEAD_SECTION_FIELDS = {
+  hotel: ['category', 'hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'hotelLogo', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'landlineNumber', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
+  billing: ['detailedAddress', 'city', 'state', 'pincode', 'billingLocation', 'billType', 'gstNumber', 'gstPhone'],
+  shipping: ['shippingSameAsBilling', 'shippingAddress', 'shippingCity', 'shippingState', 'shippingPincode', 'shippingLocation'],
+  leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
+  leadJourney: ['followUpStep'],
+  personalization: ['productType', 'displayUnit', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitLamination', 'kitPrice', 'kitOverallQty', 'kitOrders', 'products', 'packagingIncludes', 'packagingIncludesQty'],
+  delivery: ['orderDeliveryDate', 'transportName', 'splitDates', 'forwardingCharge', 'forwardingChargeAmount', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'creditDueDate', 'paymentProofs', 'paymentCollection'],
+  products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitLamination', 'kitPrice', 'kitOverallQty', 'kitOrders', 'productType', 'packagingIncludes', 'packagingIncludesQty', 'displayUnitTab', 'displayUnit'],
+};
+
 function prepareFormValues(data) {
   if (!data) return data;
   const processed = { ...data };
@@ -576,9 +588,11 @@ function prepareFormValues(data) {
       const rawIncludes = ko.kitIncludes || [];
       const isObjFormat = rawIncludes.length > 0 && rawIncludes[0] != null && typeof rawIncludes[0] === 'object' && rawIncludes[0].id != null;
       const kitIncludes = isObjFormat ? rawIncludes.map(item => item.id) : rawIncludes;
+      // A per-card save used to persist the form format ([id] + qty map) as-is — keep that map
+      // instead of resetting it, so those records don't lose their include quantities.
       const kitIncludesQty = isObjFormat
         ? Object.fromEntries(rawIncludes.map(item => [item.id, item.qty || 1]))
-        : {};
+        : (ko.kitIncludesQty || {});
       return {
         ...ko,
         kitId,
@@ -3462,6 +3476,8 @@ export default function Sales() {
   const watchedLeadPaymentCollection = Form.useWatch('paymentCollection', leadForm);
   const watchedLeadForwardingCharge = Form.useWatch('forwardingCharge', leadForm);
   const watchedLeadForwardingAmount = Form.useWatch('forwardingChargeAmount', leadForm);
+  // Transport Cost Scope decides whether courier charges count toward the lead total.
+  const watchedLeadTransportationBy = Form.useWatch('transportationBy', leadForm);
 
   // GST state for order-detail view
   const [gstApiData, setGstApiData] = useState(null);
@@ -3654,6 +3670,7 @@ export default function Sales() {
     const kitPriceById = {};
     const existingKitOrders = leadForm.getFieldValue('kitOrders') || [];
     const productType = leadForm.getFieldValue('productType');
+    const existing = leadForm.getFieldValue('products') || [];
 
     kitIds.forEach(kitId => {
       const kit = kits.find(k => k._id === kitId);
@@ -3662,6 +3679,17 @@ export default function Sales() {
       // existing per-kit choice; otherwise default from the Product Selection categories.
       const existingKo = existingKitOrders.find(o => o.kitId === kitId);
       const kitCat = existingKo?.category || defaultKitCategory(productType);
+      // A kit that was already selected keeps its own rows (qty/rate/specs/files edited for this
+      // lead) — adding or removing ANOTHER kit used to re-seed every kit from its definition.
+      // Only newly added kits (no rows yet) are seeded below.
+      const keptRows = existing.filter(p => p && (p.isKit || p.kitType) && p.kitId === kitId);
+      if (keptRows.length) {
+        keptRows.forEach(p => {
+          allKitRows.push({ ...p, category: kitCat });
+          kitPriceById[kitId] = (kitPriceById[kitId] || 0) + r2((Number(p.qty) || 0) * (Number(p.rate) || 0) * (1 + (Number(p.gst) || 0) / 100));
+        });
+        return;
+      }
       (kit.products || []).forEach(p => {
         const invItem = inventoryItemsRaw.find(i => i.itemName === p.productName);
         const rate = invItem?.sellingPrice ?? p.sellingPrice ?? p.rate ?? 0;
@@ -3717,7 +3745,6 @@ export default function Sales() {
       };
     });
 
-    const existing = leadForm.getFieldValue('products') || [];
     const nonKit = existing.filter(p => p && !(p.isKit || p.kitType));
     const totalKitPrice = r2(Object.values(kitPriceById).reduce((s, v) => s + v, 0));
     const currentTopPrice = leadForm.getFieldValue('kitPrice');
@@ -4400,7 +4427,10 @@ export default function Sales() {
       ...(formStore.products?.[i] || {}),
       ...(p || {}),
     }));
-    const srcKitOrders = pickArr(values.kitOrders, formStore.kitOrders, editingLead?.kitOrders, selectedRecord?.kitOrders);
+    // validateFields() returns only the MOUNTED kitOrders[i] keys (same partial-row issue as
+    // products above) — backfill each row from the form store so unmounted keys survive.
+    const srcKitOrders = pickArr(values.kitOrders, formStore.kitOrders, editingLead?.kitOrders, selectedRecord?.kitOrders)
+      .map((ko, i) => ({ ...(formStore.kitOrders?.[i] || {}), ...(ko || {}) }));
     const srcSelectedKits = pickArr(values.selectedKits, formStore.selectedKits, editingLead?.selectedKits, selectedRecord?.selectedKits);
     const srcPackagingIncludes = pickArr(values.packagingIncludes, formStore.packagingIncludes, editingLead?.packagingIncludes, selectedRecord?.packagingIncludes);
     const pickKit = (key) => values[key] ?? formStore[key] ?? editingLead?.[key] ?? selectedRecord?.[key];
@@ -4754,19 +4784,12 @@ export default function Sales() {
     }
   };
 
-  const saveSectionEdit = async (section) => {
+  // opts.paymentStatus: the status the product cards showed against the edited total (null when
+  // the edit left the total unchanged or nothing is paid — the stored status then stands).
+  const saveSectionEdit = async (section, opts = {}) => {
     const now = new Date().toISOString();
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
-    const fieldsBySection = {
-      hotel: ['category', 'hotelName', 'branch', 'destination', 'rowsInHotel', 'generalOccupancy', 'hotelType', 'billingName', 'contactPerson', 'pocDesignation', 'phone', 'alternativeRole', 'alternativeName', 'alternativePhone', 'email', 'landlineNumber', 'location', 'salesPerson', 'source', 'priority', 'mentionPriority', 'interestedInSoftware', 'previousSoftware', 'previousSoftwarePrice', 'softwareExpiryDate'],
-      billing: ['detailedAddress', 'city', 'state', 'pincode', 'billType', 'gstNumber', 'gstPhone'],
-      shipping: ['shippingSameAsBilling', 'shippingAddress', 'shippingCity', 'shippingState', 'shippingPincode'],
-      leadStatus: ['status', 'quotationNo', 'quotationDate', 'followUpDate', 'followUpTime', 'followUpName'],
-      leadJourney: ['followUpStep'],
-      personalization: ['productType', 'displayUnit', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitPrice', 'kitOverallQty', 'kitOrders', 'products'],
-      delivery: ['orderDeliveryDate', 'splitDates', 'forwardingCharge', 'forwardingChargeAmount', 'deliveryBy', 'transportationBy', 'paymentTerms', 'paymentReminderDate', 'creditDueDate', 'paymentProofs', 'paymentCollection'],
-      products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitLamination', 'kitPrice', 'kitOverallQty', 'kitOrders', 'productType', 'packagingIncludes', 'packagingIncludesQty', 'displayUnitTab', 'displayUnit'],
-    };
+    const fieldsBySection = LEAD_SECTION_FIELDS;
     try {
       await leadForm.validateFields(fieldsBySection[section]);
     } catch (validationErr) {
@@ -4775,8 +4798,16 @@ export default function Sales() {
       }
       return;
     }
-    const rawValues = leadForm.getFieldsValue(fieldsBySection[section]);
-    const values = { ...rawValues };
+    // Product cards read their values from the full form store, NOT getFieldsValue(names): for an
+    // array name the form library returns only the sub-fields currently MOUNTED. The "Products
+    // adding" card mounts just kitOrders[i].{kitId, category, displayUnit}, so saving it wiped every
+    // kit's size/sticker/logo/printing/overallQty/kitPrice/attachments; product rows likewise lost
+    // unit/hsnCode/category/brand (set via setFieldValue, never mounted). The store has it all.
+    const isProductSection = section === 'personalization' || section === 'products';
+    const formStore = leadForm.getFieldsValue(true);
+    const values = isProductSection
+      ? Object.fromEntries(fieldsBySection[section].map((f) => [f, formStore[f]]))
+      : { ...leadForm.getFieldsValue(fieldsBySection[section]) };
     if (values.rowsInHotel !== undefined) {
       values.numRooms = Number(values.rowsInHotel) || undefined;
     }
@@ -4803,7 +4834,8 @@ export default function Sales() {
       values.paymentCollection = [...(selectedRecord?.paymentCollection || []), ...newEntries];
       const collectionEntries = values.paymentCollection.filter(e => Number(e.paidAmount) > 0);
       const collectionTotal = collectionEntries.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
-      const recordTotal = r2(computeRecordGrandTotal(selectedRecord));
+      // Total with the forwarding charge / transport scope being saved, not the old ones.
+      const recordTotal = r2(computeRecordGrandTotal({ ...selectedRecord, ...values }));
       if (collectionTotal > 0) {
         values.advancePaid = collectionTotal;
         values.paidAmount = collectionTotal;
@@ -4815,8 +4847,10 @@ export default function Sales() {
           : 'Unpaid';
       }
     }
-    // Recompute displayUnitTab from packing config when display unit changes during products edit.
-    if (section === 'products') {
+    // Recompute displayUnitTab from packing config when display unit changes during products edit —
+    // and from "Products adding" when it is Personalized, since that card edits the outer packaging
+    // Display Unit (kitDisplayUnit) and the Operations tab must follow it, as on create.
+    if (section === 'products' || (section === 'personalization' && ptHasPersonalizedUI(values.productType))) {
       const du = values.kitDisplayUnit || values.displayUnit;
       if (du) {
         const cfg = configDisplayUnitOptions.find(o => o.value === du);
@@ -4824,9 +4858,25 @@ export default function Sales() {
         values.displayUnit = du;
       }
     }
+    // The edit changed the total → save the payment status the card showed for it.
+    if (isProductSection && opts.paymentStatus) {
+      values.paymentStatus = opts.paymentStatus;
+    }
+    // Keep the legacy single-kit field in step with selectedKits. Clearing every kit left
+    // selectedKit undefined (dropped from the JSON), so the old kit lingered in the DB and every
+    // view's selectedKit fallback kept showing it as "Kit Selected" (LEAD-260057).
+    if (Array.isArray(values.selectedKits)) {
+      values.selectedKit = values.selectedKits[0] ?? null;
+    }
+    // Same normalization as the full lead save (buildLeadPayload): kitIncludes form format →
+    // [{id,qty}], numeric qty/price, default category, attachments → saved URLs.
+    if (values.kitOrders) {
+      values.kitOrders = normalizeKitOrdersForSave(values.kitOrders, values.productType ?? selectedRecord.productType);
+    }
     // Re-stamp category on product rows so inline kit-category flips persist + new rows get tagged.
     if (values.products) {
-      values.products = tagProductCategories(normalizeProducts(values.products), values.kitOrders || selectedRecord.kitOrders || []);
+      values.products = tagProductCategories(normalizeProducts(values.products), values.kitOrders || selectedRecord.kitOrders || [])
+        .map((p) => ({ ...p, attachments: normalizeAttachments(p.attachments) }));
     }
     const updated = { ...selectedRecord, ...values };
     if (section === 'leadStatus' && values.status && values.status !== selectedRecord.status) {
@@ -4852,6 +4902,19 @@ export default function Sales() {
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to update section', { variant: 'error' });
     }
+  };
+
+  // Cancel on a lead detail card: put that card's fields back to the saved record. The
+  // "Products adding" and "Order Details — Products" cards share products/kitOrders/selectedKits/
+  // productType in one form store, so a cancelled change in one card otherwise showed up in —
+  // and got saved by — the other. Skipped in the full Edit Lead form, where the always-open
+  // products card holds unsaved edits that must survive a card cancel.
+  const cancelSectionEdit = (section) => {
+    if (!editingLead && selectedRecord && LEAD_SECTION_FIELDS[section]) {
+      const saved = prepareFormValues(selectedRecord);
+      leadForm.setFields(LEAD_SECTION_FIELDS[section].map((f) => ({ name: f, value: saved[f] })));
+    }
+    setEditingSection(null);
   };
 
   const saveDraft = (lead) => {
@@ -6678,7 +6741,11 @@ export default function Sales() {
     {
       title: 'Payment Status', key: 'payStatus', width: 150,
       render: (_, r) => {
-        const linkedOrder = ordersData.find(o => o.negotiationCode === r.nid || o.hotelName === r.hotelName);
+        // Link strictly to the order converted FROM this negotiation (same reason as quotations).
+        const linkedOrder = ordersData.find(o =>
+          String(o.negotiationId?._id || o.negotiationId || '') === String(r.key) ||
+          (o.negotiationCode && o.negotiationCode === r.nid)
+        );
         const compTotal = r2(computeCompositionGrandTotal(r, kits));
         const effectiveTotal = compTotal || r.totalAmount || linkedOrder?.totalAmount || 0;
         const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedOrder?.paidAmount || 0);
@@ -6758,7 +6825,12 @@ export default function Sales() {
     {
       title: 'Payment Status', key: 'payStatus', width: 150,
       render: (_, r) => {
-        const linkedOrder = ordersData.find(o => o.quotationCode === r.qid || o.hotelName === r.hotelName);
+        // Link strictly to the order converted FROM this quotation. A hotel-name fallback
+        // matched the same hotel's other orders and showed their paid amount here.
+        const linkedOrder = ordersData.find(o =>
+          String(o.quotationId?._id || o.quotationId || '') === String(r.key) ||
+          (o.quotationCode && o.quotationCode === r.qid)
+        );
         const compTotal = r2(computeCompositionGrandTotal(r, kits));
         const effectiveTotal = compTotal || r.totalAmount || linkedOrder?.totalAmount || 0;
         const effectivePaid = r.paidAmount > 0 ? r.paidAmount : (linkedOrder?.paidAmount || 0);
@@ -12245,6 +12317,52 @@ export default function Sales() {
       return [...(record.paymentCollection || []), ...extras];
     })();
 
+    // Grand total behind the Delivery & Payment card's Order Total / Amount to Pay / Balance Due on
+    // the Lead detail page and Edit Lead. Those used the SAVED record only, so a product, kit or
+    // forwarding change being edited reached them only after Save. Total what the form holds now,
+    // shaped exactly as Save will store it — but only once that differs from what the form loaded
+    // with; until then keep the saved figure, so opening a card never moves the number
+    // (prepareFormValues backfills per-kit price/qty from the shared kit fields on load).
+    const savedLeadGrandTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits);
+    const { leadGrandTotal, leadTotalIsLive } = (() => {
+      if (!(isDetail || editingLead) || !selectedRecord) return { leadGrandTotal: savedLeadGrandTotal, leadTotalIsLive: false };
+      const totalOf = (src) => {
+        const kitOrders = normalizeKitOrdersForSave(src.kitOrders || [], src.productType);
+        return computeCompositionGrandTotal({
+          ...record,
+          products: tagProductCategories(normalizeProducts(src.products || []), kitOrders),
+          kitOrders,
+          kitPrice: src.kitPrice,
+          kitOverallQty: src.kitOverallQty,
+          packagingIncludes: src.packagingIncludes || [],
+          packagingIncludesQty: src.packagingIncludesQty || {},
+          forwardingCharge: src.forwardingCharge,
+          forwardingChargeAmount: src.forwardingChargeAmount,
+          transportationBy: src.transportationBy,
+          paymentCollection: leadTotalsPaymentCollection,
+        }, kits);
+      };
+      const store = leadForm.getFieldsValue(true);
+      const live = totalOf({ ...store, transportationBy: watchedLeadTransportationBy ?? store.transportationBy });
+      return live !== totalOf(prepareFormValues(selectedRecord))
+        ? { leadGrandTotal: live, leadTotalIsLive: true }
+        : { leadGrandTotal: savedLeadGrandTotal, leadTotalIsLive: false };
+    })();
+    // A live total of ₹0 (every product removed) is real — don't fall back to the old stored total.
+    const leadDisplayTotal = (fallback) => (leadTotalIsLive ? leadGrandTotal : (leadGrandTotal || fallback));
+    // Payment status that goes with the live total — same rule the card's Amount Paid / Amount to
+    // Pay use. Set only while an edit has changed the total and something has been paid; with
+    // nothing paid the stored status stands (a lead can be Paid on proofs + payment terms alone).
+    // Shown on the PAYMENT STATUS tag while editing and saved by the product cards' Save, so the
+    // tag reads the same while editing and after the update.
+    const leadPaidTotal = Math.max(
+      leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0),
+      Number(record.paidAmount) || Number(record.advancePaid) || 0,
+    );
+    const leadLiveStatus = leadTotalIsLive && leadPaidTotal > 0 && leadGrandTotal > 0
+      ? (leadPaidTotal >= leadGrandTotal ? 'Paid' : 'Partially Paid')
+      : null;
+
     const InfoRow = ({ label, value }) => (
       <div style={{ padding: '8px 0', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}` }}>
         <Text type="secondary" style={{ fontSize: 11 }}>{label}</Text>
@@ -13177,8 +13295,8 @@ export default function Sales() {
                   extra={usePerCardEdit && (
                     editingSection === 'personalization' ? (
                       <Space size="small">
-                        <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('personalization')} style={{ background: '#722ed1', border: 'none', borderRadius: 6 }}>Save</Button>
-                        <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                        <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('personalization', { paymentStatus: leadLiveStatus })} style={{ background: '#722ed1', border: 'none', borderRadius: 6 }}>Save</Button>
+                        <Button size="small" onClick={() => cancelSectionEdit('personalization')} style={{ borderRadius: 6 }}>Cancel</Button>
                       </Space>
                     ) : (
                       <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('personalization'); }} style={{ borderRadius: 6 }}>Edit</Button>
@@ -13565,7 +13683,11 @@ export default function Sales() {
                           const kitOpts = watchedSelectedKits
                             .map(id => { const k = kits.find(kk => kk._id === id); return k ? { value: id, label: k.kitName } : null; })
                             .filter(Boolean);
-                          const prodOpts = (watchedLeadProducts || [])
+                          // On the Lead detail page the products list isn't mounted while this card is
+                          // edited, so useWatch('products') is undefined — read the form store instead,
+                          // or the separate products vanish from this dropdown on edit.
+                          const pkgProducts = watchedLeadProducts ?? leadForm.getFieldValue('products') ?? [];
+                          const prodOpts = pkgProducts
                             .filter(p => p && !p.isKit && !p.kitType && (p.name || p.itemName))
                             .map(p => ({ value: p.name || p.itemName || '', label: p.name || p.itemName || '—' }))
                             .filter((o, i, arr) => arr.findIndex(x => x.value === o.value) === i);
@@ -13600,7 +13722,7 @@ export default function Sales() {
                                       </Text>
                                       {sel.map(id => {
                                         const kMatch = kits.find(k => k._id === id);
-                                        const sProd = (watchedLeadProducts || []).find(p => p && (p.name || p.itemName) === id);
+                                        const sProd = pkgProducts.find(p => p && (p.name || p.itemName) === id);
                                         const label = kMatch?.kitName || sProd?.name || sProd?.itemName || id;
                                         const isKit = Boolean(kMatch);
                                         // totalInside = total going into ALL personalized kits combined (persisted source of truth)
@@ -13610,9 +13732,11 @@ export default function Sales() {
                                         const perKitDisplay = (totalInside <= 1 && overallQty > 1)
                                           ? undefined
                                           : (overallQty > 0 ? r2(totalInside / overallQty) : totalInside);
+                                        // Store read: this card mounts only kitOrders[i].{kitId,category,displayUnit},
+                                        // so the watched kitOrders has no overallQty on the detail page.
                                         const standaloneQty = isKit
-                                          ? (Number(watchedKitOrders.find(ko => ko?.kitId === id)?.overallQty) || 0)
-                                          : (Number((watchedLeadProducts || []).find(p => p && (p.name || p.itemName) === id)?.qty) || 0);
+                                          ? (Number((getFieldValue('kitOrders') || []).find(ko => ko?.kitId === id)?.overallQty) || 0)
+                                          : (Number(sProd?.qty) || 0);
                                         const netQty = Math.max(0, standaloneQty - totalInside);
                                         const isOver = standaloneQty > 0 && totalInside > standaloneQty;
                                         return (
@@ -13704,8 +13828,8 @@ export default function Sales() {
                       extra={
                         editingSection === 'products' ? (
                           <Space size="small">
-                            <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('products')} style={{ background: '#1890ff', border: 'none', borderRadius: 6 }}>Save</Button>
-                            <Button size="small" onClick={() => setEditingSection(null)} style={{ borderRadius: 6 }}>Cancel</Button>
+                            <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('products', { paymentStatus: leadLiveStatus })} style={{ background: '#1890ff', border: 'none', borderRadius: 6 }}>Save</Button>
+                            <Button size="small" onClick={() => cancelSectionEdit('products')} style={{ borderRadius: 6 }}>Cancel</Button>
                           </Space>
                         ) : (
                           <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('products'); }} style={{ borderRadius: 6 }}>Edit</Button>
@@ -14909,7 +15033,7 @@ export default function Sales() {
                           <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 8 }}>PAYMENT TERMS</Text>
                           <Text strong style={{ color: '#B11E6A', fontSize: 14 }}>{PAYMENT_LABELS[record.paymentTerms] || record.paymentTerms || '—'}</Text>
                           {(() => {
-                            const ps = record.paymentStatus || 'Unpaid';
+                            const ps = leadLiveStatus || record.paymentStatus || 'Unpaid';
                             const psColor = ps === 'Paid' ? '#52c41a' : ps === 'Partially Paid' ? '#fa8c16' : '#ff4d4f';
                             const psBg = ps === 'Paid' ? 'rgba(82,196,26,0.08)' : ps === 'Partially Paid' ? 'rgba(250,140,22,0.08)' : 'rgba(255,77,79,0.08)';
                             const psBorder = ps === 'Paid' ? 'rgba(82,196,26,0.2)' : ps === 'Partially Paid' ? 'rgba(250,140,22,0.2)' : 'rgba(255,77,79,0.2)';
@@ -14921,7 +15045,7 @@ export default function Sales() {
                             );
                           })()}
                           {(() => {
-                            const recTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits) || Number(record.totalAmount) || 0;
+                            const recTotal = leadDisplayTotal(Number(record.totalAmount) || 0);
                             const recCollected = leadCombinedPaymentCollection.reduce((s, e) => s + Number(e.paidAmount || 0), 0);
                             const recPaid = Math.max(recCollected, Number(record.paidAmount) || Number(record.advancePaid) || 0);
                             const recBalance = Math.max(0, recTotal - recPaid);
@@ -15226,8 +15350,8 @@ export default function Sales() {
                     const effectiveFwd = watchedLeadForwardingCharge ?? record.forwardingCharge;
                     const effectiveFwdAmt = watchedLeadForwardingAmount ?? record.forwardingChargeAmount;
                     // ADD mode: record={} so use live form watchers for grand total.
-                    // EDIT mode (editingLead set) or DETAIL mode: use stored record directly —
-                    // same as VIEW stat panel — to avoid prepareFormValues normalization drift.
+                    // EDIT mode (editingLead set) or DETAIL mode: the shared lead total — live while
+                    // an edit changes it, otherwise the stored record (no normalization drift).
                     const isAddMode = !editingLead && !isDetail;
                     let recordTotal;
                     if (isAddMode) {
@@ -15244,7 +15368,7 @@ export default function Sales() {
                       };
                       recordTotal = computeCompositionGrandTotal(totalFormData, kits) || Number(record.totalAmount) || Number(record.total) || 0;
                     } else {
-                      recordTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                      recordTotal = leadDisplayTotal(Number(record.totalAmount) || Number(record.total) || 0);
                     }
                     const balance = Math.max(0, recordTotal - totalColl);
                     if (recordTotal === 0) return null;
@@ -15353,7 +15477,7 @@ export default function Sales() {
                     const existingColl2 = fromCollection2 > 0 ? fromCollection2 : (Number(record.paidAmount) || Number(record.advancePaid) || 0);
                     const newColl = (Array.isArray(watchedLeadPaymentCollection) ? watchedLeadPaymentCollection : []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0);
                     const totalColl = existingColl2 + newColl;
-                    // ADD mode: record={} → use form watchers. EDIT/DETAIL: use record (matches VIEW).
+                    // ADD mode: record={} → use form watchers. EDIT/DETAIL: shared lead total (matches VIEW).
                     const isAddMode2 = !editingLead && !isDetail;
                     let recordTotal;
                     if (isAddMode2) {
@@ -15372,7 +15496,7 @@ export default function Sales() {
                       };
                       recordTotal = computeCompositionGrandTotal(totalFormData2, kits) || Number(record.totalAmount) || Number(record.total) || 0;
                     } else {
-                      recordTotal = computeCompositionGrandTotal({ ...record, paymentCollection: leadTotalsPaymentCollection }, kits) || Number(record.totalAmount) || Number(record.total) || 0;
+                      recordTotal = leadDisplayTotal(Number(record.totalAmount) || Number(record.total) || 0);
                     }
                     const balance = Math.max(0, recordTotal - totalColl);
                     const status = recordTotal > 0 && totalColl >= recordTotal ? 'Paid' : totalColl > 0 ? 'Partially Paid' : 'Unpaid';

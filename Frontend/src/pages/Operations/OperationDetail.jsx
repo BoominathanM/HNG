@@ -1645,9 +1645,10 @@ export default function OperationDetail() {
       key: 'product',
       render: (_, record) => {
         const name = record.itemName || record.name || record.product;
-        // Kit items (Personalized Kit / Separate Kit rows) already carry their kit name in the
-        // "Kit / Spec" column — showing the individual component's name here reads as if the
-        // task were about that single product instead of the whole kit, so leave it blank.
+        // Kit rows are one row PER COMPONENT (Inventory Stock / Required Qty / Default Size are the
+        // component's own), so the component name must show — blank left every row of a kit
+        // indistinguishable (e.g. ORD-260028). The kit itself is in the "Kit / Spec" column; the
+        // caption below keeps the row reading as part of that kit, not a standalone product.
         const isKitItem = !!(record.kitName || record.kitType);
         const isEmergencyProduct = record.isEmergencyProduct;
         const isEmergencyGated = record.isEmergencyGated;
@@ -1656,8 +1657,11 @@ export default function OperationDetail() {
           <Space direction="vertical" size={2} style={{ gap: 2 }}>
             <Space size={6}>
               {isEmergencyProduct && <AlertFilled style={{ color: '#ff4d4f', fontSize: 13 }} />}
-              <Text strong style={isEmergencyProduct ? { color: '#ff4d4f' } : {}}>{isKitItem ? '' : (name || '-')}</Text>
+              <Text strong style={isEmergencyProduct ? { color: '#ff4d4f' } : {}}>{name || '-'}</Text>
             </Space>
+            {isKitItem && name && (
+              <Text type="secondary" style={{ fontSize: 11 }}>Kit component</Text>
+            )}
             {isEmergencyProduct && emergencyDate && (
               <Space size={4}>
                 <Tag color="error" icon={<AlertFilled />} style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '16px' }}>Emergency</Tag>
