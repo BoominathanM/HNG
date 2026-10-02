@@ -19,21 +19,49 @@ async function resolveOrderPaymentStatus(orderId) {
     Order.findById(orderId).select('total amount paidAmount balance paymentCollection'),
     Invoice.find({ orderId }).select('total advanceAmount balanceDue status'),
   ]);
+  return summarizeOrderPayment(order, invoices).status;
+}
 
+// The reconciliation rule above as a pure function, so a caller that needs it for many
+// orders at once (resolveOrderPaymentSummaries) applies the exact same math.
+function summarizeOrderPayment(order, invoices) {
   const orderTotal = order ? Number(order.total || order.amount || 0) : 0;
   const orderPaid = order
     ? ((order.paymentCollection || []).reduce((s, e) => s + Number(e?.paidAmount || 0), 0) || Number(order.paidAmount || 0))
     : 0;
 
-  const invTotal = invoices.reduce((max, i) => Math.max(max, Number(i.total || 0)), 0);
-  const invPaid = invoices.reduce((s, i) => s + Number(i.advanceAmount || 0), 0);
+  const invTotal = (invoices || []).reduce((max, i) => Math.max(max, Number(i.total || 0)), 0);
+  const invPaid = (invoices || []).reduce((s, i) => s + Number(i.advanceAmount || 0), 0);
 
   const total = Math.max(orderTotal, invTotal);
   const paid = Math.max(orderPaid, invPaid);
 
-  if (total > 0 && paid >= total) return 'Paid';
-  if (paid > 0) return 'Partial';
-  return 'Pending';
+  let status = 'Pending';
+  if (total > 0 && paid >= total) status = 'Paid';
+  else if (paid > 0) status = 'Partial';
+  return { status, total: r2(total), paid: r2(paid), balance: r2(Math.max(0, total - paid)) };
+}
+
+// Batched resolveOrderPaymentStatus — two queries total instead of two per order, for
+// screens that need every order's payment state at once (e.g. Dispatch stat cards).
+// Returns Map<orderIdString, { status, total, paid, balance }>.
+async function resolveOrderPaymentSummaries(orderIds) {
+  const ids = [...new Set((orderIds || []).filter(Boolean).map(String))];
+  const result = new Map();
+  if (ids.length === 0) return result;
+  const [orders, invoices] = await Promise.all([
+    Order.find({ _id: { $in: ids } }).select('total amount paidAmount balance paymentCollection').lean(),
+    Invoice.find({ orderId: { $in: ids } }).select('orderId total advanceAmount balanceDue status').lean(),
+  ]);
+  const orderById = new Map(orders.map((o) => [String(o._id), o]));
+  const invoicesByOrder = new Map();
+  invoices.forEach((inv) => {
+    const key = String(inv.orderId);
+    if (!invoicesByOrder.has(key)) invoicesByOrder.set(key, []);
+    invoicesByOrder.get(key).push(inv);
+  });
+  ids.forEach((id) => result.set(id, summarizeOrderPayment(orderById.get(id), invoicesByOrder.get(id))));
+  return result;
 }
 
 // Push the resolved payment status onto every task of the order so the
@@ -111,4 +139,4 @@ async function syncOrderPaymentCollection(orderId, entry) {
   );
 }
 
-module.exports = { resolveOrderPaymentStatus, syncOrderTasksPayment, syncOrderPaymentCollection };
+module.exports = { resolveOrderPaymentStatus, resolveOrderPaymentSummaries, syncOrderTasksPayment, syncOrderPaymentCollection };

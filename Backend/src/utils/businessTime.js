@@ -72,6 +72,21 @@ function businessDayRange(instant = new Date()) {
   };
 }
 
+// [start, end] absolute instants of the business-local calendar day of `instant`
+// — i.e. 00:00:00.000 → 23:59:59.999 IST, whatever timezone the server runs in.
+// Use this (not businessDayRange) for real event timestamps such as
+// DispatchRecord.dispatchedAt, which store the actual moment something happened:
+// on a UTC host, `setHours(0,0,0,0)` would make "today" run 05:30 → 05:30 IST.
+// It also matches BOTH conventions a date-only field can be stored in — UTC
+// midnight from a 'YYYY-MM-DD' submit (2026-09-25T00:00Z) and IST midnight from a
+// full ISO dayjs submit (2026-09-24T18:30Z) — since both fall inside the IST day.
+function businessDayInstantRange(instant = new Date()) {
+  const { year, month, day } = businessParts(instant);
+  const start = new Date(Date.UTC(year, month, day, 0, 0, 0, 0) - OFFSET_MS);
+  const end = new Date(start.getTime() + 24 * 60 * 60 * 1000 - 1);
+  return { start, end };
+}
+
 // True when `now` falls inside `config`'s working days AND its
 // [startTime, endTime] window, both interpreted in the business timezone.
 // `config` = an AlertConfig doc or a WhatsAppEventMapping (same field shape:
@@ -94,6 +109,7 @@ module.exports = {
   businessParts,
   businessTodayKey,
   businessDayRange,
+  businessDayInstantRange,
   minutesSinceMidnight,
   isWithinWindow,
 };

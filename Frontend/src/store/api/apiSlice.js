@@ -440,6 +440,13 @@ export const apiSlice = createApi({
       query: () => ({ url: '/dispatch/pending' }),
       providesTags: ['Dispatch'],
     }),
+    // Dispatch Team stat cards + their click-through lists. Also tagged Orders/Invoices so
+    // a payment recorded in Sales/Billing (which doesn't invalidate 'Dispatch') refreshes
+    // the Payment Pending card.
+    getDispatchStats: builder.query({
+      query: () => ({ url: '/dispatch/stats' }),
+      providesTags: ['Dispatch', 'Orders', 'Invoices'],
+    }),
     getTransports: builder.query({
       query: () => ({ url: '/dispatch/transports' }),
       providesTags: ['Transport'],
@@ -1628,6 +1635,7 @@ export const {
   useAddBoxPhotoUrlMutation,
   useGetTodaysDispatchesQuery,
   useGetPendingDispatchesQuery,
+  useGetDispatchStatsQuery,
   useGetTransportsQuery,
   useUpdateTransportStatusMutation,
   useGetPickupOrdersQuery,

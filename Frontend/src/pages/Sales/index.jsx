@@ -1403,6 +1403,15 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
   const form = Form.useFormInstance();
   const selectedKitIds = Form.useWatch('selectedKits', form) || [];
   const currentKitId = Form.useWatch([fieldName, name, 'kitId'], form);
+  // Kit-component rows store qty PER KIT — stock deduction, Tasks/Operations totals and
+  // kit-aware billing all multiply it by the kit's Overall Qty (same kitOrders-by-kitId →
+  // kitOverallQty lookup as the backend's resolveItemConsumedQty). Shown on the row so the
+  // field isn't mistaken for the order total (e.g. 500 entered for 500 kits = 250,000).
+  const watchedRowKitOrders = Form.useWatch('kitOrders', form);
+  const watchedRowKitOverallQty = Form.useWatch('kitOverallQty', form);
+  const kitCount = isKit
+    ? (Number((watchedRowKitOrders || []).find((k) => k && currentKitId && k.kitId === currentKitId)?.overallQty) || Number(watchedRowKitOverallQty) || 0)
+    : 0;
   const [isLocalEdit, setIsLocalEdit] = React.useState(true);
   const isItemDisabled = disabled || !isLocalEdit;
 
@@ -1826,7 +1835,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
           <Col flex="auto">
               <Row gutter={8}>
                 <Col span={8}>
-                  <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>QTY</Text>
+                  <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>{isKit ? 'QTY / KIT' : 'QTY'}</Text>
                   <Form.Item
                     {...rest}
                     name={[name, 'qty']}
@@ -1844,6 +1853,12 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                   </Form.Item>
                   {minQty > 0 && (
                     <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>Ordered: {minQty} · increase only</div>
+                  )}
+                  {kitCount > 0 && (
+                    <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>× {kitCount} kits = {formatQty((Number(qty) || 0) * kitCount)}</div>
+                  )}
+                  {kitCount > 1 && Number(qty) === kitCount && (
+                    <div style={{ fontSize: 10, fontWeight: 600, color: '#fa8c16', marginTop: 2 }}>Same as kit count — enter qty per kit</div>
                   )}
                   {invItem && (
                     <div style={{
@@ -1900,13 +1915,18 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
 
           {/* Subtotal Display */}
           <Col flex="none" style={{ textAlign: 'right', minWidth: 100 }}>
-            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>SUBTOTAL</Text>
+            <Text type="secondary" style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.5, display: 'block', marginBottom: 2 }}>{isKit ? 'SUBTOTAL / KIT' : 'SUBTOTAL'}</Text>
             <Text strong style={{ display: 'block', fontSize: 16, color: '#B11E6A', lineHeight: 1.2 }}>
               ₹{(r2((qty || 0) * (rate || 0) * (1 + (gst || 0) / 100))).toLocaleString()}
             </Text>
             {(gst || 0) > 0 && (
               <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>
                 incl. {gst}% GST
+              </Text>
+            )}
+            {kitCount > 0 && (
+              <Text type="secondary" style={{ fontSize: 10, display: 'block' }}>
+                × {kitCount} kits = ₹{r2((qty || 0) * (rate || 0) * (1 + (gst || 0) / 100) * kitCount).toLocaleString()}
               </Text>
             )}
           </Col>
@@ -5357,10 +5377,16 @@ export default function Sales() {
         const gstAmount = qProducts.reduce(
           (s, p) => s + (Number(p.qty) || 0) * (Number(p.rate) || 0) * ((Number(p.gst) || 0) / 100), 0);
         const itemsTotal = subtotal + gstAmount;
+        // Kit data comes from pickKitField (form store → lead), the same source the payload below
+        // saves. values.kitOrders/kitPrice are missing whenever the kit card wasn't mounted at
+        // validateFields(), which used to drop the kit's packing price (kitPrice × kits) from the
+        // saved total and price the per-kit rows as if they were the order total.
         const kitAwareTotal = r2(computeRecordGrandTotal({
           ...values,
           products: qProducts,
-          kitOrders: normalizeKitOrdersForSave(values.kitOrders || [], values.productType),
+          kitOrders: normalizeKitOrdersForSave(pickKitField('kitOrders') || [], pickKitField('productType')),
+          kitPrice: pickKitField('kitPrice'),
+          kitOverallQty: pickKitField('kitOverallQty'),
           forwardingCharge: values.forwardingCharge,
           forwardingChargeAmount: values.forwardingChargeAmount || 0,
         }));
@@ -5697,7 +5723,18 @@ export default function Sales() {
     const gstAmount = gstFromProducts > 0
       ? gstFromProducts
       : (Number(q.gstAmount) || Math.max(0, Number(q.totalAmount || q.total) - subtotal) || 0);
-    const grandTotal = subtotal + gstAmount;
+    // Kit orders: the products-only sum above leaves out each kit's packing price
+    // (kitPrice × overallQty) and treats per-kit rows as order totals — use the same
+    // composition-first kit-aware total Billing/the order detail view show (incl. forwarding;
+    // personalized kits with packagingIncludes need the composition math). Payment entries are
+    // left out here because round off / Unpaid courier are added below via carriedAdjustment.
+    // Orders without kits keep the products-only total exactly as before.
+    const hasKitOrders = (q.kitOrders || []).some(Boolean);
+    const qNoPayments = { ...q, paymentCollection: [] };
+    const kitAwareTotal = hasKitOrders
+      ? (r2(computeCompositionGrandTotal(qNoPayments, kits)) || r2(computeRecordGrandTotal(qNoPayments)))
+      : 0;
+    const grandTotal = kitAwareTotal > 0 ? kitAwareTotal : subtotal + gstAmount;
     // Carry the quotation's collected payment into the order so the Collected/Payment
     // columns reflect what was already paid (previously this was dropped, showing ₹0/Unpaid).
     const carriedCollection = (q.paymentCollection || []).filter(e => e && e.paymentMethod);

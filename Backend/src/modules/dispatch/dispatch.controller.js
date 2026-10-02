@@ -15,10 +15,11 @@ const generateCode = require('../../utils/codeGenerator');
 const escapeRegex = require('../../utils/escapeRegex');
 const { notifyMany, notifyRoles } = require('../../utils/notify');
 const { sendMessage } = require('../../services/whatsAppService');
-const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
+const { resolveOrderPaymentStatus, resolveOrderPaymentSummaries } = require('../../utils/syncOrderPayment');
 const aiService = require('../../services/aiService');
 const photoDup = require('../../services/photoDuplicateService');
 const { cloudinary } = require('../../config/cloudinary');
+const { businessDayInstantRange } = require('../../utils/businessTime');
 
 // Sends the "Dispatch Notify" WhatsApp template (configured in Integrations → WhatsApp →
 // Event Mapping) to both the order's sales person and the customer, with the confirmed
@@ -204,29 +205,33 @@ exports.getDispatches = asyncHandler(async (req, res) => {
 // tentative delivery date — e.g. tentative date is tomorrow but the team ships it today, so it
 // still needs to show up here rather than only surfacing in "All Orders".
 exports.getTodaysDispatches = asyncHandler(async (req, res) => {
-  const start = new Date(); start.setHours(0, 0, 0, 0);
-  const end = new Date(); end.setHours(23, 59, 59, 999);
+  // "Today" is the IST business day, not the server's local day — production runs in UTC,
+  // where setHours(0,0,0,0) shifted the window to 05:30 → 05:30 IST and dropped tentative
+  // dates stored as IST midnight (e.g. 2026-09-24T18:30Z for 25 Sep) onto the previous day.
+  // See businessDayInstantRange.
+  const { start, end } = businessDayInstantRange();
   const todayRange = { $gte: start, $lte: end };
   const visibleIds = await visibleOrderIds(req.user);
 
   // Orders whose tentative delivery date falls today.
-  const tentativeFilter = { expectedDeliveryDate: todayRange };
-  if (visibleIds) tentativeFilter._id = { $in: visibleIds };
-  const tentativeTodayIds = await Order.find(tentativeFilter).distinct('_id');
+  const tentativeTodayIds = await Order.find({ expectedDeliveryDate: todayRange }).distinct('_id');
 
-  // Orders with a dispatch round (full confirm, partial checkpoint, or a finished
-  // dispatchHistory round) that happened today, regardless of tentative delivery date.
+  // Orders with dispatch activity today, regardless of tentative delivery date: a full
+  // confirm, a partial checkpoint, any confirmed round, or a round's "Finished Dispatch"
+  // (LR upload) step done today for a round confirmed on an earlier day.
   const dispatchedTodayIds = await DispatchRecord.find({
     $or: [
       { dispatchedAt: todayRange },
       { partialDispatchAt: todayRange },
       { 'dispatchHistory.date': todayRange },
+      { 'dispatchHistory.finishedAt': todayRange },
     ],
   }).distinct('orderId');
 
   const idMap = new Map();
   [...tentativeTodayIds, ...dispatchedTodayIds].forEach((id) => { if (id) idMap.set(String(id), id); });
-  let todayOrderIds = [...idMap.values()];
+  // Drop soft-deleted orders — a DispatchRecord outlives its order's deletion.
+  let todayOrderIds = await Order.distinct('_id', { _id: { $in: [...idMap.values()] }, deletedAt: null });
   if (visibleIds) {
     const visibleSet = new Set(visibleIds.map(String));
     todayOrderIds = todayOrderIds.filter((id) => visibleSet.has(String(id)));
@@ -241,8 +246,23 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
         { path: 'assignedTo', select: 'fullName' },
       ],
     })
-    .sort('orderId')
     .lean();
+
+  // Tag what each record actually did today, so the tab can tell "shipped today" apart
+  // from "due today, not shipped yet" and show when the latest round went out.
+  const inToday = (t) => t && new Date(t) >= start && new Date(t) <= end;
+  dispatches.forEach((d) => {
+    const history = d.dispatchHistory || [];
+    const stamps = [d.dispatchedAt, d.partialDispatchAt, ...history.flatMap((h) => [h.date, h.finishedAt])]
+      .filter(inToday)
+      .map((t) => new Date(t).getTime());
+    d.dispatchedToday = stamps.length > 0;
+    d.lastDispatchedTodayAt = stamps.length ? new Date(Math.max(...stamps)) : null;
+    d.roundsToday = history.filter((h) => inToday(h.date)).length;
+  });
+  // Most recently dispatched first, then the still-pending "due today" orders.
+  dispatches.sort((a, b) => (b.lastDispatchedTodayAt?.getTime() || 0) - (a.lastDispatchedTodayAt?.getTime() || 0));
+
   await Promise.all(dispatches.map(async (d) => {
     d.orderPaymentStatus = d.orderId?._id
       ? await resolveOrderPaymentStatus(d.orderId._id).catch(() => 'Pending')
@@ -282,6 +302,127 @@ exports.getPendingDispatches = asyncHandler(async (req, res) => {
   }));
   await attachOrderTasks(dispatches);
   res.status(200).json({ success: true, total: dispatches.length, data: dispatches });
+});
+
+// DispatchRecord.status → the label the Dispatch UI shows (mirrors normalizeDispatch in
+// Frontend/src/pages/Dispatch/index.jsx).
+const dispatchStatusLabel = (d) => {
+  if (d.status === 'Dispatched') return 'Dispatched';
+  if (d.status === 'Confirmed') return d.dispatchType === 'Partial Dispatch' ? 'Partially Dispatched' : 'Ready to Dispatch';
+  return 'Packing';
+};
+
+// Readable "what's urgent" lines from Order.splitDates for the Emergency Orders list. Sales'
+// emergency dropdown saves sentinel keys rather than names for kits ('__personalized__',
+// legacy '__kit__', '__sepkit__:<kitId|kitName|kitType>'); a null qty means the whole line.
+// Falls back to the lead's splitDates when the order has none, same as Operations does.
+const summarizeEmergencySplits = (order) => {
+  const splitDates = order.splitDates?.length ? order.splitDates : (order.leadId?.splitDates || []);
+  const kitNameByKey = new Map();
+  (order.items || []).forEach((it) => {
+    const name = it.kitName || it.kitType;
+    if (!name) return;
+    [it.kitId, it.kitName, it.kitType].filter(Boolean).forEach((k) => kitNameByKey.set(String(k), name));
+  });
+  const labelFor = (product) => {
+    if (product === '__personalized__' || product === '__kit__') return 'Personalized Kit';
+    if (typeof product === 'string' && product.startsWith('__sepkit__:')) {
+      const key = product.slice('__sepkit__:'.length);
+      return kitNameByKey.get(key) || 'Separate Kit';
+    }
+    return product;
+  };
+  return splitDates.map((sd) => {
+    const entries = (sd.products && sd.products.length) ? sd.products : (sd.product ? [{ product: sd.product, qty: sd.qty, notes: sd.notes }] : []);
+    return {
+      date: sd.date || null,
+      items: entries.filter((e) => e?.product).map((e) => ({
+        name: labelFor(e.product),
+        qty: e.qty != null && e.qty !== '' ? Number(e.qty) : null,
+        notes: e.notes || '',
+      })),
+    };
+  }).filter((s) => s.date || s.items.length);
+};
+
+// Dispatch Team stat cards — one row per visible dispatch record, carrying every flag the
+// cards count on (emergency, emergency-dispatch approval, status, dispatched today, live
+// payment state). Covers ALL records rather than the paginated "All Orders" page (which made
+// every card except Emergency Orders count only the 10 rows on screen), and the same rows
+// back each card's click-through list.
+exports.getDispatchStats = asyncHandler(async (req, res) => {
+  const visibleIds = await visibleOrderIds(req.user);
+  const filter = visibleIds ? { orderId: { $in: visibleIds } } : {};
+
+  const records = await DispatchRecord.find(filter)
+    .select('dispatchCode orderId status dispatchType boxes transportName lrNumber invoiceNumber createdAt dispatchedAt partialDispatchAt dispatchHistory.date dispatchHistory.finishedAt')
+    .populate({
+      path: 'orderId',
+      select: 'orderCode clientName orderCategory isEmergency emergencyApproved emergencyApprovedAt emergencyApprovedBy emergencyReason paymentTerms destination contactPerson clientPhone city state shippingCity shippingState leadId assignedTo salesPerson expectedDeliveryDate splitDates items.kitId items.kitName items.kitType deletedAt',
+      populate: [
+        { path: 'leadId', select: 'leadType splitDates' },
+        { path: 'assignedTo', select: 'fullName' },
+        { path: 'emergencyApprovedBy', select: 'fullName' },
+      ],
+    })
+    .sort('-createdAt')
+    .lean();
+
+  // A DispatchRecord outlives its order's soft-delete — don't count those.
+  const live = records.filter((d) => d.orderId && !d.orderId.deletedAt);
+  const payments = await resolveOrderPaymentSummaries(live.map((d) => d.orderId._id));
+  const { start, end } = businessDayInstantRange();
+  const inToday = (t) => t && new Date(t) >= start && new Date(t) <= end;
+
+  const rows = live.map((d) => {
+    const o = d.orderId;
+    const isSample = o.orderCategory === 'SAMPLE' || o.leadId?.leadType === 'SAMPLE';
+    const pay = payments.get(String(o._id)) || { status: 'Pending', total: 0, paid: 0, balance: 0 };
+    const history = d.dispatchHistory || [];
+    // Same "dispatched today" rule as getTodaysDispatches.
+    const stamps = [d.dispatchedAt, d.partialDispatchAt, ...history.flatMap((h) => [h.date, h.finishedAt])]
+      .filter(inToday)
+      .map((t) => new Date(t).getTime());
+    const city = o.shippingCity || o.city;
+    const state = o.shippingState || o.state;
+    return {
+      _id: d._id,
+      orderCode: o.orderCode || d.dispatchCode,
+      clientName: o.clientName || '—',
+      contactPerson: o.contactPerson || o.clientName || '—',
+      phone: o.clientPhone || '—',
+      destination: (city && state) ? `${city}, ${state}` : (city || state || o.destination || '—'),
+      salesPerson: o.assignedTo?.fullName || o.salesPerson || '—',
+      status: dispatchStatusLabel(d),
+      dispatchType: d.dispatchType || null,
+      isSample,
+      isEmergency: !!o.isEmergency,
+      emergencySplits: o.isEmergency ? summarizeEmergencySplits(o) : [],
+      emergencyApproved: !!o.emergencyApproved,
+      emergencyApprovedAt: o.emergencyApprovedAt || null,
+      emergencyApprovedBy: o.emergencyApprovedBy?.fullName || null,
+      emergencyReason: o.emergencyReason || '',
+      expectedDeliveryDate: o.expectedDeliveryDate || null,
+      paymentTerms: o.paymentTerms || '',
+      payment: isSample ? 'N/A' : pay.status,
+      orderTotal: pay.total,
+      paidAmount: pay.paid,
+      balance: pay.balance,
+      boxes: d.boxes || 0,
+      transport: d.transportName || d.lrNumber || '—',
+      lrNumber: d.lrNumber || '',
+      invoiceNumber: d.invoiceNumber || '',
+      createdAt: d.createdAt,
+      dispatchedAt: d.dispatchedAt || null,
+      dispatchedToday: stamps.length > 0,
+      lastDispatchedTodayAt: stamps.length ? new Date(Math.max(...stamps)) : null,
+      roundsToday: history.filter((h) => inToday(h.date)).length,
+    };
+  });
+
+  // The frontend counts each card from these rows (STAT_CARDS in Dispatch/index.jsx), so a
+  // card's number is always exactly the list its modal shows.
+  res.status(200).json({ success: true, total: rows.length, data: rows });
 });
 
 exports.getDispatch = asyncHandler(async (req, res, next) => {
