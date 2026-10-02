@@ -96,12 +96,15 @@ export function computePersonalizedComposition(formData = {}, kitsData = [], bun
   const ownKitProdsTotal = ownKitProdsPerPers * persQty;
   const totalPersonalized = r2(pkgTotal + ownKitProdsTotal + inclKitTotal + inclSepTotal);
 
-  // A Personalized kitOrders entry must never appear as its own "Separate Kit" remainder —
-  // some orders end up with the Personalized kit's OWN kitId also listed in
-  // packagingIncludes (self-referencing, a known data glitch), which would otherwise make
-  // this map treat the personalized bundle as if it were a separate kit nested inside
-  // itself and show a phantom leftover row once its overall qty is scaled per-round.
-  const separateKits = kitOrders.filter(ko => (ko?.category || 'separate_kit') !== 'personalized').map(ko => {
+  // On a scaled (partial-dispatch) round, a Personalized kitOrders entry must never appear as
+  // its own "Separate Kit" remainder — some orders end up with the Personalized kit's OWN
+  // kitId also listed in packagingIncludes (self-referencing, a known data glitch), and since
+  // Dispatch leaves that entry's overallQty unscaled while piQtyMap above IS scaled, it would
+  // show a phantom leftover row. For the whole order (ratio 1 — Billing/Sales/full invoice)
+  // every kitOrders entry counts, exactly like Sales' breakdown and the backend's stored
+  // total: a kit tagged 'personalized' ordered at 20 with only 10 bundled inside the outer
+  // package still bills its other 10 under Section B (dropping them undercut the total).
+  const separateKits = kitOrders.filter(ko => bundleScaleRatio === 1 || (ko?.category || 'separate_kit') !== 'personalized').map(ko => {
     if (!ko || !ko.kitId) return null;
     const kDef = kitsData.find(k => String(k._id) === String(ko.kitId));
     const origQty = Number(ko.overallQty) || 0;

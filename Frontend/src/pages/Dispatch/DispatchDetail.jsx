@@ -519,7 +519,14 @@ export default function DispatchDetail() {
     // DIRECTLY — independent of the products/kitOrders arrays just filtered above — so without
     // scaling these too, the dispatched-only invoice kept showing the FULL personalized-kit qty
     // (and everything packed inside it) even when only part (or none) of it had been dispatched.
-    let effectiveKitOverallQty = scaledPersQty;
+    // The outer package's own count is the order's kitOverallQty — what Billing/Sales price it
+    // at — NOT the personalized kitOrders entry's overallQty used above for dispatch tracking:
+    // the two can differ (e.g. package × 10 holding a kit ordered at 20), and reading the
+    // kitOrder's 20 here printed the outer packaging fee twice over. Scaled by the same ratio as
+    // everything else bundled inside it; legacy orders with no kitOverallQty fall back to
+    // fullPersQty, which scales back to exactly scaledPersQty as before.
+    const pkgQty = Number(linkedOrder?.kitOverallQty) || fullPersQty;
+    let effectiveKitOverallQty = bundleScaleRatio === 1 ? pkgQty : Math.max(0, Math.round(pkgQty * bundleScaleRatio));
     let effectivePackagingIncludes = linkedOrder?.packagingIncludes || [];
     if (filterVerified) {
       // packagingIncludes can reference either a kit id or a (separate) product name — any
