@@ -20,7 +20,7 @@ const {
   resolveGenericStockForView, findReservedRowsForView, buildPackingRows, packagingViewOfItem,
 } = require('../../utils/materialStockMatch');
 const { syncOrderTasksPayment, syncOrderPaymentCollection } = require('../../utils/syncOrderPayment');
-const { storedTotalWithRoundOff, r2 } = require('../../utils/orderCalc');
+const { storedTotalWithRoundOff, computeCompositionGrandTotal, r2 } = require('../../utils/orderCalc');
 const Kit = require('../../models/Kit');
 const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
 const { buildLeadEditHistory } = require('../../utils/leadEditHistory');
@@ -230,8 +230,10 @@ exports.getReminders = asyncHandler(async (req, res) => {
     Lead.find(leadFilter)
       .select('hotelName followupDate followupTime status assignedTo leadCode paymentReminderDate paymentTermsReminder paymentTerms')
       .populate('assignedTo', 'fullName').sort('followupDate').limit(100).lean(),
-    Order.find({ deletedAt: null }).select('orderCode clientName status balance total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection paymentReminderDate expectedDeliveryDate items products').sort('-createdAt').limit(200).lean(),
+    Order.find({ deletedAt: null }).select('orderCode clientName status balance total amount gstAmount paidAmount advancePaidAmount advancePaid paymentCollection paymentReminderDate expectedDeliveryDate items products kitOrders kitPrice kitOverallQty packagingIncludes packagingIncludesQty forwardingCharge forwardingChargeAmount').sort('-createdAt').limit(200).lean(),
   ]);
+  // Only needed for personalized kits with packagingIncludes (computeCompositionGrandTotal).
+  const kitsData = orders.some((o) => (o.packagingIncludes || []).length > 0) ? await Kit.find().lean() : [];
 
   const reminders = [];
   leads.forEach((l) => {
@@ -269,7 +271,16 @@ exports.getReminders = asyncHandler(async (req, res) => {
     // owed without having been received. A Paid courier (and pre-switch entries) is left as it was.
     const _roundOff = (o.paymentCollection || []).reduce((s, e) => s + (Number(e?.roundOff) || 0), 0);
     const _unpaidCourier = (o.paymentCollection || []).reduce((s, e) => s + (e?.courierPaid === false ? (Number(e?.courierCharge) || 0) : 0), 0);
-    const orderTotal = _subtotal > 0 ? Math.round((_subtotal + _gst + _roundOff + _unpaidCourier) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
+    // Kit orders: kit rows hold PER-KIT qty, so the plain qty × price sum above prices them as
+    // one kit's worth and leaves out the kit's packing price — use the same composition-first
+    // kit-aware total Billing/invoices use, incl. forwarding. Payment entries are stripped so
+    // the round off / Unpaid courier are added exactly once, as for every other order.
+    const _kitAware = (o.kitOrders || []).some(Boolean) && _subtotal > 0
+      ? computeCompositionGrandTotal({ ...o, paymentCollection: [] }, kitsData)
+      : 0;
+    const orderTotal = _kitAware > 0
+      ? Math.round((_kitAware + _roundOff + _unpaidCourier) * 100) / 100
+      : _subtotal > 0 ? Math.round((_subtotal + _gst + _roundOff + _unpaidCourier) * 100) / 100 : (Number(o.total) || Number(o.amount) || 0);
     const collTotal = (o.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
     const paidAmt = collTotal > 0 ? collTotal : (Number(o.paidAmount) || Number(o.advancePaidAmount) || Number(o.advancePaid) || 0);
     const liveBalance = Math.max(0, orderTotal - paidAmt);

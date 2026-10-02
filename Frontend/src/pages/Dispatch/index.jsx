@@ -26,6 +26,7 @@ import {
   useGetDispatchesQuery,
   useGetTodaysDispatchesQuery,
   useGetPendingDispatchesQuery,
+  useGetDispatchStatsQuery,
   useGetCompanySettingsQuery,
   useUploadDispatchLRMutation,
   useConfirmDispatchMutation,
@@ -72,6 +73,71 @@ const resolveDestination = (o) => {
   if (city && state) return `${city}, ${state}`;
   return city || state || o?.destination || '—';
 };
+
+const fmtDate = (v) => (v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—');
+const fmtDateTime = (v) => (v ? new Date(v).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' }) : '—');
+const fmtMoney = (v) => `₹${(Number(v) || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`;
+
+// Tentative delivery date, red + "Overdue" once it's in the past.
+const renderDeliveryDate = (v) => {
+  if (!v) return <Text type="secondary" style={{ fontSize: 13 }}>—</Text>;
+  const date = new Date(v);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const isOverdue = date < today;
+  return (
+    <Space direction="vertical" size={0}>
+      <Text strong style={{ fontSize: 13, color: isOverdue ? '#ff4d4f' : '#2e7d32' }}>{fmtDate(v)}</Text>
+      {isOverdue && <Tag color="red" style={{ fontSize: 10, lineHeight: '14px' }}>Overdue</Tag>}
+    </Space>
+  );
+};
+
+const renderPaymentTag = (v) => {
+  if (v === 'N/A') return <Tag color="default" style={{ borderRadius: 20, fontSize: 13, fontWeight: 600 }}>N/A</Tag>;
+  const c = v === 'Paid' ? '#2e7d32' : v === 'Partial' ? '#c77700' : '#B11E6A';
+  return <Tag style={{ borderRadius: 20, fontSize: 13, background: `${c}22`, color: c, border: `1px solid ${c}44` }}>{v}</Tag>;
+};
+
+// Header stat cards. Each one's count AND its click-through list come from the same
+// /dispatch/stats rows via `match`, so the number on a card always equals the rows its modal lists.
+// `columns` picks from the stat modal's column set (statCols in the component) — each list
+// shows what matters for that card (emergency split, approver, amount due, dispatch time…).
+// `sumDue` adds a "Total due" figure above the list.
+const STAT_CARDS = [
+  {
+    key: 'emergency', label: 'Emergency Orders', color: '#ff4d4f', match: (r) => r.isEmergency,
+    hint: 'Orders with an urgent / emergency delivery split — dispatch the emergency quantity first, the rest on the tentative date.',
+    columns: ['order', 'client', 'destination', 'emergencyItems', 'deliveryDate', 'status', 'payment', 'salesPerson'],
+  },
+  {
+    key: 'emergencyDispatch', label: 'Emergency Dispatch', color: '#fa8c16', match: (r) => r.emergencyApproved,
+    hint: 'Sales Head + Ops Head approved dispatching these orders even though payment is not complete.',
+    columns: ['order', 'client', 'approval', 'reason', 'payment', 'balance', 'status', 'salesPerson'],
+    sumDue: true,
+  },
+  {
+    key: 'readyToDispatch', label: 'Ready to Dispatch', color: '#B11E6A', match: (r) => r.status === 'Ready to Dispatch',
+    hint: 'Packing verified and confirmed — waiting to go out.',
+    columns: ['order', 'client', 'destination', 'deliveryDate', 'boxes', 'payment', 'salesPerson'],
+  },
+  {
+    key: 'packing', label: 'Packing in Progress', color: '#8a1652', match: (r) => r.status === 'Packing',
+    hint: 'Still being packed / verified — no dispatch round confirmed yet.',
+    columns: ['order', 'client', 'destination', 'createdAt', 'deliveryDate', 'payment', 'salesPerson'],
+  },
+  {
+    key: 'dispatchedToday', label: 'Dispatched Today', color: '#C94F8A', match: (r) => r.dispatchedToday,
+    hint: 'At least one dispatch round confirmed or finished today.',
+    columns: ['order', 'client', 'destination', 'dispatchedAt', 'transport', 'invoice', 'payment'],
+  },
+  {
+    key: 'paymentPending', label: 'Payment Pending', color: '#D85C9E', match: (r) => r.payment === 'Pending',
+    hint: 'No payment received yet against these orders (sample orders excluded).',
+    columns: ['order', 'client', 'balance', 'paymentTerms', 'status', 'deliveryDate', 'salesPerson'],
+    sumDue: true,
+  },
+];
 
 // "Urgent / Emergency Deliveries (Partial)" split, keyed per target (lowercase product
 // name, the literal '__kit__' composite key standing in for the Personalized Kit header
@@ -357,6 +423,11 @@ export default function Dispatch() {
   // filtered from the current "All Orders" page) so nothing partial is missed behind
   // pagination.
   const { data: pendingDispatchData } = useGetPendingDispatchesQuery();
+  // Stat cards + their click-through lists — every visible dispatch record, not just the
+  // "All Orders" page on screen (see getDispatchStats).
+  const { data: statsData, isFetching: statsFetching } = useGetDispatchStatsQuery();
+  const [statModalKey, setStatModalKey] = useState(null);
+  const [statSearch, setStatSearch] = useState('');
   const [uploadLR] = useUploadDispatchLRMutation();
   const [confirmDispatch] = useConfirmDispatchMutation();
 
@@ -394,6 +465,11 @@ export default function Dispatch() {
       invoiceNumber: d.invoiceNumber,
       createdAt: d.createdAt,
       dispatchedAt: d.dispatchedAt,
+      // Only set by /dispatch/today — whether any round was confirmed/finished today, and
+      // when the latest one was, so that tab can split "shipped today" from "due today".
+      dispatchedToday: !!d.dispatchedToday,
+      lastDispatchedTodayAt: d.lastDispatchedTodayAt || null,
+      roundsToday: d.roundsToday || 0,
       deliveryDate: d.orderId?.expectedDeliveryDate || null,
       items: d.items || [],
       // Kit header data + the order's own items — used to group the verification
@@ -874,21 +950,7 @@ export default function Dispatch() {
       ),
       dataIndex: 'deliveryDate',
       width: 140,
-      render: (v) => {
-        if (!v) return <Text type="secondary" style={{ fontSize: 13 }}>—</Text>;
-        const date = new Date(v);
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const isOverdue = date < today;
-        return (
-          <Space direction="vertical" size={0}>
-            <Text strong style={{ fontSize: 13, color: isOverdue ? '#ff4d4f' : '#2e7d32' }}>
-              {date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-            </Text>
-            {isOverdue && <Tag color="red" style={{ fontSize: 10, lineHeight: '14px' }}>Overdue</Tag>}
-          </Space>
-        );
-      },
+      render: renderDeliveryDate,
     };
 
     const baseCols = [
@@ -920,11 +982,7 @@ export default function Dispatch() {
       { title: 'Weight', dataIndex: 'weight', width: 90, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
       {
         title: 'Payment', dataIndex: 'payment', width: 115,
-        render: (v) => {
-          if (v === 'N/A') return <Tag color="default" style={{ borderRadius: 20, fontSize: 13, fontWeight: 600 }}>N/A</Tag>;
-          const c = v === 'Paid' ? '#2e7d32' : v === 'Partial' ? '#c77700' : '#B11E6A';
-          return <Tag style={{ borderRadius: 20, fontSize: 13, background: `${c}22`, color: c, border: `1px solid ${c}44` }}>{v}</Tag>;
-        },
+        render: renderPaymentTag,
       },
       { title: 'Transport', dataIndex: 'transport', width: 120, responsive: ['lg'], render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
       {
@@ -972,6 +1030,24 @@ export default function Dispatch() {
     // Insert Delivery Date column right after Order+Client — shown on both the
     // "All Orders" and "Today's Dispatch Order" dispatch tables.
     baseCols.splice(2, 0, deliveryDateCol);
+
+    // Today's Dispatch Order only: when this order went out today, or that it's due
+    // today and still waiting to be dispatched.
+    if (showTodayActions) {
+      baseCols.splice(3, 0, {
+        title: 'Dispatched Today', key: 'dispatchedToday', width: 150,
+        render: (_, r) => (r.dispatchedToday ? (
+          <Space direction="vertical" size={0}>
+            <Text strong style={{ fontSize: 13, color: '#2e7d32' }}>
+              {new Date(r.lastDispatchedTodayAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+            </Text>
+            {r.roundsToday > 1 && <Text type="secondary" style={{ fontSize: 11 }}>{r.roundsToday} rounds today</Text>}
+          </Space>
+        ) : (
+          <Tag color="gold" style={{ borderRadius: 10, fontSize: 11 }}>Due today</Tag>
+        )),
+      });
+    }
 
     return baseCols;
   };
@@ -1115,8 +1191,17 @@ export default function Dispatch() {
 
   const filteredOrders = sortEmergencyFirst(applyFilters(dispatchOrders, { skipSearch: true }));
   // Today's Dispatch Order — sourced from the backend's dedicated /dispatch/today
-  // endpoint, which filters on the order's tentative delivery date (expectedDeliveryDate).
-  const todayOrders = sortEmergencyFirst(applyFilters(todayDispatchOrders));
+  // endpoint: orders dispatched today (any round) plus orders whose tentative delivery
+  // date is today. The Status filter is applied server-side only for "All Orders", so
+  // it's mirrored client-side here (it previously did nothing on this sub-tab).
+  const matchesStatusFilter = (o) => {
+    if (!dispatchStatusFilter) return true;
+    if (dispatchStatusFilter === 'Payment Pending') return o.payment === 'Pending';
+    // 'Ready to Dispatch' is DB status 'Confirmed', which includes partial rounds.
+    if (dispatchStatusFilter === 'Ready to Dispatch') return o.status === 'Ready to Dispatch' || o.status === 'Partially Dispatched';
+    return o.status === dispatchStatusFilter;
+  };
+  const todayOrders = sortEmergencyFirst(applyFilters(todayDispatchOrders).filter(matchesStatusFilter));
   // Pending Dispatches — orders left with a Partial Dispatch balance (the "Balance"
   // column's per-kit/product pending counts). Own lightweight search (order/client/
   // destination only) rather than the shared filtersRow, since Payment/Status/Date
@@ -1125,6 +1210,125 @@ export default function Dispatch() {
     const q = pendingSearch.toLowerCase();
     return !q || (o.id || '').toLowerCase().includes(q) || (o.client || '').toLowerCase().includes(q) || (o.destination || '').toLowerCase().includes(q);
   }));
+
+  // ── Stat card click-through lists ─────────────────────────────────────────
+  const statRows = statsData?.data || [];
+  const activeStat = STAT_CARDS.find((c) => c.key === statModalKey) || null;
+  const activeStatRows = activeStat ? statRows.filter(activeStat.match) : [];
+  const statModalRows = (() => {
+    const q = statSearch.trim().toLowerCase();
+    const rows = activeStatRows.filter((r) => !q || [r.orderCode, r.clientName, r.destination, r.salesPerson]
+      .some((f) => (f || '').toLowerCase().includes(q)));
+    // Dispatched Today reads best latest-first; every other list keeps emergency-first.
+    if (activeStat?.key === 'dispatchedToday') {
+      return [...rows].sort((a, b) => new Date(b.lastDispatchedTodayAt || 0) - new Date(a.lastDispatchedTodayAt || 0));
+    }
+    return sortEmergencyFirst(rows);
+  })();
+  const statModalDue = statModalRows.reduce((s, r) => s + (r.payment === 'N/A' ? 0 : Number(r.balance) || 0), 0);
+  const openStatModal = (key) => { setStatSearch(''); setStatModalKey(key); };
+
+  const statCols = {
+    order: {
+      title: 'Order', dataIndex: 'orderCode', width: 140,
+      render: (v, r) => (
+        <Space direction="vertical" size={2}>
+          <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{v}</Text>
+          {r.isEmergency && <Tag color="red" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency</Tag>}
+          {r.emergencyApproved && <Tag color="orange" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Emergency Dispatch</Tag>}
+          {r.isSample && <Tag color="purple" style={{ fontSize: 11, lineHeight: '16px', marginBottom: 0 }}>Sample Order</Tag>}
+        </Space>
+      ),
+    },
+    client: {
+      title: 'Client', dataIndex: 'clientName', width: 170,
+      render: (v, r) => (
+        <Space direction="vertical" size={0}>
+          <Text style={{ fontSize: 13 }}>{v}</Text>
+          {r.phone && r.phone !== '—' && <Text type="secondary" style={{ fontSize: 12 }}>{r.phone}</Text>}
+        </Space>
+      ),
+    },
+    destination: { title: 'Destination', dataIndex: 'destination', width: 140, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    salesPerson: { title: 'Sales Person', dataIndex: 'salesPerson', width: 130, render: (v) => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    deliveryDate: { title: 'Delivery Date', dataIndex: 'expectedDeliveryDate', width: 130, render: renderDeliveryDate },
+    createdAt: { title: 'Created Date', dataIndex: 'createdAt', width: 170, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTime(v)}</Text> },
+    status: {
+      title: 'Status', dataIndex: 'status', width: 150,
+      render: (v) => <Tag style={{ borderRadius: 20, fontWeight: 500, fontSize: 13, background: `${statusColor[v]}22`, color: statusColor[v], border: `1px solid ${statusColor[v]}44` }}>{v}</Tag>,
+    },
+    payment: { title: 'Payment', dataIndex: 'payment', width: 110, render: renderPaymentTag },
+    balance: {
+      title: 'Amount Due', dataIndex: 'balance', width: 130, align: 'right',
+      render: (v, r) => (r.payment === 'N/A'
+        ? <Text type="secondary" style={{ fontSize: 13 }}>—</Text>
+        : (
+          <Space direction="vertical" size={0} style={{ alignItems: 'flex-end' }}>
+            <Text strong style={{ fontSize: 13, color: v > 0 ? '#B11E6A' : '#2e7d32' }}>{fmtMoney(v)}</Text>
+            {r.orderTotal > 0 && <Text type="secondary" style={{ fontSize: 11 }}>of {fmtMoney(r.orderTotal)}</Text>}
+          </Space>
+        )),
+    },
+    paymentTerms: { title: 'Payment Terms', dataIndex: 'paymentTerms', width: 140, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+    boxes: {
+      title: 'Boxes', dataIndex: 'boxes', width: 80,
+      render: (v) => <Space size={4}><InboxOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ fontSize: 13 }}>{v}</Text></Space>,
+    },
+    transport: {
+      title: 'Transport / LR', key: 'transport', width: 150,
+      render: (_, r) => (
+        <Space direction="vertical" size={0}>
+          <Text style={{ fontSize: 13 }}>{r.transport}</Text>
+          {r.lrNumber && r.lrNumber !== r.transport && <Text type="secondary" style={{ fontSize: 12 }}>LR: {r.lrNumber}</Text>}
+        </Space>
+      ),
+    },
+    invoice: { title: 'Invoice No.', dataIndex: 'invoiceNumber', width: 120, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+    dispatchedAt: {
+      title: 'Dispatched At', key: 'dispatchedAt', width: 140,
+      render: (_, r) => (
+        <Space direction="vertical" size={0}>
+          <Text strong style={{ fontSize: 13, color: '#2e7d32' }}>
+            {r.lastDispatchedTodayAt ? new Date(r.lastDispatchedTodayAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '—'}
+          </Text>
+          {r.roundsToday > 1 && <Text type="secondary" style={{ fontSize: 11 }}>{r.roundsToday} rounds today</Text>}
+          {r.dispatchType && <Text type="secondary" style={{ fontSize: 11 }}>{r.dispatchType}</Text>}
+        </Space>
+      ),
+    },
+    emergencyItems: {
+      title: 'Emergency Items', key: 'emergencyItems', width: 250,
+      render: (_, r) => {
+        if (!r.emergencySplits?.length) return <Text type="secondary" style={{ fontSize: 12 }}>Whole order</Text>;
+        return (
+          <Space direction="vertical" size={4}>
+            {r.emergencySplits.map((s, i) => (
+              <div key={i}>
+                <Text strong style={{ fontSize: 12, color: '#ff4d4f' }}>{s.date ? fmtDate(s.date) : 'No date set'}</Text>
+                <div>
+                  {s.items.map((it, j) => (
+                    <Tag key={j} color="red" style={{ fontSize: 11, borderRadius: 10, marginTop: 2 }}>
+                      {it.name}{it.qty != null ? ` × ${it.qty}` : ' (all)'}{it.notes ? ` — ${it.notes}` : ''}
+                    </Tag>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </Space>
+        );
+      },
+    },
+    approval: {
+      title: 'Approved By', key: 'approval', width: 170,
+      render: (_, r) => (
+        <Space direction="vertical" size={0}>
+          <Text style={{ fontSize: 13 }}>{r.emergencyApprovedBy || '—'}</Text>
+          {r.emergencyApprovedAt && <Text type="secondary" style={{ fontSize: 12 }}>{fmtDateTime(r.emergencyApprovedAt)}</Text>}
+        </Space>
+      ),
+    },
+    reason: { title: 'Reason', dataIndex: 'emergencyReason', width: 200, render: (v) => <Text style={{ fontSize: 13 }}>{v || '—'}</Text> },
+  };
 
   // Expandable config for all orders table
   const expandable = {
@@ -1175,23 +1379,25 @@ export default function Dispatch() {
     <div className="page-container fade-in">
       <PageBreadcrumb title="Dispatch Team" items={[{ label: 'Dispatch Team' }]} />
 
-      {/* Stats */}
+      {/* Stats — counted over every visible dispatch record (/dispatch/stats); click a
+          card to list the orders behind its number. */}
       <Row gutter={[12, 12]} style={{ marginBottom: 20 }}>
-        {[
-          // Counted across the whole dataset (backend `emergencyCount`), not just the
-          // current page, since the other page-local counts below don't need to be exact.
-          { label: 'Emergency Orders', count: dispatchData?.emergencyCount ?? dispatchOrders.filter(o => o.isEmergency).length, color: '#ff4d4f' },
-          { label: 'Emergency Dispatch', count: dispatchOrders.filter(o => o.emergencyApproved).length, color: '#fa8c16' },
-          { label: 'Ready to Dispatch', count: dispatchOrders.filter(o => o.status === 'Ready to Dispatch').length, color: '#B11E6A' },
-          { label: 'Packing in Progress', count: dispatchOrders.filter(o => o.status === 'Packing').length, color: '#8a1652' },
-          { label: 'Dispatched Today', count: dispatchOrders.filter(o => o.status === 'Dispatched').length, color: '#C94F8A' },
-          { label: 'Payment Pending', count: dispatchOrders.filter(o => o.payment === 'Pending').length, color: '#D85C9E' },
-        ].map((s, i) => (
-          <Col xs={12} sm={6} key={s.label}>
+        {STAT_CARDS.map((s, i) => (
+          <Col xs={12} sm={6} key={s.key}>
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}>
-              <Card style={{ borderRadius: 12, border: 'none', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, boxShadow: `0 4px 20px ${s.color}20`, textAlign: 'center' }} styles={{ body: { padding: '16px 8px' } }}>
-                <Title level={2} style={{ margin: 0, color: s.color }}>{s.count}</Title>
-                <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>{s.label}</Text>
+              <Card
+                hoverable
+                role="button"
+                tabIndex={0}
+                onClick={() => openStatModal(s.key)}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openStatModal(s.key); } }}
+                style={{ borderRadius: 12, border: 'none', cursor: 'pointer', background: `linear-gradient(135deg, ${s.color}25 0%, ${s.color}10 100%)`, boxShadow: `0 4px 20px ${s.color}20`, textAlign: 'center' }}
+                styles={{ body: { padding: '16px 8px' } }}
+              >
+                <Title level={2} style={{ margin: 0, color: s.color }}>{statsData ? statRows.filter(s.match).length : '—'}</Title>
+                <Text style={{ fontSize: 12, color: isDark ? '#aaa' : '#666' }}>
+                  {s.label} <EyeOutlined style={{ fontSize: 11, opacity: 0.6 }} />
+                </Text>
               </Card>
             </motion.div>
           </Col>
@@ -1263,7 +1469,7 @@ export default function Dispatch() {
                       <div>
                         {filtersRow}
                         <Card
-                          title={<Space><CalendarOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Orders with Tentative Delivery Date Today</Text></Space>}
+                          title={<Space><CalendarOutlined style={{ color: '#B11E6A' }} /><Text strong style={{ color: textColor }}>Dispatched Today &amp; Due Today</Text></Space>}
                           extra={
                             <Button
                               size="small"
@@ -1281,7 +1487,7 @@ export default function Dispatch() {
                             {todayOrders.length === 0 ? (
                               <div style={{ textAlign: 'center', padding: '32px', color: isDark ? '#aaa' : '#888' }}>
                                 <CarOutlined style={{ fontSize: 32, marginBottom: 8, display: 'block', color: '#B11E6A55' }} />
-                                No orders with tentative delivery date today.
+                                No orders dispatched or due for dispatch today.
                               </div>
                             ) : (
                               <Table
@@ -1626,6 +1832,63 @@ export default function Dispatch() {
         ])}
         activeKey={activeKeyFor(activeTab)}
       />
+
+      {/* ── Stat card list — the orders behind a header card's number. Row click opens the
+           order's Dispatch Detail. ── */}
+      <Modal
+        title={activeStat && (
+          <Space>
+            <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: activeStat.color }} />
+            <span>{activeStat.label}</span>
+            <Tag style={{ borderRadius: 20, background: `${activeStat.color}22`, color: activeStat.color, border: `1px solid ${activeStat.color}44` }}>
+              {activeStatRows.length}
+            </Tag>
+          </Space>
+        )}
+        open={!!activeStat}
+        onCancel={() => setStatModalKey(null)}
+        footer={null}
+        width={1150}
+        centered
+      >
+        {activeStat && (
+          <>
+            <Text type="secondary" style={{ display: 'block', fontSize: 12, marginBottom: 12 }}>{activeStat.hint}</Text>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+              <Input
+                prefix={<SearchOutlined />}
+                placeholder="Search order, client, destination, sales person..."
+                allowClear
+                value={statSearch}
+                onChange={(e) => setStatSearch(e.target.value)}
+                style={{ flex: 1, minWidth: 200, maxWidth: 360, borderRadius: 8 }}
+              />
+              {activeStat.sumDue && (
+                <Tag style={{ borderRadius: 20, fontSize: 13, padding: '2px 12px', background: '#B11E6A14', color: '#B11E6A', border: '1px solid #B11E6A44' }}>
+                  Total due: <b>{fmtMoney(statModalDue)}</b>
+                </Tag>
+              )}
+            </div>
+            <div className="table-responsive">
+              <Table
+                key={activeStat.key}
+                dataSource={statModalRows}
+                columns={activeStat.columns.map((k) => statCols[k])}
+                rowKey="_id"
+                size="small"
+                loading={statsFetching && !statsData}
+                scroll={{ x: 'max-content' }}
+                pagination={{ showSizeChanger: true, pageSizeOptions: ['10', '20', '50', '100'], defaultPageSize: 10, size: 'small' }}
+                locale={{ emptyText: statSearch ? 'No orders match your search.' : `No orders under ${activeStat.label} right now.` }}
+                onRow={(r) => ({
+                  onClick: () => { setStatModalKey(null); navigate(`/dispatch/${r._id}`); },
+                  style: { cursor: 'pointer' },
+                })}
+              />
+            </div>
+          </>
+        )}
+      </Modal>
 
       {/* ── Pickup Payment Modal — Pickup Team pays out of pocket, so this always
            captures amount/GPay/proof to raise a reimbursement claim (Finance's choice
