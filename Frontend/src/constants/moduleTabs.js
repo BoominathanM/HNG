@@ -10,8 +10,27 @@
 //   - useTabAccess() hides a tab whose key is explicitly set to false.
 //
 // Keep the `key`s in sync with each page's primary <Tabs> items. Modules
-// without primary tabs (e.g. Staff, Integration) are intentionally omitted.
+// without primary tabs (e.g. Integration) are intentionally omitted.
+
+// Staff Management has no in-page <Tabs>: its "tabs" are the sidebar
+// sub-modules, each its own route. The Sidebar, the routes in App.jsx and the
+// /staff landing redirect all gate on these keys (utils/access.js canViewTab).
+export const STAFF_SUBMODULES = [
+  { key: 'staff_list', label: 'Staff List', path: '/staff/list' },
+  { key: 'attendance', label: 'Attendance', path: '/staff/attendance' },
+  { key: 'overtime', label: 'Overtime', path: '/staff/overtime' },
+  { key: 'payroll', label: 'Payroll', path: '/staff/payroll' },
+  { key: 'incentive', label: 'Incentive', path: '/staff/incentive' },
+  { key: 'approvals_leave', label: 'Approvals – Leave', path: '/staff/approvals/leave' },
+  { key: 'approvals_permission', label: 'Approvals – Permission', path: '/staff/approvals/permission' },
+  { key: 'approvals_punch', label: 'Approvals – Punch', path: '/staff/approvals/punch' },
+  { key: 'approvals_fine', label: 'Approvals – Fine', path: '/staff/approvals/fine' },
+  { key: 'approvals_reimbursement', label: 'Approvals – Reimbursement', path: '/staff/approvals/reimbursement' },
+  { key: 'approvals_payslip', label: 'Approvals – Payslip Requests', path: '/staff/approvals/payslip' },
+];
+
 export const MODULE_TAB_DEFS = {
+  'Staff Management': STAFF_SUBMODULES,
   'Sales Team': [
     { key: 'performance', label: 'Performance' },
     { key: 'leads', label: 'Leads' },

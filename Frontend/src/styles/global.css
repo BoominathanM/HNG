@@ -1465,3 +1465,96 @@ video {
     max-width: calc(100vw - 16px) !important;
   }
 }
+
+/* ----------------------------------------------------------------------------
+   16. STAFF MANAGEMENT (pages/Staff)
+   ---------------------------------------------------------------------------- */
+
+.staff-table .ant-table-thead > tr > th {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+}
+
+/* Staff detail tab bar: 5 per row on desktop, wrapping down on smaller screens */
+.staff-detail-tabs {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+}
+.staff-detail-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 999px;
+  font-family: inherit;
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: var(--transition);
+}
+.staff-detail-tab > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.staff-detail-tab:not(.is-active):hover {
+  background: rgba(177, 30, 106, 0.08) !important;
+  color: #B11E6A !important;
+}
+@media (max-width: 991px) {
+  .staff-detail-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 576px) {
+  .staff-detail-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .staff-detail-tab { font-size: 12px; padding: 6px 8px; }
+}
+
+/* Month calendar grid — scrolls sideways on phones instead of squashing */
+.staff-cal-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.staff-cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 620px;
+}
+
+/* Attendance: month summary strip + day rows */
+.staff-att-stats {
+  display: grid;
+  grid-template-columns: auto repeat(8, minmax(0, 1fr));
+}
+@media (max-width: 991px) {
+  .staff-att-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .staff-att-stats > div:first-child { grid-column: 1 / -1; }
+}
+.staff-att-row {
+  display: flex;
+  align-items: stretch;
+  flex-wrap: wrap;
+}
+.staff-att-codes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  align-content: center;
+  width: 280px;
+  padding: 10px 14px;
+}
+@media (max-width: 768px) {
+  .staff-att-codes { width: 100%; padding-top: 0; }
+}
+
+/* Attendance statistics pills: 6 across on desktop, wrapping down */
+.staff-stat-pills {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+/* Salary Overview breakdown day stats: 8 across, 4 on phones */
+.staff-overview-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
+}

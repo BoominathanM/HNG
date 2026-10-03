@@ -8,9 +8,12 @@ import {
   CarOutlined, UserOutlined, InboxOutlined, DollarOutlined,
   BarChartOutlined, SettingOutlined, BellOutlined, CloseOutlined, RightOutlined, LogoutOutlined,
   ShoppingOutlined, BankOutlined, ApiOutlined, MessageOutlined, RobotOutlined, BookOutlined,
-  ContactsOutlined, FileProtectOutlined,
+  ContactsOutlined, FileProtectOutlined, CalendarOutlined, ClockCircleOutlined, TrophyOutlined,
+  AuditOutlined, ScheduleOutlined, KeyOutlined, FieldTimeOutlined, WalletOutlined, FileTextOutlined,
+  MoneyCollectOutlined,
 } from '@ant-design/icons';
 import { toggleSidebar } from '../../store/slices/themeSlice';
+import { canViewTab } from '../../utils/access';
 import { useLogoutMutation, useGetCompanySettingsQuery, useGetTasksQuery, useGetNotificationsQuery } from '../../store/api/apiSlice';
 
 const { Sider } = Layout;
@@ -24,7 +27,33 @@ const ALL_MENU_ITEMS = [
   { key: '/operations', icon: <ApartmentOutlined />, label: 'Operations', module: 'Operations' },
   { key: '/tasks', icon: <CheckSquareOutlined />, label: 'Task Management', module: 'Task Management' },
   { key: '/dispatch', icon: <CarOutlined />, label: 'Dispatch Team', module: 'Dispatch Team' },
-  { key: '/staff', icon: <UserOutlined />, label: 'Staff Management', module: 'Staff Management' },
+  {
+    key: '/staff',
+    icon: <UserOutlined />,
+    label: 'Staff Management',
+    module: 'Staff Management',
+    children: [
+      { key: '/staff/list', icon: <TeamOutlined />, label: 'Staff List', module: 'Staff Management', tab: 'staff_list' },
+      { key: '/staff/attendance', icon: <CalendarOutlined />, label: 'Attendance', module: 'Staff Management', tab: 'attendance' },
+      { key: '/staff/overtime', icon: <ClockCircleOutlined />, label: 'Overtime', module: 'Staff Management', tab: 'overtime' },
+      { key: '/staff/payroll', icon: <DollarOutlined />, label: 'Payroll', module: 'Staff Management', tab: 'payroll' },
+      { key: '/staff/incentive', icon: <TrophyOutlined />, label: 'Incentive', module: 'Staff Management', tab: 'incentive' },
+      {
+        key: '/staff/approvals',
+        icon: <AuditOutlined />,
+        label: 'Approvals',
+        module: 'Staff Management',
+        children: [
+          { key: '/staff/approvals/leave', icon: <ScheduleOutlined />, label: 'Leave', module: 'Staff Management', tab: 'approvals_leave' },
+          { key: '/staff/approvals/permission', icon: <KeyOutlined />, label: 'Permission', module: 'Staff Management', tab: 'approvals_permission' },
+          { key: '/staff/approvals/punch', icon: <FieldTimeOutlined />, label: 'Punch', module: 'Staff Management', tab: 'approvals_punch' },
+          { key: '/staff/approvals/fine', icon: <MoneyCollectOutlined />, label: 'Fine', module: 'Staff Management', tab: 'approvals_fine' },
+          { key: '/staff/approvals/reimbursement', icon: <WalletOutlined />, label: 'Reimbursement', module: 'Staff Management', tab: 'approvals_reimbursement' },
+          { key: '/staff/approvals/payslip', icon: <FileTextOutlined />, label: 'Payslip Requests', module: 'Staff Management', tab: 'approvals_payslip' },
+        ],
+      },
+    ],
+  },
   { key: '/inventory', icon: <InboxOutlined />, label: 'Inventory', module: 'Inventory' },
   { key: '/purchase', icon: <ShoppingOutlined />, label: 'Purchase', module: 'Purchase' },
   { key: '/vendors-suppliers', icon: <ContactsOutlined />, label: 'Vendors & Suppliers', module: 'Vendors & Suppliers' },
@@ -47,6 +76,17 @@ const ALL_MENU_ITEMS = [
   },
   { key: '/settings', icon: <SettingOutlined />, label: 'Settings', module: 'Settings' },
 ];
+
+// Nested items also light up on their sub-routes (Staff List on /staff/list/:id);
+// top-level items keep exact matching.
+const pathMatches = (key, pathname, prefix) => pathname === key || (prefix && pathname.startsWith(`${key}/`));
+const containsPath = (item, pathname) =>
+  (item.children || []).some((c) => pathMatches(c.key, pathname, true) || containsPath(c, pathname));
+// Keys of every group that must be expanded to reveal the current route.
+const ancestorKeys = (items, pathname) => {
+  const parent = items.find((i) => i.children && containsPath(i, pathname));
+  return parent ? [parent.key, ...ancestorKeys(parent.children, pathname)] : [];
+};
 
 export default function Sidebar({ mobileOpen, onMobileClose }) {
   const navigate = useNavigate();
@@ -84,10 +124,12 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
     return perms[module]?.read === true;
   };
 
-  const menuItems = ALL_MENU_ITEMS.reduce((acc, item) => {
+  // Items with a `tab` also need that Settings > Users "Tab Access" grant.
+  const filterMenu = (items) => items.reduce((acc, item) => {
     if (!canView(item.module)) return acc;
+    if (item.tab && !canViewTab(authUser, item.module, item.tab)) return acc;
     if (item.children) {
-      const visibleChildren = item.children.filter(c => canView(c.module));
+      const visibleChildren = filterMenu(item.children);
       if (visibleChildren.length === 0) return acc;
       acc.push({ ...item, children: visibleChildren });
     } else {
@@ -95,6 +137,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
     }
     return acc;
   }, []);
+  const menuItems = filterMenu(ALL_MENU_ITEMS);
 
   const handleLogout = async () => {
     try {
@@ -106,18 +149,14 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
   };
 
   const [expandedKeys, setExpandedKeys] = useState(() => {
-    const activeParent = ALL_MENU_ITEMS.find(
-      (item) => item.children?.some((c) => location.pathname === c.key)
-    );
-    return new Set(activeParent ? [activeParent.key] : ['/inventory']);
+    const ancestors = ancestorKeys(ALL_MENU_ITEMS, location.pathname);
+    return new Set(ancestors.length ? ancestors : ['/inventory']);
   });
 
   useEffect(() => {
-    const activeParent = ALL_MENU_ITEMS.find((item) =>
-      item.children?.some((c) => location.pathname === c.key)
-    );
-    if (activeParent) {
-      setExpandedKeys((prev) => new Set([...prev, activeParent.key]));
+    const ancestors = ancestorKeys(ALL_MENU_ITEMS, location.pathname);
+    if (ancestors.length) {
+      setExpandedKeys((prev) => new Set([...prev, ...ancestors]));
     }
   }, [location.pathname]);
 
@@ -138,11 +177,12 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
     overflow: 'hidden',
   };
 
-  const renderItem = (item, isChild = false) => {
-    const isActive = location.pathname === item.key;
+  const renderItem = (item, depth = 0) => {
+    const isChild = depth > 0;
     const hasChildren = !!item.children?.length;
+    const isActive = !hasChildren && pathMatches(item.key, location.pathname, isChild);
     const isExpanded = expandedKeys.has(item.key);
-    const isParentOfActive = item.children?.some((c) => location.pathname === c.key);
+    const isParentOfActive = hasChildren && containsPath(item, location.pathname);
     const badgeCount = getBadge(item.key);
 
     const handleClick = () => {
@@ -168,7 +208,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
             gap: collapsed ? 0 : 12,
             padding: collapsed ? '12px 0' : isChild ? '9px 16px 9px 20px' : '10px 16px',
             justifyContent: collapsed ? 'center' : 'flex-start',
-            margin: isChild ? '6px 8px' : '2px 8px',
+            margin: isChild ? `6px 8px 6px ${8 + (depth - 1) * 14}px` : '2px 8px',
             borderRadius: 10,
             cursor: 'pointer',
             background: isActive
@@ -253,7 +293,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
                 transition={{ duration: 0.22, ease: 'easeInOut' }}
                 style={{ overflow: 'hidden' }}
               >
-                {item.children.map((child) => renderItem(child, true))}
+                {item.children.map((child) => renderItem(child, depth + 1))}
               </motion.div>
             )}
           </AnimatePresence>
@@ -261,7 +301,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }) {
 
         {/* In collapsed mode, render children as flat icons below parent */}
         {hasChildren && collapsed && item.children.map((child) => {
-          const childActive = location.pathname === child.key;
+          const childActive = pathMatches(child.key, location.pathname, true);
           return (
             <div
               key={child.key}

@@ -46,6 +46,7 @@ export const apiSlice = createApi({
     'AlertConfigs', 'ActiveAlerts', 'SnoozedAlerts', 'NotificationSoundConfig',
     'AiConfig', 'QuotationComparisons',
     'HiddenQueueRows',
+    'Hrms',
   ],
   endpoints: (builder) => ({
 
@@ -173,6 +174,89 @@ export const apiSlice = createApi({
     updateClaimStatus: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/staff/claims/${id}/status`, method: 'patch', data }),
       invalidatesTags: ['Claims'],
+    }),
+
+    // ── HRMS (EktaHR, read-only via the backend's /hrms proxy) ──────────────
+    // `staffId` is the EktaHR MongoDB _id from the staff list, not the Employee ID.
+    getHrStaffList: builder.query({
+      query: (params) => ({ url: '/hrms/admin/staff', params }),
+      providesTags: ['Hrms'],
+    }),
+    getHrStaff: builder.query({
+      query: (staffId) => ({ url: `/hrms/admin/staff/${staffId}` }),
+      providesTags: ['Hrms'],
+    }),
+    // Lookups that turn the staff record's template / branch ids into names.
+    getHrStaffSetup: builder.query({
+      query: () => ({ url: '/hrms/admin/staff/setup' }),
+      providesTags: ['Hrms'],
+    }),
+    getHrBranches: builder.query({
+      query: () => ({ url: '/hrms/admin/settings/attendance/branches' }),
+      providesTags: ['Hrms'],
+    }),
+    getHrActiveShift: builder.query({
+      query: (staffId) => ({ url: `/hrms/admin/settings/shift-roster/active/${staffId}` }),
+      providesTags: ['Hrms'],
+    }),
+    getHrShiftSchedule: builder.query({
+      query: ({ staffId, year, month }) => ({ url: `/hrms/admin/settings/shift-roster/schedule/${staffId}`, params: { year, month } }),
+      providesTags: ['Hrms'],
+    }),
+    getHrAttendance: builder.query({
+      query: ({ staffId, year, month }) => ({ url: `/hrms/admin/staff/attendance/staff/${staffId}`, params: { year, month } }),
+      providesTags: ['Hrms'],
+    }),
+    // Attendance day-detail popups — fetched only when a day's chip is clicked.
+    getHrAttendanceFine: builder.query({
+      query: ({ staffId, date }) => ({ url: '/hrms/admin/staff/attendance/fine', params: { staffId, date } }),
+      providesTags: ['Hrms'],
+    }),
+    getHrAttendanceOvertime: builder.query({
+      query: ({ staffId, date }) => ({ url: '/hrms/admin/staff/attendance/overtime', params: { staffId, date } }),
+      providesTags: ['Hrms'],
+    }),
+    getHrLeaveBalances: builder.query({
+      query: (staffId) => ({ url: `/hrms/admin/settings/attendance/leave-templates/staff-balances/${staffId}` }),
+      providesTags: ['Hrms'],
+    }),
+    getHrSalaryStructure: builder.query({
+      query: (staffId) => ({ url: `/hrms/admin/staff/salary-structures/staff/${staffId}` }),
+      providesTags: ['Hrms'],
+    }),
+    // `month` is "Month YYYY", e.g. "October 2026".
+    getHrSalaryOverview: builder.query({
+      query: ({ staffId, month }) => ({ url: `/hrms/admin/staff/overview/detail/${staffId}`, params: { month } }),
+      providesTags: ['Hrms'],
+    }),
+    // `type` is leave | permission | punch | fine | expense | payslip.
+    // punch / fine take a single `date` (YYYY-MM-DD); the others take
+    // staffId, status, search, startDate, endDate.
+    getHrApprovals: builder.query({
+      query: ({ type, ...params }) => ({ url: `/hrms/admin/approvals/${type}`, params }),
+      providesTags: ['Hrms'],
+    }),
+    getHrStaffDocuments: builder.query({
+      query: (staffId) => ({ url: `/hrms/admin/staff/${staffId}/documents` }),
+      providesTags: ['Hrms'],
+    }),
+    // Staff sub-module pages. `date` is YYYY-MM-DD; payroll/incentive `month`
+    // is "Month YYYY" (EktaHR rejects/empties "2026-10").
+    getHrAllStaffAttendance: builder.query({
+      query: (date) => ({ url: '/hrms/admin/staff/attendance/all-staff', params: { date } }),
+      providesTags: ['Hrms'],
+    }),
+    getHrOvertimeList: builder.query({
+      query: (params) => ({ url: '/hrms/admin/staff/overtime/list', params }),
+      providesTags: ['Hrms'],
+    }),
+    getHrPayroll: builder.query({
+      query: (month) => ({ url: '/hrms/admin/staff/payroll', params: { month } }),
+      providesTags: ['Hrms'],
+    }),
+    getHrIncentives: builder.query({
+      query: (month) => ({ url: '/hrms/admin/staff/incentive', params: { month } }),
+      providesTags: ['Hrms'],
     }),
 
     // ── Vendors ─────────────────────────────────────────────────────────────
@@ -1582,6 +1666,25 @@ export const {
   useGetClaimsQuery,
   useCreateClaimMutation,
   useUpdateClaimStatusMutation,
+  // HRMS (EktaHR)
+  useGetHrStaffListQuery,
+  useGetHrStaffQuery,
+  useGetHrStaffSetupQuery,
+  useGetHrBranchesQuery,
+  useGetHrActiveShiftQuery,
+  useGetHrShiftScheduleQuery,
+  useGetHrAttendanceQuery,
+  useGetHrAttendanceFineQuery,
+  useGetHrAttendanceOvertimeQuery,
+  useGetHrLeaveBalancesQuery,
+  useGetHrSalaryStructureQuery,
+  useGetHrSalaryOverviewQuery,
+  useGetHrApprovalsQuery,
+  useGetHrStaffDocumentsQuery,
+  useGetHrAllStaffAttendanceQuery,
+  useGetHrOvertimeListQuery,
+  useGetHrPayrollQuery,
+  useGetHrIncentivesQuery,
   // Vendors
   useGetVendorsQuery,
   useGetVendorQuery,

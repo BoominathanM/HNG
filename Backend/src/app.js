@@ -32,6 +32,7 @@ const reportsRoutes = require('./modules/reports/reports.routes');
 const whatsappRoutes = require('./modules/whatsapp/whatsapp.routes');
 const alertConfigRoutes = require('./modules/alertConfig/alertConfig.routes');
 const alertsRoutes = require('./modules/alerts/alerts.routes');
+const hrmsRoutes = require('./modules/hrms/hrms.routes');
 
 const app = express();
 
@@ -124,6 +125,7 @@ app.use('/api/reports', reportsRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/alert-config', alertConfigRoutes);
 app.use('/api/alerts', alertsRoutes);
+app.use('/api/hrms', hrmsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

@@ -3,6 +3,7 @@
 // These mirror the deny-by-default permission logic used by PermissionRoute
 // (src/App.jsx) and the Sidebar so the post-login landing page respects the
 // access an admin has actually granted a user.
+import { STAFF_SUBMODULES } from '../constants/moduleTabs';
 
 // Ordered module → landing route map. Order mirrors the sidebar so a user lands
 // on the first module they can see, top-to-bottom.
@@ -41,6 +42,23 @@ export const canViewModule = (user, module) => {
   if (user.role === 'Super Admin' || user.role === 'Admin') return true;
   return normalizePerms(user.permissions)[module]?.read === true;
 };
+
+// Whether the user may open sub-tab `key` of `module` (Settings > Users "Tab
+// Access"). Same whitelist as useTabAccess(): with no tab granted for the module
+// every tab is allowed; once any tab is granted, only the granted ones are.
+export const canViewTab = (user, module, key) => {
+  if (!canViewModule(user, module)) return false;
+  if (user.role === 'Super Admin' || user.role === 'Admin') return true;
+  const modAccess = normalizePerms(user.tabAccess)[module];
+  if (!modAccess || typeof modAccess !== 'object') return true;
+  const restricted = Object.values(modAccess).some((v) => v === true);
+  return !restricted || modAccess[key] === true;
+};
+
+// First Staff Management sub-module the user may open (the /staff landing),
+// optionally limited to paths under `prefix` (e.g. "/staff/approvals/").
+export const firstStaffPath = (user, prefix = '') =>
+  STAFF_SUBMODULES.find((m) => m.path.startsWith(prefix) && canViewTab(user, 'Staff Management', m.key))?.path;
 
 // First route the user is allowed to open. Used as the post-login landing page
 // so a user without Dashboard access isn't dropped on the "Access Restricted"

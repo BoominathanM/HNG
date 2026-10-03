@@ -9,7 +9,7 @@ import AppLayout from './components/layout/AppLayout';
 import { lightTheme, darkTheme } from './styles/theme';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { useGetMeQuery } from './store/api/apiSlice';
-import { canViewModule, firstAccessiblePath } from './utils/access';
+import { canViewModule, canViewTab, firstAccessiblePath, firstStaffPath } from './utils/access';
 import './styles/global.css';
 
 import Login from './pages/Login';
@@ -22,7 +22,18 @@ import Tasks from './pages/Tasks';
 import TaskDetail from './pages/Tasks/TaskDetail';
 import Dispatch from './pages/Dispatch';
 import DispatchDetail from './pages/Dispatch/DispatchDetail';
-import Staff from './pages/Staff';
+import StaffList from './pages/Staff/StaffList';
+import StaffDetail from './pages/Staff/StaffDetail';
+import StaffAttendance from './pages/Staff/Attendance';
+import StaffOvertime from './pages/Staff/Overtime';
+import StaffPayroll from './pages/Staff/Payroll';
+import StaffIncentive from './pages/Staff/Incentive';
+import LeaveApprovals from './pages/Staff/approvals/LeaveApprovals';
+import PermissionApprovals from './pages/Staff/approvals/PermissionApprovals';
+import PunchApprovals from './pages/Staff/approvals/PunchApprovals';
+import FineApprovals from './pages/Staff/approvals/FineApprovals';
+import ReimbursementApprovals from './pages/Staff/approvals/ReimbursementApprovals';
+import PayslipApprovals from './pages/Staff/approvals/PayslipApprovals';
 import Inventory from './pages/Inventory';
 import Billing from './pages/Billing';
 import Reports from './pages/Reports';
@@ -49,7 +60,9 @@ function PrivateRoute() {
   return <AppLayout />;
 }
 
-function PermissionRoute({ module, children }) {
+// `tab` (optional) additionally requires that sub-tab's Settings > Users "Tab
+// Access" grant — used by the Staff Management sub-module routes.
+function PermissionRoute({ module, tab, children }) {
   const user = useSelector((s) => s.auth.user);
   if (!user) return <Navigate to="/login" replace />;
   // Super Admin and Admin roles bypass all permission checks
@@ -60,16 +73,18 @@ function PermissionRoute({ module, children }) {
     ? Object.fromEntries(rawPerms)
     : (rawPerms && typeof rawPerms === 'object' ? rawPerms : {});
   const perm = perms[module];
-  if (perm?.read !== true) {
-    return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
-        <span style={{ fontSize: 48 }}>🔒</span>
-        <Text strong style={{ fontSize: 20 }}>Access Restricted</Text>
-        <Text type="secondary">You don't have permission to access this page. Contact your administrator.</Text>
-      </div>
-    );
-  }
+  if (perm?.read !== true || (tab && !canViewTab(user, module, tab))) return <AccessRestricted />;
   return children;
+}
+
+function AccessRestricted() {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '60vh', gap: 12 }}>
+      <span style={{ fontSize: 48 }}>🔒</span>
+      <Text strong style={{ fontSize: 20 }}>Access Restricted</Text>
+      <Text type="secondary">You don't have permission to access this page. Contact your administrator.</Text>
+    </div>
+  );
 }
 
 // Index route ("/"). If the user can't read Dashboard but has access to another
@@ -86,6 +101,14 @@ function HomeRoute() {
       <Dashboard />
     </PermissionRoute>
   );
+}
+
+// "/staff" (or "/staff/approvals") → the first Staff Management sub-module under
+// that path this user may open.
+function StaffHome({ prefix }) {
+  const user = useSelector((s) => s.auth.user);
+  const dest = firstStaffPath(user, prefix);
+  return dest ? <Navigate to={dest} replace /> : <AccessRestricted />;
 }
 
 function ThemedApp() {
@@ -113,7 +136,20 @@ function ThemedApp() {
               <Route path="/tasks/:id" element={<PermissionRoute module="Task Management"><TaskDetail /></PermissionRoute>} />
               <Route path="/dispatch" element={<PermissionRoute module="Dispatch Team"><Dispatch /></PermissionRoute>} />
               <Route path="/dispatch/:id" element={<PermissionRoute module="Dispatch Team"><DispatchDetail /></PermissionRoute>} />
-              <Route path="/staff" element={<PermissionRoute module="Staff Management"><Staff /></PermissionRoute>} />
+              <Route path="/staff" element={<StaffHome />} />
+              <Route path="/staff/list" element={<PermissionRoute module="Staff Management" tab="staff_list"><StaffList /></PermissionRoute>} />
+              <Route path="/staff/list/:id" element={<PermissionRoute module="Staff Management" tab="staff_list"><StaffDetail /></PermissionRoute>} />
+              <Route path="/staff/attendance" element={<PermissionRoute module="Staff Management" tab="attendance"><StaffAttendance /></PermissionRoute>} />
+              <Route path="/staff/overtime" element={<PermissionRoute module="Staff Management" tab="overtime"><StaffOvertime /></PermissionRoute>} />
+              <Route path="/staff/payroll" element={<PermissionRoute module="Staff Management" tab="payroll"><StaffPayroll /></PermissionRoute>} />
+              <Route path="/staff/incentive" element={<PermissionRoute module="Staff Management" tab="incentive"><StaffIncentive /></PermissionRoute>} />
+              <Route path="/staff/approvals" element={<StaffHome prefix="/staff/approvals/" />} />
+              <Route path="/staff/approvals/leave" element={<PermissionRoute module="Staff Management" tab="approvals_leave"><LeaveApprovals /></PermissionRoute>} />
+              <Route path="/staff/approvals/permission" element={<PermissionRoute module="Staff Management" tab="approvals_permission"><PermissionApprovals /></PermissionRoute>} />
+              <Route path="/staff/approvals/punch" element={<PermissionRoute module="Staff Management" tab="approvals_punch"><PunchApprovals /></PermissionRoute>} />
+              <Route path="/staff/approvals/fine" element={<PermissionRoute module="Staff Management" tab="approvals_fine"><FineApprovals /></PermissionRoute>} />
+              <Route path="/staff/approvals/reimbursement" element={<PermissionRoute module="Staff Management" tab="approvals_reimbursement"><ReimbursementApprovals /></PermissionRoute>} />
+              <Route path="/staff/approvals/payslip" element={<PermissionRoute module="Staff Management" tab="approvals_payslip"><PayslipApprovals /></PermissionRoute>} />
               <Route path="/inventory" element={<PermissionRoute module="Inventory"><Inventory /></PermissionRoute>} />
               <Route path="/purchase" element={<PermissionRoute module="Purchase"><Purchase /></PermissionRoute>} />
               <Route path="/billing" element={<PermissionRoute module="Billing"><Billing /></PermissionRoute>} />
