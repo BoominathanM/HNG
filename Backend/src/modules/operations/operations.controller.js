@@ -914,6 +914,28 @@ exports.updateStickerStatus = asyncHandler(async (req, res, next) => {
   // Vendor re-sending a reworked design after a rejection — clear the old rejection
   // reason/flags so the (now stale) reason stops showing once a fresh approval round starts.
   if (req.body.status === 'Waiting for Approval') {
+    const now = new Date();
+    // Close the rejected round in rejectionHistory before its live fields are wiped, so the
+    // rejection stays in the approval reports. Rejections made before that log existed have
+    // no open entry — archive them here instead.
+    const current = await StickerRequest.findById(req.params.id).lean();
+    if (!current) return next(new AppError('Sticker request not found', 404));
+    if (current.salesRejected || current.opsHeadRejected) {
+      const history = current.rejectionHistory || [];
+      const last = history[history.length - 1];
+      if (last && !last.resentAt) {
+        update[`rejectionHistory.${history.length - 1}.resentAt`] = now;
+      } else {
+        update.$push = {
+          rejectionHistory: {
+            ...StickerRequest.approvalSnapshot(current),
+            sentAt: current.sentForApprovalAt || current.createdAt,
+            resentAt: now,
+          },
+        };
+      }
+    }
+    update.sentForApprovalAt = now;
     update.salesRejected = false;
     update.salesRejectReason = '';
     update.opsHeadRejected = false;
@@ -1057,6 +1079,24 @@ exports.rejectStickerRequest = asyncHandler(async (req, res, next) => {
   if (role !== 'sales' && role !== 'opsHead') return next(new AppError('role must be "sales" or "opsHead"', 400));
   const now = new Date();
   const userId = req.user?._id;
+
+  // Log the rejected round for the approval reports. Snapshot BEFORE the approvals are reset
+  // below, so an earlier sign-off from the other side in this round is kept. If the other
+  // side already rejected this round (vendor hasn't re-sent yet), update that open entry.
+  const history = sticker.rejectionHistory;
+  const lastRound = history.length ? history[history.length - 1] : null;
+  const roundOpen = (sticker.salesRejected || sticker.opsHeadRejected) && lastRound && !lastRound.resentAt;
+  const snapshot = StickerRequest.approvalSnapshot(sticker);
+  if (role === 'sales') {
+    Object.assign(snapshot, { salesDecision: 'Rejected', salesBy: userId, salesAt: now, salesReason: reason });
+  } else {
+    Object.assign(snapshot, { opsDecision: 'Rejected', opsBy: userId, opsAt: now, opsReason: reason });
+  }
+  if (roundOpen) {
+    lastRound.set(snapshot);
+  } else {
+    history.push({ ...snapshot, sentAt: sticker.sentForApprovalAt || sticker.createdAt, designFileUrl: sticker.designFileUrl || '' });
+  }
 
   if (role === 'sales') {
     sticker.salesRejected = true;

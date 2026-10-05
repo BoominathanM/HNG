@@ -669,13 +669,13 @@ export default function Reports() {
     return matchType && matchStatus && matchSearch;
   });
   const exportEaExcel = () => {
-    const headers = ['Type', 'Order Code', 'Client', 'Sent Date', 'Sent Time', 'Sent By', 'Sent Reason', 'Approved Date', 'Approved Time', 'Approver 1 Role', 'Approver 1', 'Approver 1 Decision', 'Approver 1 Date', 'Approver 2 Role', 'Approver 2', 'Approver 2 Decision', 'Approver 2 Date', 'Status'];
+    const headers = ['Type', 'Order Code', 'Client', 'Sent Date', 'Sent Time', 'Sent By', 'Sent Reason', 'Approved Date', 'Approved Time', 'Approver 1 Role', 'Approver 1', 'Approver 1 Decision', 'Approver 1 Date', 'Approver 2 Role', 'Approver 2', 'Approver 2 Decision', 'Approver 2 Date', 'Status', 'Decision Reason'];
     const rows = eaFilteredRows.map((r) => [
       r.type, r.orderCode, r.clientName, r.sentDate, r.sentTime, r.sentBy, r.reason,
       r.approvedDate, r.approvedTime,
       r.approver1Role, r.approver1Name, r.approver1Decision, r.approver1Date,
       r.approver2Role, r.approver2Name, r.approver2Decision, r.approver2Date,
-      r.status,
+      r.status, r.approvedReason,
     ]);
     exportToExcel(headers, rows, 'Approval_Report.csv');
   };
@@ -3008,6 +3008,9 @@ export default function Reports() {
                       <Tag style={{ marginTop: 2, fontSize: 10, background: `${eaStatusColor[r.approver1Decision] || '#888'}18`, color: eaStatusColor[r.approver1Decision] || '#888', border: 'none' }}>
                         {r.approver1Decision}{r.approver1Date ? ` · ${r.approver1Date}` : ''}
                       </Tag>
+                      {r.approver1Reason && (
+                        <div style={{ fontSize: 11, color: '#ff4d4f', maxWidth: 220, whiteSpace: 'normal', marginTop: 2 }}>Reason: {r.approver1Reason}</div>
+                      )}
                     </div>
                   ) : <Text style={{ fontSize: 12, color: '#aaa' }}>—</Text>,
                 },
@@ -3020,6 +3023,9 @@ export default function Reports() {
                       <Tag style={{ marginTop: 2, fontSize: 10, background: `${eaStatusColor[r.approver2Decision] || '#888'}18`, color: eaStatusColor[r.approver2Decision] || '#888', border: 'none' }}>
                         {r.approver2Decision}{r.approver2Date ? ` · ${r.approver2Date}` : ''}
                       </Tag>
+                      {r.approver2Reason && (
+                        <div style={{ fontSize: 11, color: '#ff4d4f', maxWidth: 220, whiteSpace: 'normal', marginTop: 2 }}>Reason: {r.approver2Reason}</div>
+                      )}
                     </div>
                   ) : <Text style={{ fontSize: 12, color: '#aaa' }}>—</Text>,
                 },

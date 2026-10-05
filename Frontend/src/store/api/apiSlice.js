@@ -1520,9 +1520,11 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/task-performance', params }),
       providesTags: ['Reports'],
     }),
+    // Also tagged 'Stickers' so design approve/reject (Sales or Operations) refreshes it —
+    // incl. the Operations > Approved/Rejected Report tab, which reads this with type=design.
     getEmergencyApprovalsReport: builder.query({
       query: (params) => ({ url: '/reports/emergency-approvals', params }),
-      providesTags: ['Reports'],
+      providesTags: ['Reports', 'Stickers'],
     }),
     getSwitchReport: builder.query({
       query: (params) => ({ url: '/reports/switches', params }),

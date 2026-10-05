@@ -60,6 +60,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'wooden_brush', label: 'Wooden Brush' },
     { key: 'other', label: 'Other' },
     { key: 'approved_designs', label: 'Approved Designs' },
+    { key: 'design_approval_report', label: 'Approved/Rejected Report' },
   ],
   'Task Management': [
     { key: 'current', label: 'Current Task' },

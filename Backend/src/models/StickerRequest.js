@@ -41,6 +41,26 @@ const stickerRequestSchema = new mongoose.Schema({
   opsHeadRejectedAt: Date,
   opsHeadRejectedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   opsHeadRejectReason: { type: String, default: '' },
+  // When the current design round was sent for approval (status → 'Waiting for Approval').
+  sentForApprovalAt: Date,
+  // One entry per REJECTED approval round, for Reports > Approval Report and Operations >
+  // Approved/Rejected Report. The live *Rejected fields above are wiped when the vendor
+  // re-sends a reworked design, so this append-only log is what keeps past rejections
+  // visible. A round stays open (resentAt unset) until that re-send, so a second rejection
+  // from the other side in the same round updates the open entry instead of adding one.
+  rejectionHistory: [{
+    sentAt: Date,
+    designFileUrl: { type: String, default: '' },
+    salesDecision: { type: String, enum: ['Approved', 'Rejected', 'Pending'], default: 'Pending' },
+    salesBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    salesAt: Date,
+    salesReason: { type: String, default: '' },
+    opsDecision: { type: String, enum: ['Approved', 'Rejected', 'Pending'], default: 'Pending' },
+    opsBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    opsAt: Date,
+    opsReason: { type: String, default: '' },
+    resentAt: Date,
+  }],
   isUrgent: { type: Boolean, default: false },
   dispatchedToOps: { type: Boolean, default: false },
   // Set when this request was raised by "Use Existing Design" (Operations queue) — the artwork
@@ -75,5 +95,22 @@ const stickerRequestSchema = new mongoose.Schema({
     at: { type: Date, default: Date.now },
   }],
 }, { timestamps: true });
+
+// Effective Sales / Ops Head decision on a request (document or lean object), in the flat
+// shape of a rejectionHistory entry. Rejecting resets both approval flags, so an approval
+// flag that is still set is always newer than any leftover rejection flag.
+stickerRequestSchema.statics.approvalSnapshot = function approvalSnapshot(s) {
+  const side = (approved, approvedBy, approvedAt, rejected, rejectedBy, rejectedAt, reason) => {
+    if (approved) return { decision: 'Approved', by: approvedBy || null, at: approvedAt || null, reason: '' };
+    if (rejected) return { decision: 'Rejected', by: rejectedBy || null, at: rejectedAt || null, reason: reason || '' };
+    return { decision: 'Pending', by: null, at: null, reason: '' };
+  };
+  const sales = side(s.salesApproved, s.salesApprovedBy, s.salesApprovedAt, s.salesRejected, s.salesRejectedBy, s.salesRejectedAt, s.salesRejectReason);
+  const ops = side(s.opsHeadApproved, s.opsHeadApprovedBy, s.opsHeadApprovedAt, s.opsHeadRejected, s.opsHeadRejectedBy, s.opsHeadRejectedAt, s.opsHeadRejectReason);
+  return {
+    salesDecision: sales.decision, salesBy: sales.by, salesAt: sales.at, salesReason: sales.reason,
+    opsDecision: ops.decision, opsBy: ops.by, opsAt: ops.at, opsReason: ops.reason,
+  };
+};
 
 module.exports = mongoose.model('StickerRequest', stickerRequestSchema);

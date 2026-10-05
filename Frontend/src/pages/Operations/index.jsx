@@ -29,6 +29,7 @@ import {
 } from 'antd';
 import {
   AlertFilled,
+  AuditOutlined,
   BoxPlotOutlined,
   CheckCircleOutlined,
   ContainerOutlined,
@@ -55,6 +56,7 @@ import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import LogoThumb from '../../components/common/LogoThumb';
+import DesignApprovalReport from '../../components/reports/DesignApprovalReport';
 import {
   useGetOperationOrdersQuery,
   useGetStickerRequestsQuery,
@@ -2614,6 +2616,11 @@ export default function Operations() {
             key: 'approved_designs',
             label: <Space><CheckCircleOutlined />Approved Designs</Space>,
             children: approvedDesignsTab,
+          },
+          {
+            key: 'design_approval_report',
+            label: <Space><AuditOutlined />Approved/Rejected Report</Space>,
+            children: <DesignApprovalReport />,
           },
         ])}
         activeKey={activeKeyFor(activeTab)}

@@ -1452,7 +1452,11 @@ exports.getEmergencyApprovalsReport = asyncHandler(async (req, res) => {
       .populate(orderSelect)
       .populate('createdBy', userSelect)
       .populate('salesApprovedBy', userSelect)
-      .populate('opsHeadApprovedBy', userSelect),
+      .populate('opsHeadApprovedBy', userSelect)
+      .populate('salesRejectedBy', userSelect)
+      .populate('opsHeadRejectedBy', userSelect)
+      .populate('rejectionHistory.salesBy', userSelect)
+      .populate('rejectionHistory.opsBy', userSelect),
     Order.find({
       deletedAt: null,
       $or: [
@@ -1533,35 +1537,78 @@ exports.getEmergencyApprovalsReport = asyncHandler(async (req, res) => {
   });
 
   // ── Design / Sticker / Printing Approval (Sales + Ops Head dual) ──
+  // Every rejected round is its own 'Rejected' row (StickerRequest.rejectionHistory — the live
+  // reject fields are wiped once the vendor re-sends), plus one row for the current round.
+  const rejectionReason = (salesReason, opsReason) => [
+    salesReason ? `Sales: ${salesReason}` : '',
+    opsReason ? `Ops Head: ${opsReason}` : '',
+  ].filter(Boolean).join(' | ');
   stickerRequests.forEach((s) => {
     const order = s.orderId && typeof s.orderId === 'object' ? s.orderId : null;
-    const status = (s.salesApproved && s.opsHeadApproved) ? 'Approved'
-      : s.status === 'Design Change' ? 'Sent Back for Change'
-      : 'Pending';
-    rows.push({
-      key: `design-${s._id}`,
+    const base = {
       module: 'design',
       type: 'Design / Sticker / Printing Approval',
       raisedByTeam: 'Operations (Design/Print)',
+      designType: s.stickerType || 'Sticker',
       orderId: order?._id || s.orderId || '',
       orderCode: order?.orderCode || '',
       clientName: order?.clientName || s.hotelName || '',
       salesPerson: order?.salesPerson || userName(order?.assignedTo) || '',
       reason: [s.stickerType, s.product, s.hotelName].filter(Boolean).join(' — '),
-      sentAtRaw: s.createdAt,
       sentBy: userName(s.createdBy),
       sentByRole: userRole(s.createdBy),
       approver1Role: 'Sales',
-      approver1Name: userName(s.salesApprovedBy),
-      approver1At: s.salesApprovedAt,
-      approver1Decision: s.salesApproved ? 'Approved' : 'Pending',
       approver2Role: 'Ops Head',
-      approver2Name: userName(s.opsHeadApprovedBy),
-      approver2At: s.opsHeadApprovedAt,
-      approver2Decision: s.opsHeadApproved ? 'Approved' : 'Pending',
-      status,
-      approvedAtRaw: (s.salesApproved && s.opsHeadApproved) ? maxDate(s.salesApprovedAt, s.opsHeadApprovedAt) : null,
-      approvedReason: '',
+    };
+
+    const history = s.rejectionHistory || [];
+    history.forEach((h, i) => {
+      rows.push({
+        ...base,
+        key: `design-${s._id}-rejected-${i}`,
+        sentAtRaw: h.sentAt || s.createdAt,
+        approver1Name: userName(h.salesBy),
+        approver1At: h.salesAt,
+        approver1Decision: h.salesDecision || 'Pending',
+        approver1Reason: h.salesReason || '',
+        approver2Name: userName(h.opsBy),
+        approver2At: h.opsAt,
+        approver2Decision: h.opsDecision || 'Pending',
+        approver2Reason: h.opsReason || '',
+        status: 'Rejected',
+        approvedAtRaw: maxDate(
+          h.salesDecision === 'Rejected' ? h.salesAt : null,
+          h.opsDecision === 'Rejected' ? h.opsAt : null,
+        ),
+        approvedReason: rejectionReason(h.salesReason, h.opsReason),
+      });
+    });
+
+    const live = StickerRequest.approvalSnapshot(s);
+    const fullyApproved = s.salesApproved && s.opsHeadApproved;
+    const rejected = !fullyApproved
+      && (live.salesDecision === 'Rejected' || live.opsDecision === 'Rejected' || s.status === 'Design Change');
+    // A still-open rejected round is already the last history row above.
+    const lastRound = history[history.length - 1];
+    if (rejected && (s.salesRejected || s.opsHeadRejected) && lastRound && !lastRound.resentAt) return;
+
+    rows.push({
+      ...base,
+      key: `design-${s._id}`,
+      sentAtRaw: s.sentForApprovalAt || s.createdAt,
+      approver1Name: userName(live.salesBy),
+      approver1At: live.salesAt,
+      approver1Decision: live.salesDecision,
+      approver1Reason: live.salesReason,
+      approver2Name: userName(live.opsBy),
+      approver2At: live.opsAt,
+      approver2Decision: live.opsDecision,
+      approver2Reason: live.opsReason,
+      status: fullyApproved ? 'Approved' : rejected ? 'Rejected' : 'Pending',
+      approvedAtRaw: fullyApproved ? maxDate(s.salesApprovedAt, s.opsHeadApprovedAt)
+        : rejected ? maxDate(s.salesRejected ? s.salesRejectedAt : null, s.opsHeadRejected ? s.opsHeadRejectedAt : null)
+        : null,
+      approvedReason: rejected ? rejectionReason(live.salesReason, live.opsReason) : '',
     });
   });
 
