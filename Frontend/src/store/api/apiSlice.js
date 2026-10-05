@@ -1321,7 +1321,9 @@ export const apiSlice = createApi({
     // ── Notifications ────────────────────────────────────────────────────────
     getNotifications: builder.query({
       query: (params) => ({ url: '/notifications', params }),
-      providesTags: ['Notifications'],
+      // LIST id lets NotificationStreamListener's live push refetch just the bell /
+      // Notifications page, not stock/payment alerts (mutations still invalidate all).
+      providesTags: [{ type: 'Notifications', id: 'LIST' }],
     }),
     markNotificationRead: builder.mutation({
       query: (id) => ({ url: `/notifications/${id}/read`, method: 'patch' }),

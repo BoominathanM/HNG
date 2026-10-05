@@ -932,6 +932,20 @@ export default function OperationDetail() {
     });
   }, [stickerRequests, order?.key, id]);
 
+  // Printing Status column inputs (see resolvePrintingStatus): this order's item indexes that
+  // sit in any design-vendor tab, and every design/sticker request filed for this order.
+  const vendorTabItemIdx = useMemo(() => {
+    const set = new Set();
+    ['sticker', 'box', 'frosted', 'butter', 'wooden_brush', 'other'].forEach((t) => {
+      (productionQueues[t] || []).forEach((r) => { if (r.orderId === id && r.itemIndex != null) set.add(r.itemIndex); });
+    });
+    return set;
+  }, [productionQueues, id]);
+  const orderStickerRequests = useMemo(() => stickerRequests.filter((sr) => {
+    const srOrderId = String(sr.orderId?._id || sr.orderId || '');
+    return srOrderId === String(order?.key || '') || sr.orderId?.orderCode === id;
+  }), [stickerRequests, order?.key, id]);
+
   // The outer personalized-packaging approval (category='personalized'). In a MIXED order
   // (personalized outer + separate kits inside), the inner items read as Separate Kit/Product, so
   // NO spec-table row carries category='personalized' — without this the personalized approval would
@@ -1517,6 +1531,49 @@ export default function OperationDetail() {
       || sameTab[0]
       || null;
   };
+
+  // ── Printing Status lifecycle (Product Specifications column) ─────────────────────────────
+  // Order received → row routed to a design-vendor tab → 'Printing' (locked). Vendor uploads +
+  // "Dispatch to Operation" (StickerRequest status 'Dispatch') → 'Yet to Receive', and only then
+  // can Operations pick Received / Closed. Received/Closed are Ops' own saved decisions and always
+  // win; the vendor stage is derived live from the row's request, so it shows correctly even for
+  // rows the queue's by-product-name status write never reached (kit components, renamed items).
+  // (vendorTabItemIdx / orderStickerRequests memos live above the loading early-return.)
+  const rowInVendorTab = (record) => {
+    const idx = (order?.items || []).findIndex((it) => String(it.key) === resolveBaseItemKey(record?.key));
+    return idx >= 0 && vendorTabItemIdx.has(idx);
+  };
+  // Latest-touched request wins, so a Sticker → Box item follows whichever vendor acted last.
+  const latestSR = (list) => list.filter(Boolean).reduce((best, sr) => {
+    const t = (s) => new Date(s.updatedAt || s.createdAt || 0).getTime();
+    return !best || t(sr) > t(best) ? sr : best;
+  }, null);
+  const rowVendorSR = (record) => {
+    const name = (record.itemName || record.name || record.product || '').toLowerCase();
+    const cat = record.category || '';
+    const own = name
+      ? orderStickerRequests.filter((sr) => (sr.product || '').toLowerCase() === name && (!sr.category || sr.category === cat))
+      : [];
+    return latestSR([resolveKitSR(record), ...own]);
+  };
+  const VENDOR_DISPATCHED_SR_STATUSES = new Set(['Dispatch', 'Received', 'Done']);
+  const resolvePrintingStatus = (persisted, sr, inVendorTab) => {
+    if (persisted === 'Received' || persisted === 'Closed') return persisted;
+    if (sr) return VENDOR_DISPATCHED_SR_STATUSES.has(sr.status) ? 'Yet to Receive' : 'Printing';
+    if (persisted === 'Yet to Receive' || persisted === 'Printing') return persisted;
+    return inVendorTab ? 'Printing' : '';
+  };
+  // Selectable only once the vendor has dispatched (Yet to Receive) or Ops already marked Received.
+  const printingStatusEditable = (status) => status === 'Yet to Receive' || status === 'Received';
+  const printingStatusLockReason = (status) => (status === 'Printing'
+    ? 'Locked while the design vendor is printing — unlocks as "Yet to Receive" once they dispatch to Operations'
+    : 'Unlocks as "Yet to Receive" once the design vendor dispatches this to Operations');
+  const printingStatusOptions = [
+    <Option key="Printing" value="Printing" disabled>Printing</Option>,
+    <Option key="Yet to Receive" value="Yet to Receive" disabled>Yet to Receive</Option>,
+    <Option key="Received" value="Received">Received</Option>,
+    <Option key="Closed" value="Closed">Closed</Option>,
+  ];
 
   // Renders ONE kit-approval block (kit info + status / Ops-OK button) for the Ops Approval column.
   // Reused for a row's own kit approval AND — in a mixed personalized order — the outer personalized
@@ -2184,21 +2241,27 @@ export default function OperationDetail() {
       title: 'Printing Status',
       key: 'printingStatus',
       render: (_, record) => {
-        // Persisted on the order item itself (survives reload regardless of whether a
-        // design/sticker request exists for this row yet). Blank/unset until the design
-        // team clicks Print (→ 'Printing') or Operations clicks Dispatch (→ 'Yet to
-        // Receive') — no pre-selected default. Local optimistic override fills the
-        // gap between the change and the refetch.
-        const status = printingStatusValues[record.key] ?? (record.printingStatus || '');
+        // Received/Closed persist on the order item itself (local optimistic override fills
+        // the gap until the refetch). Before that the value follows the design vendor —
+        // 'Printing' (locked) while the row sits in a vendor tab, 'Yet to Receive' once the
+        // vendor dispatches — see resolvePrintingStatus.
+        const status = resolvePrintingStatus(
+          printingStatusValues[record.key] ?? (record.printingStatus || ''),
+          rowVendorSR(record),
+          rowInVendorTab(record),
+        );
+        const ownEditable = printingStatusEditable(status);
         const ownNode = status === 'Closed' ? (
           <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 6, padding: '2px 10px' }}>
             Closed
           </Tag>
         ) : (
+          <Tooltip title={ownEditable ? '' : printingStatusLockReason(status)}>
           <Select
             value={status || undefined}
             placeholder="Select status"
             style={{ width: 140 }}
+            disabled={!ownEditable}
             onChange={async (val) => {
               setPrintingStatusValues((prev) => ({ ...prev, [record.key]: val }));
               try {
@@ -2214,11 +2277,9 @@ export default function OperationDetail() {
               }
             }}
           >
-            <Option value="Printing">Printing</Option>
-            <Option value="Yet to Receive">Yet to Receive</Option>
-            <Option value="Received">Received</Option>
-            <Option value="Closed">Closed</Option>
+            {printingStatusOptions}
           </Select>
+          </Tooltip>
         );
 
         // The kit's OWN outer Display Unit (Box/Ziplock/Butter Paper/Sticker wrap around the
@@ -2249,15 +2310,23 @@ export default function OperationDetail() {
         const kduPrinting = ko?.printing || order?.kitPrinting || '';
         if (!(String(kduSticker).toUpperCase() === 'YES' || String(kduPrinting).toUpperCase() === 'YES')) return ownNode;
         const kduKey = kitDisplayUnitKey({ key: record.kitId || record.kitName || record.kitType || 'kit' });
-        const kduStatus = printingStatusValues[kduKey] ?? ((order?.printingStatusOverrides || {})[kduKey] || '');
+        // Same lifecycle as the item's own status, driven by the kit's own design request.
+        const kduStatus = resolvePrintingStatus(
+          printingStatusValues[kduKey] ?? ((order?.printingStatusOverrides || {})[kduKey] || ''),
+          resolveKitSR(record),
+          kitItemsForKdu.some((it) => rowInVendorTab(it)),
+        );
+        const kduEditable = printingStatusEditable(kduStatus);
         const kduNode = kduStatus === 'Closed' ? (
           <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 6, padding: '2px 10px' }}>Closed</Tag>
         ) : (
+          <Tooltip title={kduEditable ? '' : printingStatusLockReason(kduStatus)}>
           <Select
             size="small"
             value={kduStatus || undefined}
             placeholder="Select status"
             style={{ width: 140 }}
+            disabled={!kduEditable}
             onChange={async (val) => {
               setPrintingStatusValues((prev) => ({ ...prev, [kduKey]: val }));
               try {
@@ -2268,10 +2337,9 @@ export default function OperationDetail() {
               }
             }}
           >
-            <Option value="Yet to Receive">Yet to Receive</Option>
-            <Option value="Received">Received</Option>
-            <Option value="Closed">Closed</Option>
+            {printingStatusOptions}
           </Select>
+          </Tooltip>
         );
         return (
           <Space direction="vertical" size={8} style={{ width: '100%' }} split={<div style={{ borderTop: '1px dashed rgba(127,127,127,0.3)', width: '100%' }} />}>
@@ -3729,18 +3797,25 @@ export default function OperationDetail() {
                                 const kduNeeded = String(kg.sticker || '').toUpperCase() === 'YES' || String(kg.printing || '').toUpperCase() === 'YES';
                                 if (!kduNeeded) return null;
                                 const kduKey = kitDisplayUnitKey(kg);
-                                const kduStatus = printingStatusValues[kduKey] ?? ((order?.printingStatusOverrides || {})[kduKey] || '');
+                                const kduStatus = resolvePrintingStatus(
+                                  printingStatusValues[kduKey] ?? ((order?.printingStatusOverrides || {})[kduKey] || ''),
+                                  personalizedKitSR,
+                                  (kg.kitItems || []).some((it) => rowInVendorTab(it)),
+                                );
+                                const kduEditable = printingStatusEditable(kduStatus);
                                 return (
                                   <Space direction="vertical" size={2}>
                                     <Tag color="purple" style={{ fontSize: 9, margin: 0, borderRadius: 8, width: 'fit-content' }}>Kit's Display Unit Printing Status</Tag>
                                     {kduStatus === 'Closed' ? (
                                       <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 6, padding: '2px 10px', width: 'fit-content' }}>Closed</Tag>
                                     ) : (
+                                      <Tooltip title={kduEditable ? '' : printingStatusLockReason(kduStatus)}>
                                       <Select
                                         size="small"
                                         value={kduStatus || undefined}
                                         placeholder="Select status"
                                         style={{ width: 160 }}
+                                        disabled={!kduEditable}
                                         onChange={async (val) => {
                                           setPrintingStatusValues((prev) => ({ ...prev, [kduKey]: val }));
                                           try {
@@ -3751,10 +3826,9 @@ export default function OperationDetail() {
                                           }
                                         }}
                                       >
-                                        <Option value="Yet to Receive">Yet to Receive</Option>
-                                        <Option value="Received">Received</Option>
-                                        <Option value="Closed">Closed</Option>
+                                        {printingStatusOptions}
                                       </Select>
+                                      </Tooltip>
                                     )}
                                   </Space>
                                 );

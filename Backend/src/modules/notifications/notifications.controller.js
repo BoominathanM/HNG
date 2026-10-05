@@ -4,6 +4,7 @@ const Invoice = require('../../models/Invoice');
 const NotificationSoundConfig = require('../../models/NotificationSoundConfig');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
+const notificationStream = require('../../services/notificationStream');
 
 // Same admin-gate idiom used across alerts.controller.js/operations.controller.js —
 // authorize()/checkPermission() middleware is unused everywhere in this codebase,
@@ -20,6 +21,10 @@ exports.getNotifications = asyncHandler(async (req, res) => {
   const unreadCount = await Notification.countDocuments({ userId: req.user._id, isRead: false });
   res.status(200).json({ success: true, data: notifications, unreadCount });
 });
+
+// Long-lived SSE connection — pushes `notification` events so the navbar bell
+// refreshes the moment a new one is created (see services/notificationStream.js).
+exports.streamNotifications = (req, res) => notificationStream.subscribe(req, res);
 
 exports.markRead = asyncHandler(async (req, res) => {
   await Notification.findByIdAndUpdate(req.params.id, { isRead: true });
@@ -50,6 +55,7 @@ exports.getPaymentAlerts = asyncHandler(async (req, res) => {
 
 exports.createNotification = asyncHandler(async (req, res) => {
   const notification = await Notification.create({ ...req.body, userId: req.user._id });
+  notificationStream.publish(notification);
   res.status(201).json({ success: true, data: notification });
 });
 

@@ -7,6 +7,7 @@ const { uploadNotifSound } = require('../../config/notifSoundCloudinary');
 router.use(protect);
 
 router.get('/', ctrl.getNotifications);
+router.get('/stream', ctrl.streamNotifications);
 router.get('/stock-alerts', ctrl.getStockAlerts);
 router.get('/payment-alerts', ctrl.getPaymentAlerts);
 router.post('/', ctrl.createNotification);

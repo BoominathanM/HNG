@@ -1,4 +1,5 @@
 const Notification = require('../models/Notification');
+const notificationStream = require('../services/notificationStream');
 
 /**
  * Central notification service.
@@ -52,6 +53,7 @@ async function notify(opts = {}) {
   let record = null;
   try {
     record = await Notification.create({ userId, type, title, message, link, data });
+    notificationStream.publish(record); // live-push to the recipient's open navbar bell
   } catch (err) {
     console.error('[notify] persist failed:', err.message);
   }

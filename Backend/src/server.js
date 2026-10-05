@@ -9,6 +9,7 @@ const { startLocalPurchaseCreditDueScheduler } = require('./utils/localPurchaseC
 const { startPurchasePaymentReminderScheduler } = require('./utils/purchasePaymentReminderScheduler');
 const { startSeparatePurchasePaymentReminderScheduler } = require('./utils/separatePurchasePaymentReminderScheduler');
 const { startAlertConfigScheduler } = require('./utils/alertConfigScheduler');
+const notificationStream = require('./services/notificationStream');
 
 const PORT = parseInt(process.env.PORT || '7007', 10);
 
@@ -37,6 +38,7 @@ connectDB()
     startPurchasePaymentReminderScheduler();
     startSeparatePurchasePaymentReminderScheduler();
     startAlertConfigScheduler();
+    notificationStream.startChangeStream();
 
     const server = app.listen(PORT, () => {
       console.log(`✅  HNG CRM API running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
@@ -60,11 +62,13 @@ connectDB()
 
     process.on('unhandledRejection', (err) => {
       console.error('UNHANDLED REJECTION! Shutting down...', err.name, err.message);
+      notificationStream.closeAll();
       server.close(() => process.exit(1));
     });
 
     process.on('SIGTERM', () => {
       console.log('SIGTERM received. Shutting down gracefully...');
+      notificationStream.closeAll();
       server.close(() => process.exit(0));
     });
   })
