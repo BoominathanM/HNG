@@ -4,6 +4,7 @@ import { useSelector } from 'react-redux';
 import { enqueueSnackbar, closeSnackbar } from 'notistack';
 import { Dropdown } from 'antd';
 import { useGetActiveAlertsQuery, useSnoozeAlertMutation, useStopAlertMutation } from '../../store/api/apiSlice';
+import { GESTURE_EVENTS, showSoundBlockedHint, hideSoundBlockedHint, playOn, primeAudio, replayBlocked } from '../../utils/soundPlayback';
 
 const POLL_MS = 20000;
 
@@ -45,27 +46,39 @@ export default function AlertListener() {
   const queueRef = useRef([]);
   const playingRef = useRef(false);
   const unlockedRef = useRef(false);
+  // An alert whose sound the browser blocked (autoplay policy) — replayed on the user's next
+  // click / key press instead of being lost until the alert's next repeat cycle.
+  const blockedSoundRef = useRef(null);
 
   useEffect(() => {
     if (!audioElRef.current) {
       audioElRef.current = new Audio();
     }
-    // Browsers block audio before a user gesture — unlock the element on the
-    // session's first click so later programmatic play() calls aren't blocked.
-    const unlock = () => {
-      if (unlockedRef.current) return;
-      unlockedRef.current = true;
+    // Browsers block audio until the user has interacted with the page (a refresh resets it):
+    // a blocked alert sound is replayed on the next gesture, otherwise the first gesture just
+    // primes the element — see utils/soundPlayback.js for why (and for the old unlock bug that
+    // cut off the first alert sound of every page session).
+    const onGesture = () => {
       const el = audioElRef.current;
-      const prevSrc = el.src;
-      el.muted = true;
-      el.play().then(() => {
-        el.pause();
-        el.muted = false;
-        el.src = prevSrc || '';
-      }).catch(() => { el.muted = false; });
+      const blocked = blockedSoundRef.current;
+      if (blocked) {
+        blockedSoundRef.current = null;
+        unlockedRef.current = true;
+        if (playingRef.current) { hideSoundBlockedHint(); return; } // a newer alert is already sounding
+        replayBlocked(el, blocked.audioUrl).then((ok) => {
+          // Still refused (gesture didn't count, e.g. Esc) — keep it for the next one,
+          // unless another blocked alert has taken its place meanwhile.
+          if (!ok && !blockedSoundRef.current) blockedSoundRef.current = blocked;
+        });
+        return;
+      }
+      if (unlockedRef.current || playingRef.current) return;
+      unlockedRef.current = true;
+      primeAudio(el);
     };
-    document.addEventListener('click', unlock, { once: true });
-    return () => document.removeEventListener('click', unlock);
+    // Capture phase so it runs before the click's own handler (e.g. a toast button closing it).
+    GESTURE_EVENTS.forEach((ev) => document.addEventListener(ev, onGesture, true));
+    return () => GESTURE_EVENTS.forEach((ev) => document.removeEventListener(ev, onGesture, true));
   }, []);
 
   const playNext = () => {
@@ -75,10 +88,29 @@ export default function AlertListener() {
     playingRef.current = true;
 
     const el = audioElRef.current;
-    el.src = next.audioUrl;
-    el.onended = () => { playingRef.current = false; playNext(); };
-    el.onerror = () => { playingRef.current = false; playNext(); };
-    el.play().catch(() => { playingRef.current = false; playNext(); });
+    // onended/onerror AND the play() rejection can both report the same failure — only the
+    // first may advance the queue, or a second call would start/skip the next sound.
+    let finished = false;
+    const done = () => {
+      if (finished) return;
+      finished = true;
+      playingRef.current = false;
+      playNext();
+    };
+    const playing = playOn(el, next.audioUrl);
+    el.onended = done; // assigned before any media event can be dispatched (those are async)
+    el.onerror = done;
+    playing.catch((err) => {
+      if (err?.name === 'NotAllowedError') {
+        // No click/key on this page since it loaded → the browser blocked the sound.
+        // Keep it for the next gesture and tell the user why it was silent.
+        blockedSoundRef.current = next;
+        showSoundBlockedHint();
+      } else {
+        console.warn('[AlertListener] alert sound failed to play:', err?.name, err?.message, next.audioUrl);
+      }
+      done();
+    });
 
     const key = `alert-${next.alertKey}`;
     const btnStyle = {

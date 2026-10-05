@@ -1538,6 +1538,11 @@ export const apiSlice = createApi({
       query: (params) => ({ url: '/reports/payment-bank', params }),
       providesTags: ['Reports'],
     }),
+    // Also tagged 'Leads' so editing a lead's follow-up date/time/status refreshes it.
+    getLeadFollowupReport: builder.query({
+      query: (params) => ({ url: '/reports/lead-followups', params }),
+      providesTags: ['Reports', 'Leads'],
+    }),
 
     // ── WhatsApp ────────────────────────────────────────────────────────────
     getWhatsAppConfig: builder.query({
@@ -2030,6 +2035,7 @@ export const {
   useGetSwitchReportQuery,
   useGetDamagedReportQuery,
   useGetPaymentBankReportQuery,
+  useGetLeadFollowupReportQuery,
   useUploadFilesMutation,
   useDeleteFileMutation,
   // WhatsApp

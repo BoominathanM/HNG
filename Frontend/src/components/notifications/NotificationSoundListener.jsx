@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useGetNotificationsQuery, useGetNotificationSoundConfigQuery } from '../../store/api/apiSlice';
+import { GESTURE_EVENTS, showSoundBlockedHint, playOn, primeAudio, replayBlocked } from '../../utils/soundPlayback';
 
 const POLL_MS = 30000;
 
@@ -18,25 +19,36 @@ export default function NotificationSoundListener() {
   const audioElRef = useRef(null);
   const unlockedRef = useRef(false);
   const lastSeenIdRef = useRef(undefined); // undefined = not yet initialized (skip first mount)
+  // A notification sound the browser blocked (autoplay policy) — replayed on the user's next
+  // click / key press instead of being lost.
+  const blockedSrcRef = useRef(null);
 
   useEffect(() => {
     if (!audioElRef.current) {
       audioElRef.current = new Audio();
     }
-    const unlock = () => {
+    // Same handling as AlertListener — a blocked sound is replayed on the next gesture,
+    // otherwise the first gesture just primes the element. See utils/soundPlayback.js for why
+    // (and for the old unlock bug that cut off the first sound of every page session).
+    const onGesture = () => {
+      const el = audioElRef.current;
+      const blocked = blockedSrcRef.current;
+      if (blocked) {
+        blockedSrcRef.current = null;
+        unlockedRef.current = true;
+        replayBlocked(el, blocked).then((ok) => {
+          // Still refused (gesture didn't count, e.g. Esc) — keep it for the next one.
+          if (!ok && !blockedSrcRef.current) blockedSrcRef.current = blocked;
+        });
+        return;
+      }
       if (unlockedRef.current) return;
       unlockedRef.current = true;
-      const el = audioElRef.current;
-      const prevSrc = el.src;
-      el.muted = true;
-      el.play().then(() => {
-        el.pause();
-        el.muted = false;
-        el.src = prevSrc || '';
-      }).catch(() => { el.muted = false; });
+      if (el.paused) primeAudio(el); // never cut off a sound already playing
     };
-    document.addEventListener('click', unlock, { once: true });
-    return () => document.removeEventListener('click', unlock);
+    // Capture phase so it runs before the click's own handler.
+    GESTURE_EVENTS.forEach((ev) => document.addEventListener(ev, onGesture, true));
+    return () => GESTURE_EVENTS.forEach((ev) => document.removeEventListener(ev, onGesture, true));
   }, []);
 
   useEffect(() => {
@@ -62,9 +74,17 @@ export default function NotificationSoundListener() {
     if (topId && topId !== lastSeenIdRef.current) {
       lastSeenIdRef.current = topId;
       if (sound?.isEnabled && sound?.audioUrl) {
-        const el = audioElRef.current;
-        el.src = sound.audioUrl;
-        el.play().catch(() => {});
+        const src = sound.audioUrl;
+        playOn(audioElRef.current, src).catch((err) => {
+          if (err?.name === 'NotAllowedError') {
+            // No click/key on this page since it loaded → the browser blocked the sound.
+            // Keep it for the next gesture and tell the user why it was silent.
+            blockedSrcRef.current = src;
+            showSoundBlockedHint();
+          } else if (err?.name !== 'AbortError') {
+            console.warn('[NotificationSoundListener] notification sound failed to play:', err?.name, err?.message, src);
+          }
+        });
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

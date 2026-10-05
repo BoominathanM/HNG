@@ -14,6 +14,7 @@ import useTabAccess from '../../hooks/useTabAccess';
 import TaskPerformanceReport from '../../components/reports/TaskPerformanceReport';
 import DamagedReport from '../../components/reports/DamagedReport';
 import PaymentBankReport from '../../components/reports/PaymentBankReport';
+import LeadFollowupReport from '../../components/reports/LeadFollowupReport';
 import {
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,
@@ -226,6 +227,8 @@ export default function Reports() {
   const switchReportRef = useRef(null);
   // Exposes the Payment Bank Details tab's own { excel, pdf } exports to the header buttons.
   const paymentBankReportRef = useRef(null);
+  // Same for the Lead Follow-up Report tab.
+  const leadFollowupReportRef = useRef(null);
 
   const handlePeriodChange = (period) => {
     setHeaderPeriod(period);
@@ -718,6 +721,7 @@ export default function Reports() {
     emergency_approvals: { excel: exportEaExcel, pdf: exportEaPdf },
     switch_report: { excel: exportSwExcel, pdf: exportSwPdf },
     payment_bank_report: { excel: () => paymentBankReportRef.current?.excel(), pdf: () => paymentBankReportRef.current?.pdf() },
+    lead_followup_report: { excel: () => leadFollowupReportRef.current?.excel(), pdf: () => leadFollowupReportRef.current?.pdf() },
   };
 
   return (
@@ -3259,6 +3263,13 @@ export default function Reports() {
             key: 'payment_bank_report',
             label: 'Payment Bank Details',
             children: <PaymentBankReport ref={paymentBankReportRef} headerDateRange={headerDateRange} />,
+          },
+
+          /* ─────────── LEAD FOLLOW-UP REPORT ─────────── */
+          {
+            key: 'lead_followup_report',
+            label: 'Lead Follow-up Report',
+            children: <LeadFollowupReport ref={leadFollowupReportRef} headerDateRange={headerDateRange} />,
           },
         ])}
       />

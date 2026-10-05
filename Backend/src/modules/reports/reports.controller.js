@@ -17,6 +17,14 @@ const Payment = require('../../models/Payment');
 const Kit = require('../../models/Kit');
 const { computeCompositionGrandTotal, storedTotalWithRoundOff } = require('../../utils/orderCalc');
 const asyncHandler = require('../../utils/asyncHandler');
+const AlertConfig = require('../../models/AlertConfig');
+const AlertFireLog = require('../../models/AlertFireLog');
+const AlertSnooze = require('../../models/AlertSnooze');
+const {
+  CLOSED_LEAD_STATUSES, FOLLOWUP_ALERT_CAP_DAYS, LEAD_FOLLOWUP_SELECT,
+  followupSchedule, followupDateFilter, leadIdsWithOrders, resolveFollowupRecipients,
+} = require('../../utils/leadFollowup');
+const { businessTodayKey } = require('../../utils/businessTime');
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -2391,5 +2399,176 @@ exports.getPaymentBankReport = asyncHandler(async (req, res) => {
       },
       invoiceBankAccountId: invoiceAccountId,
     },
+  });
+});
+
+// ─── LEAD FOLLOW-UP REPORT ────────────────────────────────────────────────────
+// Every lead with a Follow-up Date (Sales → Lead → Lead Status card), dated by that follow-up,
+// with who the Lead Follow-up alert rings for it (assigned sales person, else the lead's
+// creator) and where that alert stands right now (scheduled / ringing / snoozed / stopped).
+// Due time + recipient come from utils/leadFollowup.js — the same code the alert itself runs
+// (utils/alertConfigQueries.js 'lead_followup'), so the report can never disagree with the
+// alert. Visibility follows the Leads tab: Admin / Management / Manager / Head see every
+// lead, everyone else only leads they created, are assigned to, or are named on.
+const FOLLOWUP_STATE_ORDER = { 'Due Today': 0, Overdue: 1, Upcoming: 2, Closed: 3 };
+
+exports.getLeadFollowupReport = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const start = req.query.startDate ? new Date(req.query.startDate) : null;
+  const end = req.query.endDate ? new Date(req.query.endDate) : null;
+
+  const filter = { deletedAt: null, $and: [followupDateFilter(start, end)] };
+  const u = req.user;
+  const seesAll = !!u && (u.role === 'Super Admin' || u.role === 'Admin'
+    || u.department === 'Admin' || u.department === 'Management' || /manager|head/i.test(u.role || ''));
+  if (u && !seesAll) {
+    const visibility = [{ createdBy: u._id }, { assignedTo: u._id }];
+    const myName = u.fullName || u.name;
+    if (myName) visibility.push({ salesPerson: myName });
+    filter.$and.push({ $or: visibility });
+  }
+
+  const [leadsRaw, config] = await Promise.all([
+    Lead.find(filter).select(LEAD_FOLLOWUP_SELECT)
+      .populate('assignedTo', 'fullName').populate('createdBy', 'fullName').lean(),
+    AlertConfig.findOne({ group: 'lead_followup' }).lean(),
+  ]);
+
+  // Exact range check on the follow-up instant (the Mongo filter is padded a day each side).
+  const leads = leadsRaw
+    .map((l) => ({ l, schedule: followupSchedule(l) }))
+    .filter(({ schedule }) => schedule
+      && (!start || schedule.dueAt >= start)
+      && (!end || schedule.dueAt <= end));
+  const plain = leads.map((x) => x.l);
+
+  const ids = plain.map((l) => l._id);
+  const [converted, recipients, logs, snoozes] = await Promise.all([
+    leadIdsWithOrders(plain),
+    resolveFollowupRecipients(plain),
+    config && ids.length ? AlertFireLog.find({ configId: config._id, recordType: 'Lead', recordId: { $in: ids } }).lean() : [],
+    config && ids.length ? AlertSnooze.find({ configId: config._id, recordId: { $in: ids } }).populate('userId', 'fullName').lean() : [],
+  ]);
+  const logByLead = new Map(logs.map((g) => [String(g.recordId), g]));
+  const snoozesByLead = new Map();
+  snoozes.forEach((s) => {
+    const k = String(s.recordId);
+    if (!snoozesByLead.has(k)) snoozesByLead.set(k, []);
+    snoozesByLead.get(k).push(s);
+  });
+
+  const beforeMs = (() => {
+    const val = Number(config?.graceValue) || 0;
+    if (val <= 0) return 0;
+    if (config.graceUnit === 'minutes') return val * 60 * 1000;
+    if (config.graceUnit === 'hours') return val * 60 * 60 * 1000;
+    return val * 24 * 60 * 60 * 1000;
+  })();
+  const capMs = FOLLOWUP_ALERT_CAP_DAYS * 24 * 60 * 60 * 1000;
+  const todayKey = businessTodayKey(now);
+
+  const data = leads.map(({ l, schedule }) => {
+    const id = String(l._id);
+    const to = recipients.get(id) || { userId: null, name: '', basis: '' };
+    const hasOrder = converted.has(id);
+    const isClosed = hasOrder || CLOSED_LEAD_STATUSES.includes(l.status);
+    let state;
+    if (isClosed) state = 'Closed';
+    else if (schedule.ymd === todayKey) state = 'Due Today';
+    else if (schedule.ymd < todayKey) state = 'Overdue';
+    else state = 'Upcoming';
+
+    // Where the alert stands for this follow-up — mirrors the 'lead_followup' branch of
+    // getPendingRecordsForConfig + the per-user snooze/stop overlay in getActiveAlerts.
+    let alertStatus;
+    let alertAt = null;
+    let alertNote = '';
+    const fireAt = new Date(schedule.dueAt.getTime() - beforeMs);
+    if (isClosed) {
+      alertStatus = 'Resolved';
+      alertNote = hasOrder ? 'Order placed' : `Lead ${l.status}`;
+    } else if (!config?.isEnabled) {
+      alertStatus = 'Alert Off';
+    } else if (!to.userId) {
+      alertStatus = 'No Recipient';
+      alertNote = 'No active assigned person or creator';
+    } else if (now < fireAt) {
+      alertStatus = 'Scheduled';
+      alertAt = fireAt;
+    } else if (now.getTime() - schedule.dueAt.getTime() > capMs) {
+      alertStatus = 'Expired';
+      alertNote = `Stopped ringing ${FOLLOWUP_ALERT_CAP_DAYS} days after the follow-up time`;
+    } else {
+      const log = logByLead.get(id);
+      const userSnoozes = snoozesByLead.get(id) || [];
+      const mine = userSnoozes.find((s) => String(s.userId?._id || s.userId) === String(to.userId)) || userSnoozes[0];
+      if (!log) {
+        alertStatus = 'Waiting';
+        alertNote = 'Rings at the next alert check inside the alert window';
+      } else if (mine?.action === 'stop') {
+        alertStatus = 'Stopped';
+        alertAt = mine.updatedAt || mine.createdAt;
+        alertNote = `Stopped by ${mine.userId?.fullName || 'user'}`;
+      } else if (mine?.action === 'snooze' && mine.snoozedUntil && new Date(mine.snoozedUntil) > now) {
+        alertStatus = 'Snoozed';
+        alertAt = mine.snoozedUntil;
+        alertNote = `Snoozed by ${mine.userId?.fullName || 'user'}`;
+      } else {
+        alertStatus = 'Ringing';
+        alertAt = log.lastFiredAt;
+      }
+    }
+
+    return {
+      key: id,
+      leadId: id,
+      leadCode: l.leadCode || '',
+      hotelName: l.hotelName || '',
+      category: l.category || 'Hotel',
+      leadStatus: l.status || '',
+      contactPerson: l.contactPerson || '',
+      phone: l.phone || '',
+      salesPerson: l.salesPerson || l.assignedTo?.fullName || '',
+      createdBy: l.createdBy?.fullName || '',
+      recipient: to.name,
+      recipientBasis: to.basis,
+      followUpDate: schedule.ymd,
+      followUpTime: schedule.time,
+      dueAt: schedule.dueAt,
+      notes: l.followUpName || '',
+      state,
+      alertStatus,
+      alertAt,
+      alertNote,
+    };
+  });
+
+  data.sort((a, b) => (FOLLOWUP_STATE_ORDER[a.state] - FOLLOWUP_STATE_ORDER[b.state])
+    || (a.state === 'Overdue' || a.state === 'Closed'
+      ? new Date(b.dueAt) - new Date(a.dueAt)
+      : new Date(a.dueAt) - new Date(b.dueAt)));
+
+  const count = (pred) => data.filter(pred).length;
+  res.status(200).json({
+    success: true,
+    data,
+    summary: {
+      total: data.length,
+      dueToday: count((r) => r.state === 'Due Today'),
+      overdue: count((r) => r.state === 'Overdue'),
+      upcoming: count((r) => r.state === 'Upcoming'),
+      closed: count((r) => r.state === 'Closed'),
+      ringing: count((r) => r.alertStatus === 'Ringing'),
+    },
+    alertConfig: config ? {
+      isEnabled: !!config.isEnabled,
+      startTime: config.startTime,
+      endTime: config.endTime,
+      days: config.days || [],
+      durationMinutes: config.durationMinutes,
+      beforeValue: Number(config.graceValue) || 0,
+      beforeUnit: config.graceUnit || 'minutes',
+      capDays: FOLLOWUP_ALERT_CAP_DAYS,
+    } : null,
   });
 });

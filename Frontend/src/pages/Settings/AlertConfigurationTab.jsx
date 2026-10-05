@@ -29,7 +29,10 @@ const DESIGN_ROLES = [
   { role: 'Other', label: 'Other' },
 ];
 
-function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel, dynamicRecipient, dynamicNote, recipientsOptional, graceLabel }) {
+// graceMin: lowest allowed grace value (default 1). 0 makes the grace optional — used by the
+// Lead Follow-up card, whose grace means "alert this long BEFORE the follow-up time" and where
+// 0 = ring exactly at it. graceHelp: small hint shown under the grace input.
+function AlertConfigCard({ title, description, group, role, config, recipientPool, deptLabel, dynamicRecipient, dynamicNote, recipientsOptional, graceLabel, graceMin = 1, graceHelp }) {
   const isDark = useSelector((s) => s.theme.isDark);
   const cardBg = isDark ? '#1E1E2E' : '#ffffff';
   const textColor = isDark ? '#e0e0e0' : '#1a1a2e';
@@ -47,8 +50,8 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
   const [startTime, setStartTime] = useState(() => (config?.startTime ? dayjs(config.startTime, 'HH:mm') : dayjs('09:00', 'HH:mm')));
   const [endTime, setEndTime] = useState(() => (config?.endTime ? dayjs(config.endTime, 'HH:mm') : dayjs('18:00', 'HH:mm')));
   const [durationMinutes, setDurationMinutes] = useState(() => config?.durationMinutes || 30);
-  const [graceValue, setGraceValue] = useState(() => config?.graceValue || 3);
-  const [graceUnit, setGraceUnit] = useState(() => config?.graceUnit || 'days');
+  const [graceValue, setGraceValue] = useState(() => (graceMin === 0 ? (config?.graceValue ?? 0) : (config?.graceValue || 3)));
+  const [graceUnit, setGraceUnit] = useState(() => (graceMin === 0 && !config?.graceValue ? 'minutes' : (config?.graceUnit || 'days')));
   const [days, setDays] = useState(() => (config?.days?.length ? config.days : ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']));
   const [isEnabled, setIsEnabled] = useState(() => !!config?.isEnabled);
   const [audioFile, setAudioFile] = useState(() => (config?.audioUrl ? { url: config.audioUrl, public_id: config.audioPublicId, name: config.audioName } : null)); // { url, public_id, name }
@@ -76,7 +79,7 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
       enqueueSnackbar('Upload an alert audio file before enabling this alert', { variant: 'warning' });
       return;
     }
-    if (isEnabled && graceLabel && (!graceValue || graceValue <= 0)) {
+    if (isEnabled && graceLabel && graceMin > 0 && (!graceValue || graceValue <= 0)) {
       enqueueSnackbar(`Set how long to wait before the first alert (${graceLabel.toLowerCase()})`, { variant: 'warning' });
       return;
     }
@@ -176,7 +179,7 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
           <Text style={{ color: textColor, fontWeight: 500, fontSize: 13 }}>{graceLabel}</Text>
           <Space.Compact style={{ width: '100%', marginTop: 6 }}>
             <InputNumber
-              min={1}
+              min={graceMin}
               max={graceUnit === 'minutes' ? 10080 : graceUnit === 'hours' ? 720 : 90}
               value={graceValue} onChange={setGraceValue}
               style={{ width: '60%', borderRadius: 8 }}
@@ -186,7 +189,7 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
               onChange={(u) => {
                 setGraceUnit(u);
                 const cap = u === 'minutes' ? 10080 : u === 'hours' ? 720 : 90;
-                setGraceValue((v) => Math.min(Math.max(Number(v) || 1, 1), cap));
+                setGraceValue((v) => Math.min(Math.max(Number(v) || graceMin, graceMin), cap));
               }}
               style={{ width: '40%' }}
               options={[
@@ -196,6 +199,7 @@ function AlertConfigCard({ title, description, group, role, config, recipientPoo
               ]}
             />
           </Space.Compact>
+          {graceHelp && <div style={{ marginTop: 4 }}><Text style={{ color: subText, fontSize: 11 }}>{graceHelp}</Text></div>}
         </div>
       )}
 
@@ -578,6 +582,32 @@ export default function AlertConfigurationTab() {
             config={findConfig('sample_followup', null)}
             dynamicRecipient
             graceLabel="Follow up after (days since sample sent)"
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Lead Follow-up Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          At a lead's Follow-up Date &amp; Time (Sales → Lead → Lead Status), rings the lead's assigned person — or, when the lead has no one assigned, the person who created it — repeating on the schedule below until the follow-up is rescheduled to a later time or cleared, or the lead is Converted / Rejected / turned into an order. Overdue follow-ups stop ringing 7 days after their time. The follow-up time must fall inside the Start–End window below to ring on time.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('lead_followup', null)?._id || 'lead_followup'}
+            title="Lead Follow-up Alert"
+            description="Notifies the lead's assigned person (else the lead's creator) when a follow-up is due."
+            group="lead_followup"
+            role={null}
+            config={findConfig('lead_followup', null)}
+            dynamicRecipient
+            dynamicNote="Recipient is picked per lead: Assigned To / Assign Lead To first; if neither is set, whoever created the lead."
+            graceLabel="Alert Before Follow-up Time"
+            graceMin={0}
+            graceHelp="0 = ring exactly at the follow-up time."
           />
         </Col>
       </Row>

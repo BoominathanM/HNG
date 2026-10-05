@@ -129,6 +129,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'damaged_report', label: 'Damaged Report' },
     { key: 'task_performance', label: 'Task Management Performance' },
     { key: 'payment_bank_report', label: 'Payment Bank Details' },
+    { key: 'lead_followup_report', label: 'Lead Follow-up Report' },
   ],
   Settings: [
     { key: 'general', label: 'General' },

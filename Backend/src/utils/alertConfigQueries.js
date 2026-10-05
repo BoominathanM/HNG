@@ -9,12 +9,19 @@ const InventoryItem = require('../models/InventoryItem');
 const QuotationRequest = require('../models/QuotationRequest');
 const DispatchRecord = require('../models/DispatchRecord');
 const ForecastReorderState = require('../models/ForecastReorderState');
+const Lead = require('../models/Lead');
 const { getConsumptionForecastData } = require('./consumptionForecast');
+const {
+  CLOSED_LEAD_STATUSES, FOLLOWUP_ALERT_CAP_DAYS, LEAD_FOLLOWUP_SELECT,
+  followupSchedule, fmtFollowup, followupDateFilter, leadIdsWithOrders, resolveFollowupRecipients,
+} = require('./leadFollowup');
 
 // Grace period ('low_stock'/'quotation_request'/'consumption_forecast'/'sample_followup'
 // only) — how long a record must stay pending before the FIRST alert fires, in
 // milliseconds. graceUnit is one of 'minutes' | 'hours' | 'days'. Every other group has
 // no grace period (graceValue stays null) and fires immediately on first-seen-pending.
+// 'lead_followup' reuses the same fields the other way round — how long BEFORE the
+// follow-up time to start ringing (0/unset = exactly at the follow-up time).
 function graceMs(config) {
   const val = Number(config.graceValue) || 0;
   if (val <= 0) return 0;
@@ -364,6 +371,56 @@ async function getPendingRecordsForConfig(config) {
         record: r,
         recipientUserId: o.assignedTo,
         title: `Sample follow-up due — ${o.clientName || 'hotel'} (sample sent ${days}d ago)`,
+        link: '/sales',
+      });
+    }
+    return out;
+  }
+
+  if (config.group === 'lead_followup') {
+    // From a lead's Follow-up Date + Time (Sales → Lead → Lead Status card; IST wall clock),
+    // less the optional "Alert before" lead time, ring the lead's assigned sales person
+    // (assignedTo / "Assign Lead To"), or whoever created the lead when neither is set —
+    // a dynamic per-record recipient like 'sample_followup'. Keeps repeating on the config's
+    // cadence until the follow-up is rescheduled to a later time or cleared, the lead is
+    // closed (Converted/Rejected) or becomes an order, or FOLLOWUP_ALERT_CAP_DAYS pass.
+    // Rescheduling drops the lead out of this set, so the scheduler's reconciliation also
+    // clears its fire-log + any per-user Stop/Snooze — the new follow-up rings afresh.
+    const now = new Date();
+    const beforeMs = graceMs(config);
+    const capMs = FOLLOWUP_ALERT_CAP_DAYS * 24 * 60 * 60 * 1000;
+    const leads = await Lead.find({
+      deletedAt: null,
+      status: { $nin: CLOSED_LEAD_STATUSES },
+      ...followupDateFilter(new Date(now.getTime() - capMs), new Date(now.getTime() + beforeMs)),
+    }).select(LEAD_FOLLOWUP_SELECT).lean();
+
+    const due = leads
+      .map((l) => ({ l, schedule: followupSchedule(l) }))
+      .filter(({ schedule }) => schedule
+        && now.getTime() >= schedule.dueAt.getTime() - beforeMs
+        && now.getTime() - schedule.dueAt.getTime() <= capMs);
+    if (!due.length) return [];
+
+    const [converted, recipients] = await Promise.all([
+      leadIdsWithOrders(due.map((d) => d.l)),
+      resolveFollowupRecipients(due.map((d) => d.l)),
+    ]);
+
+    const out = [];
+    for (const { l, schedule } of due) {
+      if (converted.has(String(l._id))) continue;
+      const to = recipients.get(String(l._id));
+      if (!to?.userId) continue; // no active assignee or creator to ring
+      const when = fmtFollowup(schedule);
+      const note = String(l.followUpName || '').trim();
+      const shortNote = note.length > 60 ? `${note.slice(0, 57)}…` : note;
+      out.push({
+        recordType: 'Lead',
+        recordId: l._id,
+        record: l,
+        recipientUserId: to.userId,
+        title: `${now < schedule.dueAt ? `Lead follow-up at ${when}` : `Lead follow-up due (${when})`} — ${l.hotelName || 'Lead'}${l.leadCode ? ` (${l.leadCode})` : ''}${shortNote ? `: ${shortNote}` : ''}`,
         link: '/sales',
       });
     }
