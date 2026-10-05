@@ -3,7 +3,7 @@
 // These mirror the deny-by-default permission logic used by PermissionRoute
 // (src/App.jsx) and the Sidebar so the post-login landing page respects the
 // access an admin has actually granted a user.
-import { STAFF_SUBMODULES } from '../constants/moduleTabs';
+import { STAFF_SUBMODULES, GEO_SUBMODULES } from '../constants/moduleTabs';
 
 // Ordered module → landing route map. Order mirrors the sidebar so a user lands
 // on the first module they can see, top-to-bottom.
@@ -14,6 +14,7 @@ export const MODULE_ROUTES = [
   { module: 'Task Management', path: '/tasks' },
   { module: 'Dispatch Team', path: '/dispatch' },
   { module: 'Staff Management', path: '/staff' },
+  { module: 'HRMS Geo', path: '/hrms-geo' },
   { module: 'Inventory', path: '/inventory' },
   { module: 'Purchase', path: '/purchase' },
   { module: 'Vendors & Suppliers', path: '/vendors-suppliers' },
@@ -55,10 +56,13 @@ export const canViewTab = (user, module, key) => {
   return !restricted || modAccess[key] === true;
 };
 
-// First Staff Management sub-module the user may open (the /staff landing),
-// optionally limited to paths under `prefix` (e.g. "/staff/approvals/").
-export const firstStaffPath = (user, prefix = '') =>
-  STAFF_SUBMODULES.find((m) => m.path.startsWith(prefix) && canViewTab(user, 'Staff Management', m.key))?.path;
+// Modules whose sidebar sub-modules are their "tabs" (each its own route).
+const SUBMODULES = { 'Staff Management': STAFF_SUBMODULES, 'HRMS Geo': GEO_SUBMODULES };
+
+// First sub-module of `module` the user may open (the module's landing route,
+// e.g. /staff), optionally limited to paths under `prefix` ("/staff/approvals/").
+export const firstSubmodulePath = (user, module, prefix = '') =>
+  (SUBMODULES[module] || []).find((m) => m.path.startsWith(prefix) && canViewTab(user, module, m.key))?.path;
 
 // First route the user is allowed to open. Used as the post-login landing page
 // so a user without Dashboard access isn't dropped on the "Access Restricted"

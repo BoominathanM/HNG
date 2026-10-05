@@ -9,7 +9,7 @@ import AppLayout from './components/layout/AppLayout';
 import { lightTheme, darkTheme } from './styles/theme';
 import ErrorBoundary from './components/common/ErrorBoundary';
 import { useGetMeQuery } from './store/api/apiSlice';
-import { canViewModule, canViewTab, firstAccessiblePath, firstStaffPath } from './utils/access';
+import { canViewModule, canViewTab, firstAccessiblePath, firstSubmodulePath } from './utils/access';
 import './styles/global.css';
 
 import Login from './pages/Login';
@@ -34,6 +34,13 @@ import PunchApprovals from './pages/Staff/approvals/PunchApprovals';
 import FineApprovals from './pages/Staff/approvals/FineApprovals';
 import ReimbursementApprovals from './pages/Staff/approvals/ReimbursementApprovals';
 import PayslipApprovals from './pages/Staff/approvals/PayslipApprovals';
+import GeoDashboard from './pages/HrmsGeo/Dashboard';
+import GeoCustomers from './pages/HrmsGeo/Customers';
+import GeoCustomerDetail from './pages/HrmsGeo/CustomerDetail';
+import GeoTravelAllowance from './pages/HrmsGeo/TravelAllowance';
+import GeoTasks from './pages/HrmsGeo/Tasks';
+import GeoTracking from './pages/HrmsGeo/Tracking';
+import GeoTrackingDetail from './pages/HrmsGeo/TrackingDetail';
 import Inventory from './pages/Inventory';
 import Billing from './pages/Billing';
 import Reports from './pages/Reports';
@@ -103,11 +110,11 @@ function HomeRoute() {
   );
 }
 
-// "/staff" (or "/staff/approvals") → the first Staff Management sub-module under
-// that path this user may open.
-function StaffHome({ prefix }) {
+// "/staff", "/staff/approvals", "/hrms-geo" → the first sub-module of `module`
+// under that path this user may open.
+function SubmoduleHome({ module = 'Staff Management', prefix }) {
   const user = useSelector((s) => s.auth.user);
-  const dest = firstStaffPath(user, prefix);
+  const dest = firstSubmodulePath(user, module, prefix);
   return dest ? <Navigate to={dest} replace /> : <AccessRestricted />;
 }
 
@@ -136,20 +143,28 @@ function ThemedApp() {
               <Route path="/tasks/:id" element={<PermissionRoute module="Task Management"><TaskDetail /></PermissionRoute>} />
               <Route path="/dispatch" element={<PermissionRoute module="Dispatch Team"><Dispatch /></PermissionRoute>} />
               <Route path="/dispatch/:id" element={<PermissionRoute module="Dispatch Team"><DispatchDetail /></PermissionRoute>} />
-              <Route path="/staff" element={<StaffHome />} />
+              <Route path="/staff" element={<SubmoduleHome />} />
               <Route path="/staff/list" element={<PermissionRoute module="Staff Management" tab="staff_list"><StaffList /></PermissionRoute>} />
               <Route path="/staff/list/:id" element={<PermissionRoute module="Staff Management" tab="staff_list"><StaffDetail /></PermissionRoute>} />
               <Route path="/staff/attendance" element={<PermissionRoute module="Staff Management" tab="attendance"><StaffAttendance /></PermissionRoute>} />
               <Route path="/staff/overtime" element={<PermissionRoute module="Staff Management" tab="overtime"><StaffOvertime /></PermissionRoute>} />
               <Route path="/staff/payroll" element={<PermissionRoute module="Staff Management" tab="payroll"><StaffPayroll /></PermissionRoute>} />
               <Route path="/staff/incentive" element={<PermissionRoute module="Staff Management" tab="incentive"><StaffIncentive /></PermissionRoute>} />
-              <Route path="/staff/approvals" element={<StaffHome prefix="/staff/approvals/" />} />
+              <Route path="/staff/approvals" element={<SubmoduleHome prefix="/staff/approvals/" />} />
               <Route path="/staff/approvals/leave" element={<PermissionRoute module="Staff Management" tab="approvals_leave"><LeaveApprovals /></PermissionRoute>} />
               <Route path="/staff/approvals/permission" element={<PermissionRoute module="Staff Management" tab="approvals_permission"><PermissionApprovals /></PermissionRoute>} />
               <Route path="/staff/approvals/punch" element={<PermissionRoute module="Staff Management" tab="approvals_punch"><PunchApprovals /></PermissionRoute>} />
               <Route path="/staff/approvals/fine" element={<PermissionRoute module="Staff Management" tab="approvals_fine"><FineApprovals /></PermissionRoute>} />
               <Route path="/staff/approvals/reimbursement" element={<PermissionRoute module="Staff Management" tab="approvals_reimbursement"><ReimbursementApprovals /></PermissionRoute>} />
               <Route path="/staff/approvals/payslip" element={<PermissionRoute module="Staff Management" tab="approvals_payslip"><PayslipApprovals /></PermissionRoute>} />
+              <Route path="/hrms-geo" element={<SubmoduleHome module="HRMS Geo" />} />
+              <Route path="/hrms-geo/dashboard" element={<PermissionRoute module="HRMS Geo" tab="dashboard"><GeoDashboard /></PermissionRoute>} />
+              <Route path="/hrms-geo/customer" element={<PermissionRoute module="HRMS Geo" tab="customer"><GeoCustomers /></PermissionRoute>} />
+              <Route path="/hrms-geo/customer/:id" element={<PermissionRoute module="HRMS Geo" tab="customer"><GeoCustomerDetail /></PermissionRoute>} />
+              <Route path="/hrms-geo/travel-allowance" element={<PermissionRoute module="HRMS Geo" tab="travel_allowance"><GeoTravelAllowance /></PermissionRoute>} />
+              <Route path="/hrms-geo/tasks" element={<PermissionRoute module="HRMS Geo" tab="tasks"><GeoTasks /></PermissionRoute>} />
+              <Route path="/hrms-geo/tracking" element={<PermissionRoute module="HRMS Geo" tab="tracking"><GeoTracking /></PermissionRoute>} />
+              <Route path="/hrms-geo/tracking/:staffId" element={<PermissionRoute module="HRMS Geo" tab="tracking"><GeoTrackingDetail /></PermissionRoute>} />
               <Route path="/inventory" element={<PermissionRoute module="Inventory"><Inventory /></PermissionRoute>} />
               <Route path="/purchase" element={<PermissionRoute module="Purchase"><Purchase /></PermissionRoute>} />
               <Route path="/billing" element={<PermissionRoute module="Billing"><Billing /></PermissionRoute>} />

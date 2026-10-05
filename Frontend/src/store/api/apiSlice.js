@@ -46,7 +46,7 @@ export const apiSlice = createApi({
     'AlertConfigs', 'ActiveAlerts', 'SnoozedAlerts', 'NotificationSoundConfig',
     'AiConfig', 'QuotationComparisons',
     'HiddenQueueRows',
-    'Hrms',
+    'Hrms', 'HrmsGeo',
   ],
   endpoints: (builder) => ({
 
@@ -257,6 +257,57 @@ export const apiSlice = createApi({
     getHrIncentives: builder.query({
       query: (month) => ({ url: '/hrms/admin/staff/incentive', params: { month } }),
       providesTags: ['Hrms'],
+    }),
+
+    // ── HRMS Geo (EktaHR, read-only via /hrms proxy) ────────────────────────
+    // Dates are YYYY-MM-DD; timeline `from`/`to` are ISO datetimes.
+    getGeoDashboard: builder.query({
+      query: () => ({ url: '/hrms/admin/hrms-geo/tracking/dashboard' }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoLive: builder.query({
+      query: () => ({ url: '/hrms/admin/hrms-geo/tracking/live' }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoCustomers: builder.query({
+      query: () => ({ url: '/hrms/admin/hrms-geo/customer' }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoCustomer: builder.query({
+      query: (id) => ({ url: `/hrms/admin/hrms-geo/customer/${id}` }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoEmployeeAccess: builder.query({
+      query: () => ({ url: '/hrms/admin/hrms-geo/settings/employee-access' }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoTravelAllowances: builder.query({
+      query: (params) => ({ url: '/hrms/admin/hrms-geo/travel-allowance', params }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoTaskTravelAllowance: builder.query({
+      query: ({ staffId, date }) => ({ url: '/hrms/admin/hrms-geo/task/travel-allowance', params: { staffId, date } }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoTasks: builder.query({
+      query: () => ({ url: '/hrms/admin/hrms-geo/task' }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoTrackingSummary: builder.query({
+      query: () => ({ url: '/hrms/admin/hrms-geo/tracking/summary' }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoTimeline: builder.query({
+      query: ({ staffId, date }) => ({ url: `/hrms/admin/hrms-geo/tracking/timeline/${staffId}`, params: { date } }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoTimelineLocations: builder.query({
+      query: ({ staffId, from, to }) => ({ url: `/hrms/admin/hrms-geo/tracking/timeline/${staffId}/locations`, params: { from, to } }),
+      providesTags: ['HrmsGeo'],
+    }),
+    getGeoTrackingDetails: builder.query({
+      query: ({ staffId, startDate, endDate }) => ({ url: `/hrms/admin/hrms-geo/tracking/${staffId}`, params: { startDate, endDate } }),
+      providesTags: ['HrmsGeo'],
     }),
 
     // ── Vendors ─────────────────────────────────────────────────────────────
@@ -1685,6 +1736,19 @@ export const {
   useGetHrOvertimeListQuery,
   useGetHrPayrollQuery,
   useGetHrIncentivesQuery,
+  // HRMS Geo
+  useGetGeoDashboardQuery,
+  useGetGeoLiveQuery,
+  useGetGeoCustomersQuery,
+  useGetGeoCustomerQuery,
+  useGetGeoEmployeeAccessQuery,
+  useGetGeoTravelAllowancesQuery,
+  useGetGeoTaskTravelAllowanceQuery,
+  useGetGeoTasksQuery,
+  useGetGeoTrackingSummaryQuery,
+  useGetGeoTimelineQuery,
+  useGetGeoTimelineLocationsQuery,
+  useGetGeoTrackingDetailsQuery,
   // Vendors
   useGetVendorsQuery,
   useGetVendorQuery,

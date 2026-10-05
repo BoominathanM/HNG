@@ -29,8 +29,18 @@ export const STAFF_SUBMODULES = [
   { key: 'approvals_payslip', label: 'Approvals – Payslip Requests', path: '/staff/approvals/payslip' },
 ];
 
+// HRMS Geo follows the same sidebar-sub-module pattern.
+export const GEO_SUBMODULES = [
+  { key: 'dashboard', label: 'Dashboard', path: '/hrms-geo/dashboard' },
+  { key: 'customer', label: 'Customer', path: '/hrms-geo/customer' },
+  { key: 'travel_allowance', label: 'Travel Allowance', path: '/hrms-geo/travel-allowance' },
+  { key: 'tasks', label: 'Tasks', path: '/hrms-geo/tasks' },
+  { key: 'tracking', label: 'Tracking', path: '/hrms-geo/tracking' },
+];
+
 export const MODULE_TAB_DEFS = {
   'Staff Management': STAFF_SUBMODULES,
+  'HRMS Geo': GEO_SUBMODULES,
   'Sales Team': [
     { key: 'performance', label: 'Performance' },
     { key: 'leads', label: 'Leads' },

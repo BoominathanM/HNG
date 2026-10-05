@@ -43,7 +43,7 @@ const { Option } = Select;
 
 const MODULES = [
   'Dashboard', 'Sales Team', 'Operations', 'Task Management', 'Dispatch Team',
-  'Staff Management', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing', 'Ledgers',
+  'Staff Management', 'HRMS Geo', 'Inventory', 'Purchase', 'Vendors & Suppliers', 'Billing', 'Ledgers',
   'Financial', 'Expenses', 'Reports', 'Notifications', 'Integration', 'Settings',
 ];
 
@@ -54,6 +54,7 @@ const MODULE_PERM_TYPES = {
   'Task Management': ['read', 'add', 'edit', 'delete'],
   'Dispatch Team': ['read', 'add', 'edit', 'delete'],
   'Staff Management': ['read', 'add', 'edit', 'delete'],
+  'HRMS Geo': ['read'],
   Inventory: ['read', 'add', 'edit', 'delete'],
   Purchase: ['read', 'add', 'edit', 'delete'],
   'Vendors & Suppliers': ['read', 'add', 'edit', 'delete'],

@@ -1558,3 +1558,24 @@ video {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
 }
+
+/* ----------------------------------------------------------------------------
+   17. HRMS GEO (pages/HrmsGeo) — Leaflet maps
+   ---------------------------------------------------------------------------- */
+
+/* Own stacking context so Leaflet's pane/control z-indexes stay under modals */
+.geo-map {
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
+  border-radius: 12px;
+  overflow: hidden;
+  background: #e8eef3;
+}
+.geo-map-full {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  border-radius: 0;
+}
+.geo-map .leaflet-container { font-family: inherit; }

@@ -10,7 +10,7 @@ import {
   ShoppingOutlined, BankOutlined, ApiOutlined, MessageOutlined, RobotOutlined, BookOutlined,
   ContactsOutlined, FileProtectOutlined, CalendarOutlined, ClockCircleOutlined, TrophyOutlined,
   AuditOutlined, ScheduleOutlined, KeyOutlined, FieldTimeOutlined, WalletOutlined, FileTextOutlined,
-  MoneyCollectOutlined,
+  MoneyCollectOutlined, GlobalOutlined, UnorderedListOutlined, CompassOutlined,
 } from '@ant-design/icons';
 import { toggleSidebar } from '../../store/slices/themeSlice';
 import { canViewTab } from '../../utils/access';
@@ -52,6 +52,19 @@ const ALL_MENU_ITEMS = [
           { key: '/staff/approvals/payslip', icon: <FileTextOutlined />, label: 'Payslip Requests', module: 'Staff Management', tab: 'approvals_payslip' },
         ],
       },
+    ],
+  },
+  {
+    key: '/hrms-geo',
+    icon: <GlobalOutlined />,
+    label: 'HRMS Geo',
+    module: 'HRMS Geo',
+    children: [
+      { key: '/hrms-geo/dashboard', icon: <DashboardOutlined />, label: 'Dashboard', module: 'HRMS Geo', tab: 'dashboard' },
+      { key: '/hrms-geo/customer', icon: <TeamOutlined />, label: 'Customer', module: 'HRMS Geo', tab: 'customer' },
+      { key: '/hrms-geo/travel-allowance', icon: <CarOutlined />, label: 'Travel Allowance', module: 'HRMS Geo', tab: 'travel_allowance' },
+      { key: '/hrms-geo/tasks', icon: <UnorderedListOutlined />, label: 'Tasks', module: 'HRMS Geo', tab: 'tasks' },
+      { key: '/hrms-geo/tracking', icon: <CompassOutlined />, label: 'Tracking', module: 'HRMS Geo', tab: 'tracking' },
     ],
   },
   { key: '/inventory', icon: <InboxOutlined />, label: 'Inventory', module: 'Inventory' },

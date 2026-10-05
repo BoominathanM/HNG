@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 
 const MODULES = [
   'Dashboard','Sales Team','Operations','Task Management','Dispatch Team',
-  'Staff Management','Inventory','Purchase','Vendors & Suppliers','Billing','Ledgers',
+  'Staff Management','HRMS Geo','Inventory','Purchase','Vendors & Suppliers','Billing','Ledgers',
   'Financial','Expenses','Reports','Notifications','Integration','Settings',
 ];
 

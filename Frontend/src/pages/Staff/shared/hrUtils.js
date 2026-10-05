@@ -333,5 +333,8 @@ const STATUS_COLORS = {
   'half day': '#fa8c16', leave: '#1677ff', holiday: '#722ed1', 'week off': '#8c8c8c',
   rejected: '#ff4d4f', absent: '#ff4d4f', declined: '#ff4d4f',
   cancelled: '#8c8c8c', deactive: '#8c8c8c', inactive: '#8c8c8c', 'no shift': '#d48806',
+  // HRMS Geo tasks / travel allowance
+  expired: '#8c8c8c', hold: '#8c8c8c', exited: '#ff4d4f', started: '#1677ff', 'in progress': '#d48806',
+  assigned: '#1a1a2e', released: '#52c41a', 'revised approved': '#52c41a', revised: '#d48806',
 };
 export const statusColor = (s) => STATUS_COLORS[String(s || '').toLowerCase().replace(/[_-]+/g, ' ')] || '#8c8c8c';
