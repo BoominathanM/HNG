@@ -1,17 +1,21 @@
 import axios from 'axios';
 
 // Resolve API base URL:
-// - Explicit VITE_API_URL wins (set per-environment at build time)
+// - On our own deployed domains → ALWAYS same origin (https://hngcrm.askeva.io/api
+//   → port 7007, https://devhng.askeva.io/api → port 7008). This wins over
+//   VITE_API_URL so a build made with the wrong mode can't cross environments —
+//   a dev box built with plain `npm run build` bakes in .env.production's prod URL,
+//   and devhng's login then hit prod and failed CORS ("Network Error").
+// - Otherwise an explicit VITE_API_URL wins (set per-environment at build time)
 // - On localhost dev → backend on port 7007
-// - On a deployed domain → same origin (https://hngcrm.askeva.io/api → port 7007,
-//   https://devhng.askeva.io/api → port 7008; see .env.production / .env.devhng)
-const isLocalhost =
-  typeof window !== 'undefined' &&
-  /^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname);
+const SAME_ORIGIN_HOSTS = ['hngcrm.askeva.io', 'devhng.askeva.io'];
+const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+const isLocalhost = /^(localhost|127\.0\.0\.1|\[::1\])$/.test(hostname);
 
-const BASE_URL =
-  import.meta.env.VITE_API_URL ||
-  (isLocalhost ? 'http://localhost:7007/api' : `${window.location.origin}/api`);
+const BASE_URL = SAME_ORIGIN_HOSTS.includes(hostname)
+  ? `${window.location.origin}/api`
+  : import.meta.env.VITE_API_URL ||
+    (isLocalhost ? 'http://localhost:7007/api' : `${window.location.origin}/api`);
 
 const api = axios.create({
   baseURL: BASE_URL,
