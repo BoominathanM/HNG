@@ -6,6 +6,14 @@ const complaintSchema = new mongoose.Schema({
   description: { type: String, required: [true, 'Complaint description is required'] },
   status: { type: String, enum: ['Open', 'In Progress', 'Resolved', 'Closed'], default: 'Open' },
   clientName: String,
+  // Assignee picked on the Raise Complaint form. Name/role are denormalized so the
+  // Complaints tab still shows who it was assigned to if the user is later renamed/deleted.
+  assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  assignedToName: String,
+  assignedToRole: String,
+  // Remarks captured when the complaint is marked Resolved / Closed (latest one wins;
+  // every remark is also kept as the statusHistory note).
+  resolutionRemarks: String,
   // Audit trail of every status change for per-complaint history.
   statusHistory: [{
     status: String,

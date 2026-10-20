@@ -35,13 +35,16 @@ const { Option } = Select;
 // EXPENSE_CAT_MAP in reports.controller.js 1:1 — every category a user can actually log an
 // expense against gets its own selectable chip, instead of Raw Material/Other/Purchase being
 // silently lumped into one "Other" bucket.
-const expenseCategoryConfig = [
+const BASE_EXPENSE_CATEGORIES = [
   { key: 'raw_material', label: 'Raw Material', color: '#8a1652' },
   { key: 'transport',    label: 'Transport',     color: '#D85C9E' },
   { key: 'utilities',    label: 'Utilities',     color: '#B11E6A' },
   { key: 'purchase',     label: 'Purchase',      color: '#C94F8A' },
   { key: 'other',        label: 'Other',         color: '#6b1240' },
 ];
+// Distinct hues for the user-added "Other" sub-categories (P&L `expenseCategories`), so they
+// stay tellable apart from the brand-pink base categories in the pie/statement.
+const CUSTOM_EXPENSE_COLORS = ['#722ed1', '#13c2c2', '#faad14', '#2f54eb', '#52c41a', '#fa541c', '#1890ff', '#eb2f96'];
 
 const CHART_COLORS = ['#B11E6A', '#D85C9E', '#8a1652', '#C94F8A', '#e91e8c', '#f06292'];
 const statusColor = { Paid: '#52c41a', Pending: '#fa8c16', 'Partially Paid': '#B11E6A', Overdue: '#ff4d4f' };
@@ -186,8 +189,10 @@ export default function Reports() {
   const [plQuickSelect, setPlQuickSelect] = useState(null);
   // All expense categories are deducted (checked) by default — Net Profit starts as
   // Gross Profit minus every real expense category, matching the P&L definition; unchecking
-  // a chip excludes just that category from the Net Profit calc.
-  const [plSelectedExpenses, setPlSelectedExpenses] = useState(expenseCategoryConfig.map(c => c.key));
+  // a chip excludes just that category from the Net Profit calc. Tracked as the EXCLUDED set
+  // (plSelectedExpenses is derived below) because "Other" sub-categories arrive with the P&L
+  // data — any new one must start out deducted, not silently left out of Net Profit.
+  const [plExcludedExpenses, setPlExcludedExpenses] = useState([]);
   const [plProductFilter, setPlProductFilter] = useState(null);
   const [plGstMode, setPlGstMode] = useState('excl');
 
@@ -285,6 +290,12 @@ export default function Reports() {
   const apiPurchaseData = useMemo(() => purchaseReportRaw || { data: [], summary: {}, chartData: [] }, [purchaseReportRaw]);
   const apiLocalPurchaseData = useMemo(() => localPurchaseReportRaw || { data: [], summary: {}, chartData: [] }, [localPurchaseReportRaw]);
   const apiPLData = useMemo(() => profitLossRaw?.data || { summary: {}, monthlyData: [], expenseBreakdown: {} }, [profitLossRaw]);
+  // Base categories + one entry per "Other" sub-category present in this P&L window.
+  const expenseCategoryConfig = useMemo(() => [
+    ...BASE_EXPENSE_CATEGORIES,
+    ...(apiPLData.expenseCategories || []).map((c, i) => ({ ...c, color: CUSTOM_EXPENSE_COLORS[i % CUSTOM_EXPENSE_COLORS.length] })),
+  ], [apiPLData]);
+  const plSelectedExpenses = expenseCategoryConfig.map(c => c.key).filter(k => !plExcludedExpenses.includes(k));
   const apiBillPL = useMemo(() => billPLRaw?.data || [], [billPLRaw]);
   const apiGstData = useMemo(() => monthlyGstRaw?.data || [], [monthlyGstRaw]);
   const apiPerformance = useMemo(() => performanceRaw?.data || { leaderboard: [] }, [performanceRaw]);
@@ -1394,8 +1405,8 @@ export default function Reports() {
                       return (
                         <div
                           key={cat.key}
-                          onClick={() => setPlSelectedExpenses(prev =>
-                            isSelected ? prev.filter(k => k !== cat.key) : [...prev, cat.key]
+                          onClick={() => setPlExcludedExpenses(prev =>
+                            isSelected ? [...prev, cat.key] : prev.filter(k => k !== cat.key)
                           )}
                           style={{
                             padding: '4px 12px',

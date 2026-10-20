@@ -11,7 +11,7 @@ import {
   PlayCircleOutlined, PauseCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
   FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
   EditOutlined, DeleteOutlined, FieldTimeOutlined, RobotOutlined, TeamOutlined,
-  InfoCircleOutlined, GiftOutlined, SwapOutlined, TrophyOutlined,
+  InfoCircleOutlined, GiftOutlined, SwapOutlined, TrophyOutlined, CalendarOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -2565,35 +2565,36 @@ export default function Tasks() {
                                 style={{ flex: 1, minHeight: 60, maxHeight: 190, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 10, paddingRight: 2 }}
                                 onClick={(e) => e.stopPropagation()}
                               >
-                                {orderRows.map(({ orderCode, date, meta }) => (
-                                  <div
-                                    key={orderCode}
-                                    onClick={() => setSelectedHotel(hotel)}
-                                    style={{
-                                      display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                      padding: '7px 12px', borderRadius: 10, cursor: 'pointer',
-                                      background: meta.bg, border: `1.5px solid ${meta.color}55`,
-                                    }}
-                                  >
-                                    <div>
-                                      <Text strong style={{ fontSize: 13, color: textColor, display: 'block' }}>{orderCode}</Text>
-                                      {date && (
-                                        <Text style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>
-                                          {dayjs(date).format('DD MMM YYYY')}
-                                        </Text>
-                                      )}
-                                    </div>
-                                    <Tag
+                                {orderRows.map(({ orderCode, date, meta }) => {
+                                  // Order date + type share one pill style so the date reads as
+                                  // prominently as the Emergency/Sample/Regular tag beside it.
+                                  const pillStyle = {
+                                    fontSize: 14, fontWeight: 800, padding: '4px 12px', borderRadius: 8,
+                                    border: `1.5px solid ${meta.color}`, color: meta.color,
+                                    background: isDark ? '#00000030' : '#ffffffb0', margin: 0, lineHeight: '20px',
+                                  };
+                                  return (
+                                    <div
+                                      key={orderCode}
+                                      onClick={() => setSelectedHotel(hotel)}
                                       style={{
-                                        fontSize: 12, fontWeight: 800, padding: '3px 10px', borderRadius: 8,
-                                        border: `1.5px solid ${meta.color}`, color: meta.color,
-                                        background: isDark ? '#00000030' : '#ffffffb0', margin: 0,
+                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8,
+                                        padding: '9px 12px', borderRadius: 10, cursor: 'pointer',
+                                        background: meta.bg, border: `1.5px solid ${meta.color}55`,
                                       }}
                                     >
-                                      {meta.label}
-                                    </Tag>
-                                  </div>
-                                ))}
+                                      <div style={{ minWidth: 0 }}>
+                                        <Text strong style={{ fontSize: 14, color: textColor, display: 'block', marginBottom: date ? 6 : 0 }}>{orderCode}</Text>
+                                        {date && (
+                                          <Tag icon={<CalendarOutlined />} style={pillStyle}>
+                                            {dayjs(date).format('DD MMM YYYY')}
+                                          </Tag>
+                                        )}
+                                      </div>
+                                      <Tag style={pillStyle}>{meta.label}</Tag>
+                                    </div>
+                                  );
+                                })}
                               </div>
 
                               <div style={{ fontSize: 12, color: isDark ? '#aaa' : '#888', marginTop: 6 }}>

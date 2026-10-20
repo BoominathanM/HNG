@@ -15,7 +15,7 @@ const AppError = require('../../utils/AppError');
 const generateCode = require('../../utils/codeGenerator');
 const escapeRegex = require('../../utils/escapeRegex');
 const { cloudinary } = require('../../config/cloudinary');
-const { notifyRoles } = require('../../utils/notify');
+const { notify, notifyRoles } = require('../../utils/notify');
 const {
   resolveGenericStockForView, findReservedRowsForView, buildPackingRows, packagingViewOfItem,
 } = require('../../utils/materialStockMatch');
@@ -1677,6 +1677,8 @@ exports.decideInvoiceMismatch = asyncHandler(async (req, res, next) => {
 exports.getComplaints = asyncHandler(async (req, res) => {
   const filter = {};
   if (req.query.status) filter.status = req.query.status;
+  // Assignee filter — 'me' resolves to the logged-in user (Complaints tab "Assigned to Me").
+  if (req.query.assignedTo) filter.assignedTo = req.query.assignedTo === 'me' ? req.user._id : req.query.assignedTo;
 
   // Date range filter on createdAt
   if (req.query.startDate || req.query.endDate) {
@@ -1701,28 +1703,45 @@ exports.getComplaints = asyncHandler(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [complaints, total] = await Promise.all([
-    Complaint.find(filter).populate('orderId', 'orderCode clientName').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    Complaint.find(filter).populate('orderId', 'orderCode clientName').populate('assignedTo', 'fullName role').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     Complaint.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: complaints });
 });
 
-exports.createComplaint = asyncHandler(async (req, res) => {
+exports.createComplaint = asyncHandler(async (req, res, next) => {
+  // The assignee's name/role are always looked up here, never taken from the client.
+  const { assignedToName, assignedToRole, resolutionRemarks, ...body } = req.body;
+  let assignee = null;
+  if (body.assignedTo) {
+    assignee = await User.findOne({ _id: body.assignedTo, deletedAt: null, status: 'Active' }).select('fullName role').lean();
+    if (!assignee) return next(new AppError('Selected assignee is not an active user', 400));
+  } else {
+    delete body.assignedTo; // '' / null from the form → leave unassigned
+  }
+  const assigneeLabel = assignee ? `${assignee.fullName}${assignee.role ? ` (${assignee.role})` : ''}` : '';
+
   const complaintCode = await generateCode('CMP');
   // Denormalize the client name (from the linked order) for per-customer history grouping.
-  let clientName = req.body.clientName;
-  if (!clientName && req.body.orderId) {
-    const ord = await Order.findById(req.body.orderId).select('clientName').lean();
+  let clientName = body.clientName;
+  if (!clientName && body.orderId) {
+    const ord = await Order.findById(body.orderId).select('clientName').lean();
     clientName = ord?.clientName;
   }
   const complaint = await Complaint.create({
-    ...req.body,
+    ...body,
+    ...(assignee ? { assignedTo: assignee._id, assignedToName: assignee.fullName, assignedToRole: assignee.role || '' } : {}),
     clientName,
     complaintCode,
-    statusHistory: [{ status: req.body.status || 'Open', note: 'Complaint raised', by: req.user._id, byName: req.user.fullName }],
+    statusHistory: [{ status: body.status || 'Open', note: assignee ? `Complaint raised · Assigned to ${assigneeLabel}` : 'Complaint raised', by: req.user._id, byName: req.user.fullName }],
     createdBy: req.user._id,
   });
-  notifyRoles({ modules: ['Sales Team'], type: 'complaint', title: 'New Complaint Raised', message: `Complaint ${complaint.complaintCode}: ${complaint.issue || complaint.description || 'No description'} — ${complaint.clientName || 'N/A'}`, link: '/sales' }).catch(() => {});
+  const summary = `${complaint.issue || complaint.description || 'No description'} — ${complaint.clientName || 'N/A'}`;
+  // The assignee gets their own "assigned to you" push instead of the generic broadcast.
+  notifyRoles({ modules: ['Sales Team'], excludeUserIds: assignee ? [assignee._id] : [], type: 'complaint', title: 'New Complaint Raised', message: `Complaint ${complaint.complaintCode}: ${summary}${assignee ? ` · Assigned to ${assigneeLabel}` : ''}`, link: '/sales' }).catch(() => {});
+  if (assignee) {
+    notify({ userId: assignee._id, type: 'complaint', title: 'Complaint Assigned to You', message: `${complaint.complaintCode}: ${summary} · Raised by ${req.user.fullName || 'N/A'}`, link: '/sales', data: { complaintId: complaint._id } }).catch(() => {});
+  }
   res.status(201).json({ success: true, data: complaint });
 });
 
@@ -1734,14 +1753,18 @@ exports.updateComplaintStatus = asyncHandler(async (req, res, next) => {
     complaint.resolvedAt = Date.now();
     complaint.resolvedBy = req.user._id;
   }
+  // Resolve / Close remarks (from the Complaints tab remarks prompt).
+  const remarks = typeof req.body.remarks === 'string' ? req.body.remarks.trim() : '';
+  if (remarks && (req.body.status === 'Resolved' || req.body.status === 'Closed')) complaint.resolutionRemarks = remarks;
   complaint.statusHistory = complaint.statusHistory || [];
   complaint.statusHistory.push({
     status: req.body.status,
-    note: req.body.note || `Status changed to ${req.body.status}`,
+    note: remarks || req.body.note || `Status changed to ${req.body.status}`,
     by: req.user._id, byName: req.user.fullName,
   });
   await complaint.save({ validateBeforeSave: false });
-  notifyRoles({ modules: ['Sales Team'], type: 'complaint', title: `Complaint ${req.body.status}`, message: `${complaint.complaintCode} (${complaint.clientName || 'N/A'}) → ${req.body.status}`, link: '/sales' }).catch(() => {});
+  // The assignee is always told about status changes, even without Sales Team module access.
+  notifyRoles({ modules: ['Sales Team'], userIds: complaint.assignedTo ? [complaint.assignedTo] : [], type: 'complaint', title: `Complaint ${req.body.status}`, message: `${complaint.complaintCode} (${complaint.clientName || 'N/A'}) → ${req.body.status}${remarks ? ` · Remarks: ${remarks}` : ''}`, link: '/sales' }).catch(() => {});
   res.status(200).json({ success: true, data: complaint });
 });
 

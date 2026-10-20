@@ -3,11 +3,12 @@ import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import dayjs from 'dayjs';
 import { Row, Col, Card, Table, Tag, Button, Modal, Form, Input, Select, Typography, Space, Statistic, Divider, InputNumber, DatePicker, Upload, Tabs, Image, Empty, Spin } from 'antd';
 import { enqueueSnackbar } from 'notistack';
-import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, DollarOutlined, FilterOutlined, DownloadOutlined, PieChartOutlined, CalendarOutlined, ShoppingCartOutlined, CarOutlined, AppstoreOutlined, UploadOutlined, EyeOutlined, ShoppingOutlined, SearchOutlined, TagOutlined } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import SelectWithAdd from '../../components/common/SelectWithAdd';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import {
@@ -89,6 +90,27 @@ export default function Expenses() {
     paymentHistory: e.paymentHistory || [],
   })), [expData]);
 
+  // "Other" sub-categories already used on saved expenses (deduped case-insensitively).
+  // Seeds the Add-form Category dropdown alongside the DB-persisted options (field
+  // `expenseOtherCategory`) so pre-dropdown free-text values stay pickable, and drives
+  // the sub-category entries in the Expense Log category filter.
+  const otherCategoryOptions = useMemo(() => {
+    const map = new Map();
+    expenses.forEach((e) => {
+      const name = ((e.category === 'OTHER' && e.customCategory) || '').trim();
+      if (name && !map.has(name.toLowerCase())) map.set(name.toLowerCase(), { value: name, label: name });
+    });
+    return Array.from(map.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [expenses]);
+
+  // Add-form Category options: the preset categories (by code) followed by every user-added
+  // category (by name). Any non-preset value is saved as category 'Other' + customCategory,
+  // so Reports/Distribution/filters treat it as an "Other" sub-category.
+  const addCategoryOptions = useMemo(() => [
+    ...EXPENSE_CATEGORIES.filter(c => c.value !== 'OTHER').map(c => ({ value: c.value, label: c.label, icon: c.icon })),
+    ...otherCategoryOptions,
+  ], [otherCategoryOptions]);
+
   const { filterTabs } = useTabAccess('Expenses');
   const { requireAccess } = usePageAccess('Expenses');
 
@@ -161,7 +183,10 @@ export default function Expenses() {
   const applyExpFilter = (list) => list.filter((e) => {
     const q = expSearch.toLowerCase();
     const matchSearch = !q || (e.desc || '').toLowerCase().includes(q) || (e.vendor || '').toLowerCase().includes(q) || (e.invoice_no || '').toLowerCase().includes(q);
-    const matchCategory = expCategory === 'all' || e.category === expCategory;
+    // 'OTHER:<name>' = one "Other" sub-category; plain 'OTHER' still matches all of them.
+    const matchCategory = expCategory === 'all' || (expCategory.startsWith('OTHER:')
+      ? e.category === 'OTHER' && (e.customCategory || '').trim().toLowerCase() === expCategory.slice(6).toLowerCase()
+      : e.category === expCategory);
     const matchStatus = !expStatus || e.status === expStatus;
     let matchDateRange = true;
     if (expenseDateRange) {
@@ -175,8 +200,10 @@ export default function Expenses() {
     try {
       const formData = new FormData();
       formData.append('expenseDate', values.date ? dayjs(values.date).format('YYYY-MM-DD') : dayjs().format('YYYY-MM-DD'));
-      formData.append('category', values.category === 'OTHER' ? 'Other' : (EXPENSE_CATEGORIES.find(c => c.value === values.category)?.label || values.category));
-      if (values.category === 'OTHER' && values.customCategory) formData.append('customCategory', values.customCategory);
+      // Preset code → its stored label; anything else is a user-added "Other" sub-category.
+      const preset = EXPENSE_CATEGORIES.find(c => c.value === values.category && c.value !== 'OTHER');
+      formData.append('category', preset ? preset.label : 'Other');
+      if (!preset) formData.append('customCategory', values.category);
       formData.append('description', values.desc);
       formData.append('amount', values.amount);
       if (values.vendor) formData.append('vendorPayee', values.vendor);
@@ -373,9 +400,10 @@ export default function Expenses() {
           >
             <div className="resp-toolbar" style={{ padding: '12px 16px 0' }}>
               <Input prefix={<SearchOutlined style={{ color: '#B11E6A' }} />} placeholder="Search desc, vendor..." allowClear size="small" value={expSearch} onChange={(e) => setExpSearch(e.target.value)} style={{ width: 200, borderRadius: 6 }} />
-              <Select value={expCategory} onChange={setExpCategory} size="small" style={{ width: 140 }}>
+              <Select value={expCategory} onChange={setExpCategory} size="small" style={{ width: 140 }} popupMatchSelectWidth={false}>
                 <Option value="all">All Categories</Option>
                 {EXPENSE_CATEGORIES.map(c => <Option key={c.value} value={c.value}>{c.label}</Option>)}
+                {otherCategoryOptions.map(o => <Option key={`OTHER:${o.value}`} value={`OTHER:${o.value}`}>↳ {o.label}</Option>)}
               </Select>
               <Select allowClear placeholder="Status" value={expStatus} onChange={setExpStatus} size="small" style={{ width: 130 }}>
                 <Option value="Paid">Paid</Option>
@@ -641,20 +669,15 @@ export default function Expenses() {
             <DatePicker style={{ width: '100%' }} />
           </Form.Item>
           <Form.Item label="Category" name="category" rules={[{ required: true }]}>
-            <Select placeholder="Select category">
-              {EXPENSE_CATEGORIES.map(cat => (
-                <Option key={cat.value} value={cat.value}>
-                  <Space>{cat.icon} {cat.label}</Space>
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item noStyle dependencies={['category']}>
-            {({ getFieldValue }) => getFieldValue('category') === 'OTHER' && (
-              <Form.Item label="Custom Category Name" name="customCategory" rules={[{ required: true, message: 'Please specify category' }]}>
-                <Input placeholder="e.g. Maintenance, Tax, etc." />
-              </Form.Item>
-            )}
+            <SelectWithAdd
+              field="expenseOtherCategory"
+              defaultOptions={addCategoryOptions}
+              placeholder="Select category"
+              addPlaceholder="Add category (e.g. Maintenance)"
+              selectOnAdd
+              optionRender={(o) => <Space>{o.data.icon || <TagOutlined />} {o.label}</Space>}
+              labelRender={({ value, label }) => <Space>{addCategoryOptions.find(o => o.value === value)?.icon || <TagOutlined />} {label}</Space>}
+            />
           </Form.Item>
           <Form.Item label="Vendor / Payee" name="vendor">
             <Input placeholder="Who are you paying?" />

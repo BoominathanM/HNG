@@ -621,6 +621,15 @@ const EXPENSE_CAT_MAP = {
   'Purchase': 'purchase',
 };
 const emptyExpenses = () => ({ raw_material: 0, transport: 0, utilities: 0, purchase: 0, other: 0 });
+// "Other" expenses carrying a sub-category (Expenses → Other Expenses dropdown, stored in
+// customCategory) get their own `other:<name>` bucket so each one shows and can be deducted
+// separately in the P&L instead of disappearing into "Other". Keyed case-insensitively so
+// "Maintenance"/"maintenance" land in one bucket; plain "Other" with no sub-category stays `other`.
+const resolveExpenseBucket = (e) => {
+  const base = EXPENSE_CAT_MAP[e.category] || 'other';
+  const custom = base === 'other' ? String(e.customCategory || '').trim() : '';
+  return custom ? { key: `other:${custom.toLowerCase()}`, label: custom } : { key: base };
+};
 
 // ─── PROFIT & LOSS ─────────────────────────────────────────────────────────────
 exports.getProfitLoss = asyncHandler(async (req, res) => {
@@ -675,9 +684,18 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   const totalPaid = invRows.reduce((s, r) => s + r2(r.taxable * paidRatio(r)), 0);
   const totalPending = invRows.reduce((s, r) => s + r2(r.taxable * (1 - paidRatio(r))), 0);
 
+  // Sub-category buckets seen in this window (key → display label), returned as
+  // `expenseCategories` so the Reports UI can render a chip/line for each one.
+  const customExpenseCats = new Map();
+  const expenseBucketOf = (e) => {
+    const { key, label } = resolveExpenseBucket(e);
+    if (label && !customExpenseCats.has(key)) customExpenseCats.set(key, label);
+    return key;
+  };
+
   const expenseBreakdown = emptyExpenses();
   expenses.forEach((e) => {
-    const cat = EXPENSE_CAT_MAP[e.category] || 'other';
+    const cat = expenseBucketOf(e);
     expenseBreakdown[cat] = (expenseBreakdown[cat] || 0) + e.amount;
   });
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0);
@@ -704,7 +722,7 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
   expenses.forEach((e) => {
     const key = e.expenseDate?.toLocaleString('default', { month: 'short' }) || '';
     if (!monthlyMap[key]) monthlyMap[key] = { month: key, sales: 0, salesGst: 0, cogs: 0, cogsGst: 0, grossProfit: 0, paid: 0, pending: 0, paidGst: 0, pendingGst: 0, expenses: emptyExpenses() };
-    const cat = EXPENSE_CAT_MAP[e.category] || 'other';
+    const cat = expenseBucketOf(e);
     monthlyMap[key].expenses[cat] = (monthlyMap[key].expenses[cat] || 0) + e.amount;
   });
 
@@ -811,6 +829,8 @@ exports.getProfitLoss = asyncHandler(async (req, res) => {
     data: {
       summary: { totalSales, totalSalesGst, totalCogs, grossProfit, totalExpenses, netProfit, netGstPayable, totalPaid, totalPending, damagedGoodsCostLoss, damagedGoodsRevenueLoss },
       expenseBreakdown,
+      expenseCategories: Array.from(customExpenseCats, ([key, label]) => ({ key, label }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
       monthlyData: Object.values(monthlyMap),
       productData: Object.values(productMap),
       productMonthlyData,

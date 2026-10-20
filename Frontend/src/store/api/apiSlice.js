@@ -653,11 +653,12 @@ export const apiSlice = createApi({
       query: (id) => ({ url: `/inventory/approvals/${id}/approve`, method: 'patch' }),
       // Also invalidates Orders/Tasks — an addition-type approval can auto-backfill orders
       // that were short on this item. See receiveOrder's comment.
-      invalidatesTags: ['StockApprovals', 'Inventory', 'Orders', 'Tasks'],
+      // StockHistory too, so the Stock Check Log's Approval column doesn't sit on "Pending".
+      invalidatesTags: ['StockApprovals', 'Inventory', 'Orders', 'Tasks', 'StockHistory'],
     }),
     rejectMovement: builder.mutation({
       query: (id) => ({ url: `/inventory/approvals/${id}/reject`, method: 'patch' }),
-      invalidatesTags: ['StockApprovals'],
+      invalidatesTags: ['StockApprovals', 'StockHistory'],
     }),
     getStockHistory: builder.query({
       query: (params) => ({ url: '/inventory/history', params }),
@@ -925,7 +926,7 @@ export const apiSlice = createApi({
       invalidatesTags: ['Complaints'],
     }),
     updateComplaintStatus: builder.mutation({
-      query: ({ id, status, note }) => ({ url: `/sales/complaints/${id}/status`, method: 'patch', data: { status, note } }),
+      query: ({ id, status, note, remarks }) => ({ url: `/sales/complaints/${id}/status`, method: 'patch', data: { status, note, remarks } }),
       invalidatesTags: ['Complaints'],
     }),
     getComplaintHistory: builder.query({
@@ -1858,6 +1859,7 @@ export const {
   useApproveMovementMutation,
   useRejectMovementMutation,
   useGetStockHistoryQuery,
+  useLazyGetStockHistoryQuery,
   useGetStockHistoryReportQuery,
   useSubmitStockCheckMutation,
   useGetKitsQuery,

@@ -9,6 +9,7 @@ const WhatsAppEventMapping = require('../../models/WhatsAppEventMapping');
 const User = require('../../models/User');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
+const escapeRegex = require('../../utils/escapeRegex');
 const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { sendMessage, ensureDefaultWhatsAppEvents } = require('../../services/whatsAppService');
@@ -516,12 +517,31 @@ exports.getStockHistory = asyncHandler(async (req, res) => {
   if (req.query.dateFrom || req.query.dateTo) {
     filter.createdAt = {};
     if (req.query.dateFrom) filter.createdAt.$gte = new Date(req.query.dateFrom);
-    if (req.query.dateTo) filter.createdAt.$lte = new Date(`${req.query.dateTo}T23:59:59.999Z`);
+    // A full ISO timestamp (the client's local end-of-day) is used as-is; a bare YYYY-MM-DD
+    // keeps covering that whole UTC day.
+    if (req.query.dateTo) filter.createdAt.$lte = new Date(String(req.query.dateTo).includes('T') ? req.query.dateTo : `${req.query.dateTo}T23:59:59.999Z`);
+  }
+  // Stock Check Log filters (Inventory → Live Staff Checking). reasonType 'None' = surplus/legacy
+  // check rows, which are saved without a reasonType at all.
+  if (req.query.approvalStatus) filter.approvalStatus = req.query.approvalStatus;
+  if (req.query.reasonType) filter.reasonType = req.query.reasonType === 'None' ? null : req.query.reasonType;
+  if (req.query.search && String(req.query.search).trim()) {
+    const re = new RegExp(escapeRegex(String(req.query.search).trim()), 'i');
+    const [items, users] = await Promise.all([
+      InventoryItem.find({ itemName: re }).select('_id').lean(),
+      User.find({ fullName: re }).select('_id').lean(),
+    ]);
+    filter.$or = [
+      { reason: re },
+      { notes: re },
+      { itemId: { $in: items.map((i) => i._id) } },
+      { createdBy: { $in: users.map((u) => u._id) } },
+    ];
   }
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const [movements, total] = await Promise.all([
-    StockMovement.find(filter).populate('itemId', 'itemName unit').populate('vendorId', 'name').populate('partyId', 'name').populate('createdBy', 'fullName').sort('-createdAt').skip((page - 1) * limit).limit(limit),
+    StockMovement.find(filter).populate('itemId', 'itemName unit').populate('vendorId', 'name').populate('partyId', 'name').populate('createdBy', 'fullName').populate('approvedBy', 'fullName').sort('-createdAt').skip((page - 1) * limit).limit(limit),
     StockMovement.countDocuments(filter),
   ]);
   res.status(200).json({ success: true, total, page, data: movements });

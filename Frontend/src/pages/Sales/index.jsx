@@ -2456,6 +2456,7 @@ export default function Sales() {
   const [complaintStatusFilter, setComplaintStatusFilter] = useState(null);
   const [complaintSearchText, setComplaintSearchText] = useState('');
   const [complaintDateRange, setComplaintDateRange] = useState(null);
+  const [complaintAssigneeFilter, setComplaintAssigneeFilter] = useState(null);
   const [complaintsPage, setComplaintsPage] = useState(1);
   const [complaintsPageSize, setComplaintsPageSize] = useState(10);
   const [leadSearchText, setLeadSearchText] = useState('');
@@ -2477,6 +2478,10 @@ export default function Sales() {
   const [complaintModalOpen, setComplaintModalOpen] = useState(false);
   const [complaintOrder, setComplaintOrder] = useState(null);
   const [complaintForm] = Form.useForm();
+  // Resolve / Close remarks prompt: { record, status } while open.
+  const [complaintRemarksTarget, setComplaintRemarksTarget] = useState(null);
+  const [complaintRemarksSaving, setComplaintRemarksSaving] = useState(false);
+  const [complaintRemarksForm] = Form.useForm();
 
   // Lead state
   const [editingLead, setEditingLead] = useState(null);
@@ -3766,6 +3771,7 @@ export default function Sales() {
     ...(complaintStatusFilter ? { status: complaintStatusFilter } : {}),
     ...(complaintSearchText ? { search: complaintSearchText } : {}),
     ...(complaintDateRange ? { startDate: complaintDateRange[0], endDate: complaintDateRange[1] } : {}),
+    ...(complaintAssigneeFilter ? { assignedTo: complaintAssigneeFilter } : {}),
   });
   const { data: partiesRaw } = useGetPartiesQuery({ limit: 1000 });
   const { data: forecastRaw } = useGetConsumptionForecastQuery();
@@ -3816,6 +3822,23 @@ export default function Sales() {
   const salesPersonOptions = (usersRaw?.data || [])
     .filter((u) => u.fullName && u.department === 'Sales')
     .map((u) => ({ value: u.fullName, label: u.fullName }));
+  // Complaint assignees — only active users who can actually open Sales → Complaints
+  // (Sales Team read + the Complaints tab when per-user tab access is configured), so the
+  // assigned complaint is guaranteed to show up when that user logs in.
+  const complaintAssigneeOptions = (usersRaw?.data || [])
+    .filter((u) => {
+      if (!u.fullName || (u.status && u.status !== 'Active')) return false;
+      if (u.role === 'Super Admin' || u.role === 'Admin') return true;
+      if (u.permissions?.['Sales Team']?.read !== true) return false;
+      const salesTabs = u.tabAccess?.['Sales Team'];
+      const tabsRestricted = salesTabs && typeof salesTabs === 'object' && Object.values(salesTabs).some((v) => v === true);
+      return !tabsRestricted || salesTabs.complaints === true;
+    })
+    .sort((a, b) => a.fullName.localeCompare(b.fullName))
+    .map((u) => {
+      const roleLabel = u.role || u.department;
+      return { value: u._id, label: roleLabel ? `${u.fullName} (${roleLabel})` : u.fullName };
+    });
   const kits = kitsRaw?.data || [];
   const kitOptions = kits.map((k) => ({ value: k._id, label: k.kitName }));
   const { data: itemsRaw } = useGetItemsQuery({ limit: 1000 });
@@ -4490,7 +4513,7 @@ export default function Sales() {
   }, [singleOrderRaw?.data?._id]);
 
   useEffect(() => {
-    if (complaintsRaw?.data) setComplaintsData((complaintsRaw.data).map((c) => ({ ...c, key: c._id, orderId: c.orderId?.orderCode || c.orderId, hotelName: c.clientName, description: c.description, raisedAt: c.createdAt, salesPerson: c.salesPerson, status: c.status })));
+    if (complaintsRaw?.data) setComplaintsData((complaintsRaw.data).map((c) => ({ ...c, key: c._id, orderId: c.orderId?.orderCode || c.orderId, hotelName: c.clientName, description: c.description, raisedAt: c.createdAt, salesPerson: c.salesPerson, status: c.status, assignedToId: c.assignedTo?._id || c.assignedTo || null, assignedToName: c.assignedTo?.fullName || c.assignedToName || '', assignedToRole: c.assignedTo?.role || c.assignedToRole || '' })));
   }, [complaintsRaw]);
   // Build Parties tab from the Party collection (Customer type) — independent of leadsData
   // so dispatched/converted leads don't hide hotels from the Parties tab.
@@ -6313,7 +6336,7 @@ export default function Sales() {
 
   const submitComplaint = () => {
     complaintForm.validateFields().then(async vals => {
-      const { orderId, description, files } = vals;
+      const { orderId, description, files, assignedTo } = vals;
       const resolvedOrder = complaintOrder
         || ordersData.find(o => o.key === orderId || o.oid === orderId);
       const orderObjectId = resolvedOrder?.key || resolvedOrder?._id;
@@ -6330,6 +6353,7 @@ export default function Sales() {
           orderId: orderObjectId,
           description,
           clientName,
+          ...(assignedTo ? { assignedTo } : {}),
           ...(evidenceUrls.length ? { evidenceUrls } : {}),
         }).unwrap();
         enqueueSnackbar('Complaint raised successfully', { variant: 'success' });
@@ -7387,15 +7411,38 @@ export default function Sales() {
     },
   ];
 
-  const handleComplaintStatus = async (r, status) => {
+  // Resolved / Closed first open the remarks prompt (remarks === undefined); the prompt then
+  // calls back in with the entered remarks. Other statuses save straight away as before.
+  const handleComplaintStatus = async (r, status, remarks) => {
+    if ((status === 'Resolved' || status === 'Closed') && remarks === undefined) {
+      setComplaintRemarksTarget({ record: r, status });
+      return false;
+    }
     try {
-      await updateComplaintStatusMutation({ id: r._id || r.key, status }).unwrap();
-      setComplaintsData(prev => prev.map(c => (c.key === r.key ? { ...c, status } : c)));
+      await updateComplaintStatusMutation({ id: r._id || r.key, status, ...(remarks ? { remarks } : {}) }).unwrap();
+      setComplaintsData(prev => prev.map(c => (c.key === r.key ? { ...c, status, ...(remarks ? { resolutionRemarks: remarks } : {}) } : c)));
       enqueueSnackbar(`Complaint marked ${status}`, { variant: 'success' });
+      return true;
     } catch (e) {
-      enqueueSnackbar(e?.data || 'Failed to update complaint', { variant: 'error' });
+      enqueueSnackbar(e?.data?.message || e?.data || 'Failed to update complaint', { variant: 'error' });
+      return false;
     }
   };
+
+  const submitComplaintRemarks = () => {
+    complaintRemarksForm.validateFields().then(async ({ remarks }) => {
+      if (!complaintRemarksTarget) return;
+      setComplaintRemarksSaving(true);
+      const ok = await handleComplaintStatus(complaintRemarksTarget.record, complaintRemarksTarget.status, remarks.trim());
+      setComplaintRemarksSaving(false);
+      if (ok) {
+        setComplaintRemarksTarget(null);
+        complaintRemarksForm.resetFields();
+      }
+    }).catch(() => {});
+  };
+
+  const currentUserId = currentUser?._id || currentUser?.id;
 
   const complaintColumns = [
     { title: 'Complaint ID', dataIndex: 'complaintCode', width: 140, render: (v, r) => <Text strong style={{ color: '#ff4d4f', fontSize: 13 }}>{v || `CMP-${(r.key || '').toString().slice(-4)}`}</Text> },
@@ -7404,6 +7451,15 @@ export default function Sales() {
     { title: 'Description', dataIndex: 'description', ellipsis: true, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
     { title: 'Raised At', dataIndex: 'raisedAt', width: 145, render: (v) => <Text style={{ fontSize: 13 }}>{fmtDateTimeShort(v)}</Text> },
     { title: 'Sales Person', dataIndex: 'salesPerson', width: 120, render: v => <Text style={{ fontSize: 13 }}>{v}</Text> },
+    {
+      title: 'Assigned To', dataIndex: 'assignedToName', width: 190,
+      render: (v, r) => (v ? (
+        <Space size={4} wrap>
+          <Text style={{ fontSize: 13 }}>{v}{r.assignedToRole && <Text type="secondary" style={{ fontSize: 12 }}> ({r.assignedToRole})</Text>}</Text>
+          {currentUserId && String(r.assignedToId) === String(currentUserId) && <Tag color="magenta" style={{ borderRadius: 10, fontSize: 11, marginInlineEnd: 0 }}>You</Tag>}
+        </Space>
+      ) : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>),
+    },
     {
       title: 'Status', dataIndex: 'status', width: 130,
       render: (v, r) => (
@@ -7423,10 +7479,14 @@ export default function Sales() {
       ),
     },
     {
+      title: 'Remarks', dataIndex: 'resolutionRemarks', width: 180, ellipsis: { showTitle: false },
+      render: v => (v ? <Tooltip title={v}><Text style={{ fontSize: 13 }}>{v}</Text></Tooltip> : <Text type="secondary" style={{ fontSize: 13 }}>—</Text>),
+    },
+    {
       title: 'Actions', key: 'actions',
       render: (_, r) => (
         <Space size={4}>
-          <Tooltip title="View Details"><Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); Modal.info({ title: `Complaint CMP-${r.key.toString().slice(-4)}`, width: 560, content: (<div><p><b>Hotel:</b> {r.hotelName}</p><p><b>Order:</b> {r.orderId || '—'}</p><p><b>Status:</b> {r.status}</p><p><b>Raised:</b> {fmtDateTimeShort(r.raisedAt)}</p><p><b>Description:</b></p><p>{r.description}</p>{(r.statusHistory && r.statusHistory.length > 0) && (<><Divider style={{ margin: '12px 0' }} /><p><b>History</b></p><Timeline items={r.statusHistory.map((h) => ({ color: h.status === 'Resolved' ? 'green' : h.status === 'Closed' ? 'gray' : 'blue', children: (<div><Text strong>{h.status}</Text> <Text type="secondary" style={{ fontSize: 11 }}>{h.at ? new Date(h.at).toLocaleString('en-IN') : ''}{h.byName ? ` · ${h.byName}` : ''}</Text>{h.note && <div style={{ fontSize: 12 }}>{h.note}</div>}</div>) }))} /></>)}</div>) }); }} /></Tooltip>
+          <Tooltip title="View Details"><Button size="small" icon={<EyeOutlined />} onClick={(e) => { e.stopPropagation(); Modal.info({ title: `Complaint CMP-${r.key.toString().slice(-4)}`, width: 560, content: (<div><p><b>Hotel:</b> {r.hotelName}</p><p><b>Order:</b> {r.orderId || '—'}</p><p><b>Status:</b> {r.status}</p><p><b>Assigned To:</b> {r.assignedToName ? `${r.assignedToName}${r.assignedToRole ? ` (${r.assignedToRole})` : ''}` : '—'}</p><p><b>Raised:</b> {fmtDateTimeShort(r.raisedAt)}</p><p><b>Description:</b></p><p>{r.description}</p>{r.resolutionRemarks && (<><p><b>Remarks:</b></p><p>{r.resolutionRemarks}</p></>)}{(r.statusHistory && r.statusHistory.length > 0) && (<><Divider style={{ margin: '12px 0' }} /><p><b>History</b></p><Timeline items={r.statusHistory.map((h) => ({ color: h.status === 'Resolved' ? 'green' : h.status === 'Closed' ? 'gray' : 'blue', children: (<div><Text strong>{h.status}</Text> <Text type="secondary" style={{ fontSize: 11 }}>{h.at ? new Date(h.at).toLocaleString('en-IN') : ''}{h.byName ? ` · ${h.byName}` : ''}</Text>{h.note && <div style={{ fontSize: 12 }}>{h.note}</div>}</div>) }))} /></>)}</div>) }); }} /></Tooltip>
           <Tooltip title="Mark Resolved"><Button size="small" icon={<CheckOutlined />} style={{ color: '#52c41a', borderColor: '#52c41a' }} onClick={(e) => { e.stopPropagation(); handleComplaintStatus(r, 'Resolved'); }} /></Tooltip>
         </Space>
       ),
@@ -11053,6 +11113,11 @@ export default function Sales() {
                   </Form.Item>
                 )}
               </Col>
+              <Col xs={24}>
+                <Form.Item label="Assign To" name="assignedTo" rules={[{ required: true, message: 'Please select an assignee' }]}>
+                  <Select placeholder="Select assignee" showSearch optionFilterProp="label" options={complaintAssigneeOptions} />
+                </Form.Item>
+              </Col>
               <Col xs={24} sm={12}>
                 <Form.Item label="Raised Date" name="raisedDate">
                   <DatePicker style={{ width: '100%' }} />
@@ -12487,7 +12552,6 @@ export default function Sales() {
     const isAddLead = viewMode === 'add-lead';
     const isAddCustomer = viewMode === 'add-customer';
     const record = selectedRecord ? { ...selectedRecord, products: normalizeProducts(selectedRecord.products || []) } : {};
-    const totalValue = calcTotal(record.products);
     // Show per-card edit buttons in both detail view AND when editing an existing record
     const usePerCardEdit = isDetail || !!editingLead;
     // Once an Old Hotel/Hospital match has been auto-filled, a Sales Executive can no longer
@@ -12767,7 +12831,7 @@ export default function Sales() {
         {isDetail && (
           <Row gutter={12} style={{ marginBottom: 20 }}>
             {[
-              { label: 'Total Value', value: `₹${totalValue.toLocaleString()}`, icon: <CreditCardOutlined /> },
+              { label: 'Total Value', value: fmtINR(leadDisplayTotal(Number(record.totalAmount) || 0)), icon: <CreditCardOutlined /> },
               { label: 'Products', value: `${record.products?.length || 0} items`, icon: <ShoppingCartOutlined /> },
               { label: `${record.category || 'Hotel'} Type`, value: record.hotelType === 'OLD' ? `Old ${record.category || 'Hotel'}` : `New ${record.category || 'Hotel'}`, icon: <BankOutlined /> },
               { label: 'Next Follow-up', value: record.followUpDate ? `${dayjs(record.followUpDate).format('DD MMM YYYY')}${record.followUpTime ? ' · ' + record.followUpTime : ''}` : 'Not set', icon: <HistoryOutlined /> },
@@ -16552,7 +16616,18 @@ export default function Sales() {
                       <Option value="Open">Open</Option>
                       <Option value="Resolved">Resolved</Option>
                       <Option value="In Progress">In Progress</Option>
+                      <Option value="Closed">Closed</Option>
                     </Select>
+                    <Select
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder="Assigned To"
+                      value={complaintAssigneeFilter}
+                      onChange={(val) => { setComplaintAssigneeFilter(val || null); setComplaintsPage(1); }}
+                      options={[{ value: 'me', label: 'Assigned to Me' }, ...complaintAssigneeOptions]}
+                      style={{ width: 210, borderRadius: 8 }}
+                    />
                     <DatePicker.RangePicker
                       style={{ borderRadius: 8 }}
                       onChange={(dates) => { setComplaintDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null); setComplaintsPage(1); }}
@@ -16792,6 +16867,11 @@ export default function Sales() {
                 </Form.Item>
               )}
             </Col>
+            <Col xs={24}>
+              <Form.Item label="Assign To" name="assignedTo" rules={[{ required: true, message: 'Please select an assignee' }]}>
+                <Select placeholder="Select assignee" showSearch optionFilterProp="label" options={complaintAssigneeOptions} />
+              </Form.Item>
+            </Col>
             <Col xs={24} sm={12}>
               <Form.Item label="Raised Date" name="raisedDate">
                 <DatePicker style={{ width: '100%' }} />
@@ -16820,6 +16900,35 @@ export default function Sales() {
               </Form.Item>
             </Col>
           </Row>
+        </Form>
+      </Modal>
+
+      {/* ── Complaint Resolve / Close Remarks Modal ──────────────────────── */}
+      <Modal
+        title={
+          <Space>
+            {complaintRemarksTarget?.status === 'Closed'
+              ? <CloseCircleOutlined style={{ color: '#8c8c8c' }} />
+              : <CheckCircleOutlined style={{ color: '#52c41a' }} />}
+            <span>{`Mark ${complaintRemarksTarget?.status || ''} — ${complaintRemarksTarget?.record?.complaintCode || ''}`}</span>
+          </Space>
+        }
+        open={!!complaintRemarksTarget}
+        onCancel={() => { if (!complaintRemarksSaving) { setComplaintRemarksTarget(null); complaintRemarksForm.resetFields(); } }}
+        width={Math.min(480, window.innerWidth - 32)}
+        footer={[
+          <Button key="cancel" disabled={complaintRemarksSaving} onClick={() => { setComplaintRemarksTarget(null); complaintRemarksForm.resetFields(); }}>Cancel</Button>,
+          <Button key="submit" type="primary" loading={complaintRemarksSaving} onClick={submitComplaintRemarks}>{`Mark ${complaintRemarksTarget?.status || ''}`}</Button>,
+        ]}
+      >
+        <Form form={complaintRemarksForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item
+            label="Remarks"
+            name="remarks"
+            rules={[{ required: true, whitespace: true, message: `Please enter remarks for marking this complaint ${complaintRemarksTarget?.status || ''}` }]}
+          >
+            <Input.TextArea rows={4} maxLength={1000} showCount placeholder="E.g., Replacement dispatched and confirmed by the client" />
+          </Form.Item>
         </Form>
       </Modal>
 

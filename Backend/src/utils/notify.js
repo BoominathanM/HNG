@@ -75,6 +75,8 @@ async function notifyMany(list = []) {
  *                                          All active users with `read` access to ANY of
  *                                          these modules will be notified.
  * @param {ObjectId[]}      [opts.userIds]  Additional specific user IDs to always include.
+ * @param {ObjectId[]}      [opts.excludeUserIds] User IDs to leave out (e.g. someone who is
+ *                                          sent a more specific notification separately).
  * @param {string}          opts.type       Notification type enum value.
  * @param {string}          opts.title
  * @param {string}          opts.message
@@ -84,7 +86,7 @@ async function notifyMany(list = []) {
  * Super Admins / Admins always receive every notification regardless of modules.
  * Duplicate recipients are collapsed to a single notification each.
  */
-async function notifyRoles({ modules, userIds = [], ...opts } = {}) {
+async function notifyRoles({ modules, userIds = [], excludeUserIds = [], ...opts } = {}) {
   const User = require('../models/User');
   try {
     // Super Admin / Admin always get every notification.
@@ -113,6 +115,7 @@ async function notifyRoles({ modules, userIds = [], ...opts } = {}) {
       ...moduleUsers.map((u) => u._id.toString()),
       ...userIds.filter(Boolean).map((id) => id.toString()),
     ]);
+    excludeUserIds.filter(Boolean).forEach((id) => allIds.delete(id.toString()));
 
     if (!allIds.size) return [];
     return Promise.all([...allIds].map((id) => notify({ ...opts, userId: id })));

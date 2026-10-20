@@ -10,7 +10,7 @@ import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, WarningOutlined, CalculatorOutlined, SearchOutlined, CheckOutlined,
   DownloadOutlined, ShoppingOutlined, LeftOutlined, CloseOutlined, EditOutlined,
-  UserOutlined, InfoCircleOutlined, MinusOutlined,
+  InfoCircleOutlined, MinusOutlined,
   EyeOutlined, UploadOutlined, SafetyCertificateOutlined, HistoryOutlined,
   ClockCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, SwapOutlined,
   ExclamationCircleOutlined, AuditOutlined,
@@ -22,6 +22,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as ReTooltip, ResponsiveContainer } from 'recharts';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import DamagedReport from '../../components/reports/DamagedReport';
+import StockCheckLog from './StockCheckLog';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import dayjs from 'dayjs';
@@ -946,28 +947,6 @@ export default function Inventory() {
   const [checkSubmitOpen, setCheckSubmitOpen] = useState(false);
   const [checkNotes, setCheckNotes] = useState('');
   const [checkSubmitted, setCheckSubmitted] = useState(false);
-
-  // Checked-record log (Known + Unknown reasons) — Super Admin / Admin only.
-  const { data: checkHistoryData } = useGetStockHistoryQuery({ type: 'CHECK', limit: 50 }, { skip: !isSuperOrAdmin });
-  const checkHistoryList = useMemo(() => (checkHistoryData?.data || []).map((m) => ({
-    key: m._id,
-    item: m.itemId?.itemName || '—',
-    unit: m.itemId?.unit || '',
-    qty: m.qty,
-    reasonType: m.reasonType || '—',
-    reason: m.reason || '—',
-    notes: m.notes || '',
-    checkedBy: m.createdBy?.fullName || '—',
-    date: m.createdAt ? dayjs(m.createdAt).format('DD MMM YYYY') : '—',
-    rawDate: m.createdAt ? m.createdAt.slice(0, 10) : '',
-    time: m.createdAt ? dayjs(m.createdAt).format('hh:mm A') : '—',
-    approvalStatus: m.approvalStatus,
-  })), [checkHistoryData]);
-  const [checkLogDateRange, setCheckLogDateRange] = useState(null);
-  const filteredCheckHistory = useMemo(() => checkHistoryList.filter((r) => {
-    if (!checkLogDateRange) return true;
-    return r.rawDate >= checkLogDateRange[0] && r.rawDate <= checkLogDateRange[1];
-  }), [checkHistoryList, checkLogDateRange]);
 
   // Populate checkSession once inventory data loads from RTK Query (useState runs before data arrives).
   // On subsequent loads (e.g. after an approval), refresh systemCount while preserving the user's
@@ -2065,61 +2044,7 @@ export default function Inventory() {
                 </Card>
 
                 {/* Checked records log — Super Admin / Admin only */}
-                {isSuperOrAdmin && (
-                  <Card
-                    style={{ borderRadius: 14, border: 'none', background: cardBg, boxShadow: '0 4px 20px rgba(177,30,106,0.06)', marginTop: 16 }}
-                    styles={{ body: { padding: 0 } }}
-                  >
-                    <div style={{ padding: '12px 16px', borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                      <Space wrap>
-                        <SafetyCertificateOutlined style={{ color: '#B11E6A' }} />
-                        <Text strong style={{ color: textColor }}>Stock Check Log — Known &amp; Unknown Reasons</Text>
-                        <Tag color="purple" style={{ borderRadius: 20 }}>Super Admin / Admin only</Tag>
-                      </Space>
-                      <DatePicker.RangePicker
-                        style={{ borderRadius: 8 }}
-                        onChange={(dates) => setCheckLogDateRange(dates ? [dates[0].format('YYYY-MM-DD'), dates[1].format('YYYY-MM-DD')] : null)}
-                        allowClear
-                      />
-                    </div>
-                    <Table
-                      dataSource={filteredCheckHistory}
-                      size="small"
-                      pagination={{ pageSize: 10 }}
-                      scroll={{ x: 'max-content' }}
-                      columns={[
-                        { title: 'Item', dataIndex: 'item', render: v => <Text strong style={{ fontSize: 13 }}>{v}</Text> },
-                        { title: 'Qty', dataIndex: 'qty', align: 'center', render: (v, r) => `${v} ${r.unit}` },
-                        {
-                          title: 'Reason Type', dataIndex: 'reasonType', align: 'center',
-                          render: v => v === 'Unknown'
-                            ? <Tag color="error" style={{ borderRadius: 12 }}>Unknown</Tag>
-                            : v === 'Known'
-                              ? <Tag color="success" style={{ borderRadius: 12 }}>Known</Tag>
-                              : <Text type="secondary">—</Text>
-                        },
-                        {
-                          title: 'Reason', dataIndex: 'reason',
-                          render: (v, r) => (
-                            <Space direction="vertical" size={0}>
-                              <Text style={{ fontSize: 13 }}>{v}</Text>
-                              {r.notes && <Text type="secondary" style={{ fontSize: 11 }}>Note: {r.notes}</Text>}
-                            </Space>
-                          )
-                        },
-                        { title: 'Checked By', dataIndex: 'checkedBy', render: v => <Space size={4}><UserOutlined style={{ fontSize: 12 }} />{v}</Space> },
-                        { title: 'Date', dataIndex: 'date' },
-                        { title: 'Time', dataIndex: 'time' },
-                        {
-                          title: 'Approval', dataIndex: 'approvalStatus', align: 'center',
-                          render: v => (
-                            <Tag color={v === 'Approved' ? 'success' : v === 'Rejected' ? 'error' : 'warning'} style={{ borderRadius: 12 }}>{v}</Tag>
-                          )
-                        },
-                      ]}
-                    />
-                  </Card>
-                )}
+                {isSuperOrAdmin && <StockCheckLog />}
               </div>
             )
           },
