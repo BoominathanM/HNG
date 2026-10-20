@@ -64,6 +64,7 @@ export const MODULE_TAB_DEFS = {
   ],
   'Task Management': [
     { key: 'current', label: 'Current Task' },
+    { key: 'assignee_tasks', label: 'Assignee Tasks' },
     { key: 'suggested', label: 'Suggested Task' },
     { key: 'pendingRemaining', label: 'Pending Remaining Qty' },
     { key: 'timeconfig', label: 'Time Management' },
@@ -130,6 +131,7 @@ export const MODULE_TAB_DEFS = {
     { key: 'task_performance', label: 'Task Management Performance' },
     { key: 'payment_bank_report', label: 'Payment Bank Details' },
     { key: 'lead_followup_report', label: 'Lead Follow-up Report' },
+    { key: 'assignee_task_report', label: 'Assignee Task Report' },
   ],
   Settings: [
     { key: 'general', label: 'General' },

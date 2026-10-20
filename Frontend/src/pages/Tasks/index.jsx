@@ -11,7 +11,7 @@ import {
   PlayCircleOutlined, PauseCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
   FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
   EditOutlined, DeleteOutlined, FieldTimeOutlined, RobotOutlined, TeamOutlined,
-  InfoCircleOutlined, GiftOutlined, SwapOutlined, TrophyOutlined, CalendarOutlined,
+  InfoCircleOutlined, GiftOutlined, SwapOutlined, TrophyOutlined, CalendarOutlined, UsergroupAddOutlined,
 } from '@ant-design/icons';
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
@@ -20,6 +20,7 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import TaskPerformanceReport from '../../components/reports/TaskPerformanceReport';
+import AssigneeTasksTab from './AssigneeTasksTab';
 import { estimateSecFor, secToHuman, perUnitLabel, unitToSec, secToUnit, ratingColor, ratingLabel } from '../../utils/taskTime';
 import {
   useGetTasksQuery,
@@ -40,6 +41,7 @@ import {
   useCreateTaskTimeConfigMutation,
   useUpdateTaskTimeConfigMutation,
   useDeleteTaskTimeConfigMutation,
+  useCreateAssigneeTasksMutation,
 } from '../../store/api/apiSlice';
 
 const { Title, Text } = Typography;
@@ -381,7 +383,24 @@ export default function Tasks() {
     () => (usersData?.data || []).filter((u) => u.fullName && u.role && u.department === 'Task Management'),
     [usersData],
   );
+  // "Task to Assignee" (New Task → Task For) can go to ANY active user, not just Task
+  // Management staff — grouped by department in the Assign To dropdown.
+  const assigneeTaskUserOptions = useMemo(() => {
+    const byDept = {};
+    (usersData?.data || [])
+      .filter((u) => u.fullName && u.status !== 'Inactive')
+      .forEach((u) => {
+        const dept = u.department || 'Other';
+        (byDept[dept] = byDept[dept] || []).push({ value: u._id, label: `${u.fullName}${u.role ? ` — ${u.role}` : ''}` });
+      });
+    return Object.keys(byDept).sort().map((dept) => ({
+      label: dept,
+      title: dept,
+      options: byDept[dept].sort((a, b) => a.label.localeCompare(b.label)),
+    }));
+  }, [usersData]);
   const [createTask] = useCreateTaskMutation();
+  const [createAssigneeTasks, { isLoading: creatingAssigneeTask }] = useCreateAssigneeTasksMutation();
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [reassignTask, { isLoading: reassigning }] = useReassignTaskMutation();
   const [dispatchTaskOrder, { isLoading: dispatching }] = useDispatchTaskOrderMutation();
@@ -645,7 +664,9 @@ export default function Tasks() {
   // Date-range filter for the Current Task (order-level) listing table — filters on
   // each order group's Expected Delivery Date, the date field already shown as a column.
   const [currentTaskDateRange, setCurrentTaskDateRange] = useState(null);
-  const [mainTab, setMainTab] = useState('suggested');
+  // ?tab=<key> (e.g. the Task to Assignee alert's View link) opens that tab; activeKeyFor
+  // below falls back to the first visible tab if it's unknown or not granted.
+  const [mainTab, setMainTab] = useState(() => new URLSearchParams(window.location.search).get('tab') || 'suggested');
   const { filterTabs, activeKeyFor } = useTabAccess('Task Management');
   const { requireAccess, canDelete } = usePageAccess('Task Management');
   const [view, setView] = useState('table');
@@ -1182,7 +1203,29 @@ export default function Tasks() {
     }
   };
 
+  // New Task → "Task to Assignee": one task per selected user (own collection — see
+  // AssigneeTasksTab), each ringing its assignee via the 'assignee_task' alert until they mark
+  // it Completed/Closed with remarks.
+  const handleCreateAssigneeTask = async () => {
+    try {
+      const vals = await form.validateFields(['taskFor', 'assigneeIds', 'description', 'endDate']);
+      const res = await createAssigneeTasks({
+        assigneeIds: vals.assigneeIds,
+        description: vals.description.trim(),
+        endDate: vals.endDate.format('YYYY-MM-DD'),
+      }).unwrap();
+      const n = res?.data?.length || vals.assigneeIds.length;
+      form.resetFields();
+      setModalOpen(false);
+      enqueueSnackbar(`Task assigned to ${n} ${n === 1 ? 'person' : 'people'}`, { variant: 'success' });
+    } catch (err) {
+      if (err?.errorFields) return;
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to assign task', { variant: 'error' });
+    }
+  };
+
   const handleCreateTask = async () => {
+    if (form.getFieldValue('taskFor') === 'assignee') return handleCreateAssigneeTask();
     try {
       const vals = await form.validateFields();
       // vals.orderId is a real Mongo ObjectId from the orders dropdown.
@@ -1297,6 +1340,10 @@ export default function Tasks() {
 
   // ── New Task modal: Order → Products → qty → estimate (mirrors Assign Task) ──
   const newOrderIdWatch = Form.useWatch('orderId', form);
+  // First field of the modal: 'order' = the existing Order → Products flow below (default),
+  // 'assignee' = a free-text task for one or more users (handleCreateAssigneeTask).
+  const newTaskForWatch = Form.useWatch('taskFor', form);
+  const isAssigneeTask = newTaskForWatch === 'assignee';
   const newProductIdxWatch = Form.useWatch('productIndex', form);
   // The order selected in the New Task modal + its line items (for the Product dropdown).
   const newSelectedOrder = useMemo(
@@ -1318,7 +1365,7 @@ export default function Tasks() {
   const openNewTaskModal = () => {
     if (!requireAccess('add')) return;
     form.resetFields();
-    form.setFieldsValue({ startTime: dayjs() });
+    form.setFieldsValue({ startTime: dayjs(), taskFor: 'order' });
     setNewSubTasks([]);
     setModalOpen(true);
   };
@@ -2938,6 +2985,16 @@ export default function Tasks() {
             ),
           },
           {
+            key: 'assignee_tasks',
+            label: (
+              <Space size={6}>
+                <UsergroupAddOutlined />
+                Assignee Tasks
+              </Space>
+            ),
+            children: <AssigneeTasksTab />,
+          },
+          {
             key: 'timeconfig',
             label: (
               <Space size={6}>
@@ -3040,149 +3097,204 @@ export default function Tasks() {
       <Modal title="Create New Task" open={modalOpen} onCancel={() => setModalOpen(false)}
         footer={[
           <Button key="cancel" onClick={() => setModalOpen(false)}>Cancel</Button>,
-          <Button key="save" type="primary" onClick={handleCreateTask} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>Create Task</Button>,
+          <Button key="save" type="primary" onClick={handleCreateTask} loading={isAssigneeTask && creatingAssigneeTask} style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}>{isAssigneeTask ? 'Assign Task' : 'Create Task'}</Button>,
         ]}
         width={Math.min(520, window.innerWidth - 32)}
         styles={{ body: { maxHeight: '70vh', overflowY: 'auto', paddingRight: 4 } }}>
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Row gutter={16}>
-            <Col xs={24} sm={12}>
-              <Form.Item label="Related Order" name="orderId">
-                <Select
-                  placeholder="Select Order"
-                  allowClear
-                  showSearch
-                  optionFilterProp="label"
-                  onChange={handleNewOrderChange}
-                  notFoundContent={ordersList.length ? 'No match' : 'No orders found'}
-                  options={ordersList.map((o) => ({
-                    value: o._id,
-                    label: `${o.orderCode || 'Order'}${o.clientName ? ` — ${o.clientName}` : ''}`,
-                  }))}
-                />
-              </Form.Item>
-            </Col>
-            <Col xs={24} sm={12}>
-              <Form.Item label="Product" name="productIndex" extra={!newOrderIdWatch ? 'Select an order first' : undefined}>
-                <Select
-                  placeholder={newOrderIdWatch ? 'Select product' : 'Select an order first'}
-                  allowClear
-                  disabled={!newOrderIdWatch}
-                  options={newOrderItems.map((it, idx) => ({
-                    value: idx,
-                    label: `${it.itemName || it.product || `Item ${idx + 1}`}${it.qty ? ` — ${Number(it.qty).toLocaleString()} units` : ''}`,
-                  }))}
-                />
-              </Form.Item>
-            </Col>
             <Col xs={24}>
-              <Form.Item label="Client Name" name="client">
-                <Input placeholder="Auto-filled from order" readOnly />
+              <Form.Item label="Task For" name="taskFor" initialValue="order" rules={[{ required: true, message: 'Select who this task is for' }]}>
+                <Select
+                  options={[
+                    { value: 'order', label: 'Task to Order' },
+                    { value: 'assignee', label: 'Task to Assignee' },
+                  ]}
+                />
               </Form.Item>
             </Col>
-            {/* Task Breakdown by Quantity — each task below is independent: its own Task
-                Name, its own Qty, and its own duration shown right on its card. Nothing
-                here is merged/summed across tasks; "units remaining" is just a qty guide. */}
-            {newSelectedItem && (
-              <Col xs={24}>
-                <Divider orientation="left" style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A30' }}>
-                  Task Breakdown by Quantity
-                </Divider>
-
-                {/* Sub-task rows — horizontal scroll keeps every field readable on narrow modals */}
-                <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
-                <Space direction="vertical" style={{ width: '100%', minWidth: 420 }} size={8}>
-                  {newSubTasks.map((task, idx) => {
-                    const rowEstimate = estimateSecFor(timeConfigs, { taskName: task.description }, Number(task.qty) || 0);
-                    const sameNameRows = task.description
-                      ? newSubTasks.filter((t) => normTaskName(t.description) === normTaskName(task.description))
-                      : [];
-                    const groupTotal = sameNameRows.reduce((sum, t) => sum + (Number(t.qty) || 0), 0);
-                    const otherSameNameTotal = groupTotal - (Number(task.qty) || 0);
-                    const groupMax = newTaskQty > 0 ? Math.max(0, newTaskQty - otherSameNameTotal) : undefined;
-                    const groupMet = newTaskQty > 0 && groupTotal >= newTaskQty;
-                    return (
-                    <div
-                      key={task.id}
-                      style={{
-                        display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 12px', borderRadius: 8,
-                        background: isDark ? '#161622' : '#fafafa', border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`,
-                      }}
-                    >
-                      <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                        <div style={{ flex: 2, minWidth: 0 }}>
-                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task {idx + 1} — Task Name</Text>
-                          <Select
-                            placeholder="Select task"
-                            showSearch
-                            optionFilterProp="label"
-                            allowClear
-                            value={task.description || undefined}
-                            onChange={(val) => updateNewSubTask(task.id, 'description', val)}
-                            style={{ width: '100%' }}
-                            notFoundContent={configTaskNameOptions.length ? 'No match' : 'No tasks configured — add one in Time Management'}
-                            options={configTaskNameOptions}
-                          />
-                        </div>
-                        <div style={{ width: 90, flexShrink: 0 }}>
-                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
-                          <InputNumber
-                            min={0}
-                            max={groupMax}
-                            placeholder="0"
-                            value={task.qty || undefined}
-                            onChange={(val) => updateNewSubTask(task.id, 'qty', val || 0)}
-                            style={{ width: '100%', borderRadius: 6 }}
-                          />
-                        </div>
-                        <div style={{ flex: 1.4, minWidth: 0 }}>
-                          <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
-                          <Select
-                            placeholder="Select"
-                            value={task.assignee || undefined}
-                            onChange={(val) => updateNewSubTask(task.id, 'assignee', val)}
-                            style={{ width: '100%' }}
-                            showSearch
-                            optionFilterProp="label"
-                            options={assignableUsers.map((u) => ({ value: u._id, label: `${u.fullName} — ${u.role}` }))}
-                          />
-                        </div>
-                        {newSubTasks.length > 1 && (
-                          <Button type="text" danger icon={<DeleteOutlined />} onClick={() => removeNewSubTask(task.id)} style={{ marginBottom: 0, flexShrink: 0 }} />
-                        )}
-                      </div>
-                      <Space size={4} wrap>
-                        {task.description && Number(task.qty) > 0 && (
-                          <Tag
-                            color={rowEstimate.matched ? 'purple' : 'default'}
-                            style={{ fontSize: 10, margin: 0 }}
-                          >
-                            {rowEstimate.matched
-                              ? `≈ ${secToHuman(rowEstimate.estimatedSec)} (${perUnitLabel(rowEstimate.perUnitSec)} × ${task.qty})`
-                              : 'No time standard configured for this task'}
-                          </Tag>
-                        )}
-                        {task.description && newTaskQty > 0 && (
-                          <Tag color={groupMet ? 'success' : 'default'} style={{ fontSize: 10, margin: 0 }}>
-                            {task.description}: {groupTotal.toLocaleString()} / {newTaskQty.toLocaleString()} units
-                          </Tag>
-                        )}
-                      </Space>
-                    </div>
-                    );
-                  })}
-                </Space>
-                </div>
-
-                <Button
-                  type="dashed"
-                  icon={<PlusOutlined />}
-                  onClick={addNewSubTask}
-                  style={{ width: '100%', marginTop: 10, borderColor: '#B11E6A', color: '#B11E6A' }}
-                >
-                  Add Task
-                </Button>
+            {!isAssigneeTask && (
+              <>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Related Order" name="orderId">
+                  <Select
+                    placeholder="Select Order"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    onChange={handleNewOrderChange}
+                    notFoundContent={ordersList.length ? 'No match' : 'No orders found'}
+                    options={ordersList.map((o) => ({
+                      value: o._id,
+                      label: `${o.orderCode || 'Order'}${o.clientName ? ` — ${o.clientName}` : ''}`,
+                    }))}
+                  />
+                </Form.Item>
               </Col>
+              <Col xs={24} sm={12}>
+                <Form.Item label="Product" name="productIndex" extra={!newOrderIdWatch ? 'Select an order first' : undefined}>
+                  <Select
+                    placeholder={newOrderIdWatch ? 'Select product' : 'Select an order first'}
+                    allowClear
+                    disabled={!newOrderIdWatch}
+                    options={newOrderItems.map((it, idx) => ({
+                      value: idx,
+                      label: `${it.itemName || it.product || `Item ${idx + 1}`}${it.qty ? ` — ${Number(it.qty).toLocaleString()} units` : ''}`,
+                    }))}
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24}>
+                <Form.Item label="Client Name" name="client">
+                  <Input placeholder="Auto-filled from order" readOnly />
+                </Form.Item>
+              </Col>
+              {/* Task Breakdown by Quantity — each task below is independent: its own Task
+                  Name, its own Qty, and its own duration shown right on its card. Nothing
+                  here is merged/summed across tasks; "units remaining" is just a qty guide. */}
+              {newSelectedItem && (
+                <Col xs={24}>
+                  <Divider orientation="left" style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A30' }}>
+                    Task Breakdown by Quantity
+                  </Divider>
+
+                  {/* Sub-task rows — horizontal scroll keeps every field readable on narrow modals */}
+                  <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
+                  <Space direction="vertical" style={{ width: '100%', minWidth: 420 }} size={8}>
+                    {newSubTasks.map((task, idx) => {
+                      const rowEstimate = estimateSecFor(timeConfigs, { taskName: task.description }, Number(task.qty) || 0);
+                      const sameNameRows = task.description
+                        ? newSubTasks.filter((t) => normTaskName(t.description) === normTaskName(task.description))
+                        : [];
+                      const groupTotal = sameNameRows.reduce((sum, t) => sum + (Number(t.qty) || 0), 0);
+                      const otherSameNameTotal = groupTotal - (Number(task.qty) || 0);
+                      const groupMax = newTaskQty > 0 ? Math.max(0, newTaskQty - otherSameNameTotal) : undefined;
+                      const groupMet = newTaskQty > 0 && groupTotal >= newTaskQty;
+                      return (
+                      <div
+                        key={task.id}
+                        style={{
+                          display: 'flex', flexDirection: 'column', gap: 4, padding: '10px 12px', borderRadius: 8,
+                          background: isDark ? '#161622' : '#fafafa', border: `1px solid ${isDark ? '#2a2a3e' : '#f0f0f0'}`,
+                        }}
+                      >
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                          <div style={{ flex: 2, minWidth: 0 }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Task {idx + 1} — Task Name</Text>
+                            <Select
+                              placeholder="Select task"
+                              showSearch
+                              optionFilterProp="label"
+                              allowClear
+                              value={task.description || undefined}
+                              onChange={(val) => updateNewSubTask(task.id, 'description', val)}
+                              style={{ width: '100%' }}
+                              notFoundContent={configTaskNameOptions.length ? 'No match' : 'No tasks configured — add one in Time Management'}
+                              options={configTaskNameOptions}
+                            />
+                          </div>
+                          <div style={{ width: 90, flexShrink: 0 }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Qty</Text>
+                            <InputNumber
+                              min={0}
+                              max={groupMax}
+                              placeholder="0"
+                              value={task.qty || undefined}
+                              onChange={(val) => updateNewSubTask(task.id, 'qty', val || 0)}
+                              style={{ width: '100%', borderRadius: 6 }}
+                            />
+                          </div>
+                          <div style={{ flex: 1.4, minWidth: 0 }}>
+                            <Text type="secondary" style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Assign To</Text>
+                            <Select
+                              placeholder="Select"
+                              value={task.assignee || undefined}
+                              onChange={(val) => updateNewSubTask(task.id, 'assignee', val)}
+                              style={{ width: '100%' }}
+                              showSearch
+                              optionFilterProp="label"
+                              options={assignableUsers.map((u) => ({ value: u._id, label: `${u.fullName} — ${u.role}` }))}
+                            />
+                          </div>
+                          {newSubTasks.length > 1 && (
+                            <Button type="text" danger icon={<DeleteOutlined />} onClick={() => removeNewSubTask(task.id)} style={{ marginBottom: 0, flexShrink: 0 }} />
+                          )}
+                        </div>
+                        <Space size={4} wrap>
+                          {task.description && Number(task.qty) > 0 && (
+                            <Tag
+                              color={rowEstimate.matched ? 'purple' : 'default'}
+                              style={{ fontSize: 10, margin: 0 }}
+                            >
+                              {rowEstimate.matched
+                                ? `≈ ${secToHuman(rowEstimate.estimatedSec)} (${perUnitLabel(rowEstimate.perUnitSec)} × ${task.qty})`
+                                : 'No time standard configured for this task'}
+                            </Tag>
+                          )}
+                          {task.description && newTaskQty > 0 && (
+                            <Tag color={groupMet ? 'success' : 'default'} style={{ fontSize: 10, margin: 0 }}>
+                              {task.description}: {groupTotal.toLocaleString()} / {newTaskQty.toLocaleString()} units
+                            </Tag>
+                          )}
+                        </Space>
+                      </div>
+                      );
+                    })}
+                  </Space>
+                  </div>
+
+                  <Button
+                    type="dashed"
+                    icon={<PlusOutlined />}
+                    onClick={addNewSubTask}
+                    style={{ width: '100%', marginTop: 10, borderColor: '#B11E6A', color: '#B11E6A' }}
+                  >
+                    Add Task
+                  </Button>
+                </Col>
+              )}
+              </>
+            )}
+            {isAssigneeTask && (
+              <>
+                <Col xs={24}>
+                  <Form.Item
+                    label="Assign To"
+                    name="assigneeIds"
+                    rules={[{ required: true, type: 'array', min: 1, message: 'Select at least one assignee' }]}
+                    extra="Pick one or more people — each gets their own copy of the task to update and close."
+                  >
+                    <Select
+                      mode="multiple"
+                      placeholder="Select assignee(s)"
+                      showSearch
+                      allowClear
+                      optionFilterProp="label"
+                      maxTagCount="responsive"
+                      notFoundContent={assigneeTaskUserOptions.length ? 'No match' : 'No active users found'}
+                      options={assigneeTaskUserOptions}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={24}>
+                  <Form.Item label="Description" name="description" rules={[{ required: true, whitespace: true, message: 'Enter the task description' }]}>
+                    <Input.TextArea rows={4} maxLength={2000} showCount placeholder="What needs to be done" />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} sm={12}>
+                  <Form.Item label="End Date" name="endDate" rules={[{ required: true, message: 'Select the end date' }]}>
+                    <DatePicker style={{ width: '100%' }} format="DD MMM YYYY" disabledDate={(d) => d && d.isBefore(dayjs(), 'day')} />
+                  </Form.Item>
+                </Col>
+                <Col xs={24}>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ borderRadius: 8 }}
+                    title="Each assignee is alerted (Settings → Alert Configuration → Task to Assignee Alert) until they mark the task Completed or Closed with remarks — from My Tasks in the top bar or the alert itself."
+                  />
+                </Col>
+              </>
             )}
 
           </Row>

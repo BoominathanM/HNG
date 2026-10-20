@@ -27,5 +27,6 @@ router.get('/damaged', ctrl.getDamagedReport);
 router.get('/damaged/export', ctrl.exportDamagedReport);
 router.get('/payment-bank', ctrl.getPaymentBankReport);
 router.get('/lead-followups', ctrl.getLeadFollowupReport);
+router.get('/assignee-tasks', ctrl.getAssigneeTaskReport);
 
 module.exports = router;

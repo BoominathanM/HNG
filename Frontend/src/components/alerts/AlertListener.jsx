@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useSelector } from 'react-redux';
 import { enqueueSnackbar, closeSnackbar } from 'notistack';
 import { Dropdown } from 'antd';
 import { useGetActiveAlertsQuery, useSnoozeAlertMutation, useStopAlertMutation } from '../../store/api/apiSlice';
+import AssigneeTaskStatusModal from '../tasks/AssigneeTaskStatusModal';
 import { GESTURE_EVENTS, showSoundBlockedHint, hideSoundBlockedHint, playOn, primeAudio, replayBlocked } from '../../utils/soundPlayback';
 
 const POLL_MS = 20000;
@@ -40,6 +41,9 @@ export default function AlertListener() {
   const { data } = useGetActiveAlertsQuery(undefined, { pollingInterval: POLL_MS });
   const [snoozeAlert] = useSnoozeAlertMutation();
   const [stopAlert] = useStopAlertMutation();
+  // "Task to Assignee" alerts have no Stop — they only stop once the task is marked
+  // Completed/Closed with remarks, so their toast opens this status modal instead.
+  const [statusTarget, setStatusTarget] = useState(null); // { taskId, snackKey }
 
   const playedRef = useRef(new Map()); // alertKey -> firedAt already rung
   const audioElRef = useRef(null);
@@ -153,9 +157,19 @@ export default function AlertListener() {
           >
             <button type="button" style={btnStyle}>Snooze ▾</button>
           </Dropdown>
-          <button type="button" onClick={handleStop} style={btnStyle}>
-            Stop
-          </button>
+          {next.group === 'assignee_task' ? (
+            <button
+              type="button"
+              onClick={() => setStatusTarget({ taskId: next.alertKey.split(':')[2], snackKey: key })}
+              style={btnStyle}
+            >
+              Update Status
+            </button>
+          ) : (
+            <button type="button" onClick={handleStop} style={btnStyle}>
+              Stop
+            </button>
+          )}
           <button
             type="button"
             onClick={() => closeSnackbar(key)}
@@ -181,5 +195,12 @@ export default function AlertListener() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data]);
 
-  return null;
+  return (
+    <AssigneeTaskStatusModal
+      open={!!statusTarget}
+      taskId={statusTarget?.taskId}
+      onClose={() => setStatusTarget(null)}
+      onUpdated={() => closeSnackbar(statusTarget?.snackKey)}
+    />
+  );
 }

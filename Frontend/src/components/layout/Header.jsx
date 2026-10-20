@@ -23,6 +23,7 @@ import {
   useDeleteAllNotificationsMutation,
 } from '../../store/api/apiSlice';
 import { motion } from 'framer-motion';
+import MyAssigneeTasks from '../tasks/MyAssigneeTasks';
 
 const { Header: AntHeader } = Layout;
 const { Text, Title } = Typography;
@@ -320,6 +321,9 @@ export default function Header({ onMobileMenuOpen }) {
             }}
           />
         </motion.div>
+
+        {/* My Tasks — "Task to Assignee" tasks assigned to me (renders nothing until I have one) */}
+        <MyAssigneeTasks />
 
         {/* Notifications */}
         <Popover

@@ -25,6 +25,10 @@ const {
   followupSchedule, followupDateFilter, leadIdsWithOrders, resolveFollowupRecipients,
 } = require('../../utils/leadFollowup');
 const { businessTodayKey } = require('../../utils/businessTime');
+const AssigneeTask = require('../../models/AssigneeTask');
+const {
+  CLOSED_STATUSES: ASSIGNEE_CLOSED_STATUSES, endDateKey: assigneeEndDateKey, deadlineState: assigneeDeadlineState,
+} = require('../../utils/assigneeTask');
 
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 
@@ -2589,6 +2593,129 @@ exports.getLeadFollowupReport = asyncHandler(async (req, res) => {
       beforeValue: Number(config.graceValue) || 0,
       beforeUnit: config.graceUnit || 'minutes',
       capDays: FOLLOWUP_ALERT_CAP_DAYS,
+    } : null,
+  });
+});
+
+// Reports → Assignee Task Report — every "Task to Assignee" task (Task Management → New Task
+// → Task for = Task to Assignee), one row per assignee: status, End Date standing, the
+// Completed/Closed remarks, the full status history, and where the 'assignee_task' alert
+// (Settings → Alert Configuration) stands for it. Date range filters on the assigned date.
+exports.getAssigneeTaskReport = asyncHandler(async (req, res) => {
+  const now = new Date();
+  const filter = { deletedAt: null, ...buildDateFilterOn(req, 'createdAt') };
+  const u = req.user;
+  const seesAll = !!u && (u.role === 'Super Admin' || u.role === 'Admin'
+    || u.department === 'Admin' || u.department === 'Management' || /manager|head/i.test(u.role || ''));
+  if (u && !seesAll) filter.$or = [{ assignedTo: u._id }, { createdBy: u._id }];
+
+  const [tasks, config] = await Promise.all([
+    AssigneeTask.find(filter).sort('-createdAt').lean(),
+    AlertConfig.findOne({ group: 'assignee_task' }).lean(),
+  ]);
+
+  const ids = tasks.map((t) => t._id);
+  const [logs, snoozes] = await Promise.all([
+    config && ids.length ? AlertFireLog.find({ configId: config._id, recordType: 'AssigneeTask', recordId: { $in: ids } }).lean() : [],
+    config && ids.length ? AlertSnooze.find({ configId: config._id, recordId: { $in: ids } }).lean() : [],
+  ]);
+  const logByTask = new Map(logs.map((g) => [String(g.recordId), g]));
+  const assigneeByTask = new Map(tasks.map((t) => [String(t._id), String(t.assignedTo)]));
+  const snoozeByTask = new Map();
+  snoozes.forEach((s) => {
+    // Only the assignee's own snooze matters — they're the only one this alert rings.
+    if (assigneeByTask.get(String(s.recordId)) === String(s.userId)) snoozeByTask.set(String(s.recordId), s);
+  });
+
+  // Who else got the same task in one submission (shared batchId).
+  const namesByBatch = new Map();
+  tasks.forEach((t) => {
+    if (!t.batchId) return;
+    if (!namesByBatch.has(t.batchId)) namesByBatch.set(t.batchId, []);
+    namesByBatch.get(t.batchId).push(t.assigneeName || '');
+  });
+
+  const data = tasks.map((t) => {
+    const id = String(t._id);
+    const isClosed = ASSIGNEE_CLOSED_STATUSES.includes(t.status);
+    // Mirrors the 'assignee_task' branch of getPendingRecordsForConfig + the scheduler's
+    // audio/enabled gates + the per-user snooze overlay in getActiveAlerts.
+    let alertStatus;
+    let alertAt = null;
+    let alertNote = '';
+    if (isClosed) {
+      alertStatus = 'Resolved';
+      alertNote = `Marked ${t.status}${t.closedByName ? ` by ${t.closedByName}` : ''}`;
+    } else if (!config?.isEnabled) {
+      alertStatus = 'Alert Off';
+    } else if (!config.audioUrl) {
+      alertStatus = 'Alert Off';
+      alertNote = 'No alert audio uploaded';
+    } else {
+      const log = logByTask.get(id);
+      const snooze = snoozeByTask.get(id);
+      if (!log) {
+        alertStatus = 'Waiting';
+        alertNote = 'Rings at the next alert check inside the alert window';
+      } else if (snooze?.action === 'snooze' && snooze.snoozedUntil && new Date(snooze.snoozedUntil) > now) {
+        alertStatus = 'Snoozed';
+        alertAt = snooze.snoozedUntil;
+      } else {
+        alertStatus = 'Ringing';
+        alertAt = log.lastFiredAt;
+      }
+    }
+    const history = (t.statusHistory || []).map((h) => ({
+      status: h.status, remarks: h.remarks || '', at: h.at, byName: h.byName || '',
+    }));
+    const last = history[history.length - 1];
+    const coAssignees = (namesByBatch.get(t.batchId) || []).filter((n) => n && n !== t.assigneeName);
+    return {
+      key: id,
+      id,
+      taskCode: t.taskCode || '',
+      description: t.description || '',
+      assignedAt: t.createdAt,
+      assignedBy: t.createdByName || '',
+      assignee: t.assigneeName || '',
+      assigneeRole: t.assigneeRole || '',
+      assigneeDepartment: t.assigneeDepartment || '',
+      coAssignees,
+      endDate: assigneeEndDateKey(t.endDate),
+      deadline: assigneeDeadlineState(t, now),
+      status: t.status,
+      statusUpdatedAt: last?.at || t.updatedAt,
+      statusUpdatedBy: last?.byName || '',
+      startedAt: t.startedAt || null,
+      closedAt: t.closedAt || null,
+      closedBy: t.closedByName || '',
+      remarks: t.remarks || '',
+      history,
+      alertStatus,
+      alertAt,
+      alertNote,
+    };
+  });
+
+  const count = (pred) => data.filter(pred).length;
+  res.status(200).json({
+    success: true,
+    data,
+    summary: {
+      total: data.length,
+      open: count((r) => r.status === 'Open'),
+      inProgress: count((r) => r.status === 'In Progress'),
+      completed: count((r) => r.status === 'Completed'),
+      closed: count((r) => r.status === 'Closed'),
+      overdue: count((r) => r.deadline === 'Overdue'),
+    },
+    alertConfig: config ? {
+      isEnabled: !!config.isEnabled,
+      hasAudio: !!config.audioUrl,
+      startTime: config.startTime,
+      endTime: config.endTime,
+      days: config.days || [],
+      durationMinutes: config.durationMinutes,
     } : null,
   });
 });

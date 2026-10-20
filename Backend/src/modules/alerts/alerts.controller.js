@@ -23,11 +23,11 @@ const isAdminOrManagement = (user) =>
 // cron tick has evaluated it — same latency as the scheduler's own cadence.
 exports.getActiveAlerts = asyncHandler(async (req, res) => {
   const now = new Date();
-  // 'task', 'dispatch_reason', 'sample_followup' and 'lead_followup' configs apply ONLY to
+  // 'task', 'dispatch_reason', 'sample_followup', 'lead_followup' and 'assignee_task' configs apply ONLY to
   // whichever record's dynamic recipient (task assignee / order's or lead's assigned sales
   // person, else the lead's creator) matches this user (checked per-item below), not to a
   // fixed recipientUserIds list.
-  const DYNAMIC_ONLY_GROUPS = ['task', 'dispatch_reason', 'sample_followup', 'lead_followup'];
+  const DYNAMIC_ONLY_GROUPS = ['task', 'dispatch_reason', 'sample_followup', 'lead_followup', 'assignee_task'];
   // 'dispatch_status' is hybrid — a record's dynamic recipient (order's assigned sales
   // person) is notified, AND separately any user in config.recipientUserIds (Finance,
   // picked by an admin) is notified too. Both checks run per-item below.
@@ -143,6 +143,11 @@ exports.stopAlert = asyncHandler(async (req, res, next) => {
 
   const config = await AlertConfig.findById(configId).lean();
   if (!config) return next(new AppError('Alert config not found', 404));
+  // A "Task to Assignee" alert only stops once the task is marked Completed/Closed with
+  // remarks (Update Status on the toast / My Tasks) — Snooze is still allowed.
+  if (config.group === 'assignee_task') {
+    return next(new AppError('Mark the task Completed or Closed with remarks to stop this alert', 400));
+  }
 
   const snooze = await AlertSnooze.findOneAndUpdate(
     { userId: req.user._id, alertKey },

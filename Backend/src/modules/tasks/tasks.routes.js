@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const ctrl = require('./tasks.controller');
 const timeConfigCtrl = require('./taskTimeConfig.controller');
+const assigneeTaskCtrl = require('./assigneeTask.controller');
 const { protect } = require('../../middleware/auth');
 
 router.use(protect);
@@ -18,6 +19,12 @@ router.get('/time-config', timeConfigCtrl.getAll);
 router.post('/time-config', timeConfigCtrl.create);
 router.put('/time-config/:id', timeConfigCtrl.update);
 router.delete('/time-config/:id', timeConfigCtrl.remove);
+
+// "Task to Assignee" tasks (New Task → Task For = Task to Assignee) — kept above '/:id'.
+router.get('/assignee-tasks', assigneeTaskCtrl.getAssigneeTasks);
+router.post('/assignee-tasks', assigneeTaskCtrl.createAssigneeTasks);
+router.get('/assignee-tasks/:id', assigneeTaskCtrl.getAssigneeTask);
+router.patch('/assignee-tasks/:id/status', assigneeTaskCtrl.updateAssigneeTaskStatus);
 
 router.post('/', ctrl.createTask);
 router.get('/:id', ctrl.getTask);

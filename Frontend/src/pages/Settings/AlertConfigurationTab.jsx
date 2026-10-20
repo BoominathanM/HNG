@@ -401,6 +401,29 @@ export default function AlertConfigurationTab() {
       <Divider />
 
       <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>Task to Assignee Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          Rings each person picked in Task Management → New Task → "Task to Assignee" from the moment the task is assigned, repeating on the schedule below, until that person marks it Completed or Closed with remarks.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('assignee_task', null)?._id || 'assignee_task'}
+            title="Task to Assignee Alert"
+            description="Notifies every selected assignee about their open task until they complete or close it."
+            group="assignee_task"
+            role={null}
+            config={findConfig('assignee_task', null)}
+            dynamicRecipient
+            dynamicNote="Recipients are the assignees chosen on each task — each person's alert stops only when they mark their task Completed or Closed with remarks. The alert offers Snooze and Update Status (no Stop)."
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
         <Title level={5} style={{ color: textColor, margin: 0 }}>Dispatch Reason Alert</Title>
         <Text style={{ color: subText, fontSize: 13 }}>
           Rings the order's own assigned sales person when Dispatch reports an invoice/lorry receipt mismatch reason, until it's approved or rejected.

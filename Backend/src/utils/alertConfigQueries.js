@@ -10,11 +10,13 @@ const QuotationRequest = require('../models/QuotationRequest');
 const DispatchRecord = require('../models/DispatchRecord');
 const ForecastReorderState = require('../models/ForecastReorderState');
 const Lead = require('../models/Lead');
+const AssigneeTask = require('../models/AssigneeTask');
 const { getConsumptionForecastData } = require('./consumptionForecast');
 const {
   CLOSED_LEAD_STATUSES, FOLLOWUP_ALERT_CAP_DAYS, LEAD_FOLLOWUP_SELECT,
   followupSchedule, fmtFollowup, followupDateFilter, leadIdsWithOrders, resolveFollowupRecipients,
 } = require('./leadFollowup');
+const { OPEN_STATUSES: ASSIGNEE_OPEN_STATUSES, alertTitle: assigneeTaskAlertTitle } = require('./assigneeTask');
 
 // Grace period ('low_stock'/'quotation_request'/'consumption_forecast'/'sample_followup'
 // only) — how long a record must stay pending before the FIRST alert fires, in
@@ -115,6 +117,27 @@ async function getPendingRecordsForConfig(config) {
       recipientUserId: r.assignedTo,
       title: titleFor(config, 'Task', r),
       link: linkFor('Task', r),
+    }));
+  }
+
+  if (config.group === 'assignee_task') {
+    // "Task to Assignee" (Task Management → New Task → Task for = Task to Assignee). One
+    // AssigneeTask per assignee, so each one rings only its own assignee (dynamic per-record
+    // recipient, like 'task') from assignment until THEY mark it Completed or Closed with
+    // remarks — the toast offers Update Status instead of Stop (stopAlert refuses this group).
+    const items = await AssigneeTask.find({
+      status: { $in: ASSIGNEE_OPEN_STATUSES },
+      assignedTo: { $ne: null },
+      deletedAt: null,
+    }).lean();
+    const now = new Date();
+    return items.map((r) => ({
+      recordType: 'AssigneeTask',
+      recordId: r._id,
+      record: r,
+      recipientUserId: r.assignedTo,
+      title: assigneeTaskAlertTitle(r, now),
+      link: '/tasks?tab=assignee_tasks',
     }));
   }
 

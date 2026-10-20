@@ -6,10 +6,11 @@ const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 // `sales_approval` + 1 for `operations_approval` + 1 for `task` + 1 for
 // `dispatch_reason` + 1 for `dispatch_status` + 1 for `lr_payment` + 1 for
 // `low_stock` + 1 for `quotation_request` + 1 for `short_received` + 1 for
-// `consumption_forecast` + 1 for `sample_followup` + 1 for `lead_followup`. Seeded idempotently at startup
+// `consumption_forecast` + 1 for `sample_followup` + 1 for `lead_followup` + 1 for
+// `assignee_task`. Seeded idempotently at startup
 // (see utils/autoSeed.js) so the Settings UI always edits known rows.
 const alertConfigSchema = new mongoose.Schema({
-  group: { type: String, enum: ['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'dispatch_status', 'lr_payment', 'low_stock', 'quotation_request', 'short_received', 'consumption_forecast', 'sample_followup', 'lead_followup'], required: true },
+  group: { type: String, enum: ['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'dispatch_status', 'lr_payment', 'low_stock', 'quotation_request', 'short_received', 'consumption_forecast', 'sample_followup', 'lead_followup', 'assignee_task'], required: true },
   // Only set (and only meaningful) for group:'design'. Matches User.role values
   // (e.g. 'Ziplock'), NOT StickerRequest.stickerType (e.g. 'Frosted Ziplock') —
   // see ROLE_TO_STICKER_TYPE in utils/alertConfigQueries.js for the translation.

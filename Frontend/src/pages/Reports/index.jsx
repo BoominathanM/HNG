@@ -15,6 +15,7 @@ import TaskPerformanceReport from '../../components/reports/TaskPerformanceRepor
 import DamagedReport from '../../components/reports/DamagedReport';
 import PaymentBankReport from '../../components/reports/PaymentBankReport';
 import LeadFollowupReport from '../../components/reports/LeadFollowupReport';
+import AssigneeTaskReport from '../../components/reports/AssigneeTaskReport';
 import {
   useGetSalesReportQuery,
   useGetPurchaseReportQuery,
@@ -234,6 +235,7 @@ export default function Reports() {
   const paymentBankReportRef = useRef(null);
   // Same for the Lead Follow-up Report tab.
   const leadFollowupReportRef = useRef(null);
+  const assigneeTaskReportRef = useRef(null);
 
   const handlePeriodChange = (period) => {
     setHeaderPeriod(period);
@@ -733,6 +735,7 @@ export default function Reports() {
     switch_report: { excel: exportSwExcel, pdf: exportSwPdf },
     payment_bank_report: { excel: () => paymentBankReportRef.current?.excel(), pdf: () => paymentBankReportRef.current?.pdf() },
     lead_followup_report: { excel: () => leadFollowupReportRef.current?.excel(), pdf: () => leadFollowupReportRef.current?.pdf() },
+    assignee_task_report: { excel: () => assigneeTaskReportRef.current?.excel(), pdf: () => assigneeTaskReportRef.current?.pdf() },
   };
 
   return (
@@ -3281,6 +3284,13 @@ export default function Reports() {
             key: 'lead_followup_report',
             label: 'Lead Follow-up Report',
             children: <LeadFollowupReport ref={leadFollowupReportRef} headerDateRange={headerDateRange} />,
+          },
+
+          /* ─────────── ASSIGNEE TASK REPORT ─────────── */
+          {
+            key: 'assignee_task_report',
+            label: 'Assignee Task Report',
+            children: <AssigneeTaskReport ref={assigneeTaskReportRef} headerDateRange={headerDateRange} />,
           },
         ])}
       />

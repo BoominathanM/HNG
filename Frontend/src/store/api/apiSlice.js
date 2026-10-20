@@ -47,6 +47,7 @@ export const apiSlice = createApi({
     'AiConfig', 'QuotationComparisons',
     'HiddenQueueRows',
     'Hrms', 'HrmsGeo',
+    'AssigneeTasks',
   ],
   endpoints: (builder) => ({
 
@@ -1113,6 +1114,25 @@ export const apiSlice = createApi({
       query: ({ id, assignedTo, fromAssignedTo }) => ({ url: `/tasks/${id}/reassign`, method: 'patch', data: { assignedTo, ...(fromAssignedTo ? { fromAssignedTo } : {}) } }),
       invalidatesTags: ['Tasks'],
     }),
+    // "Task to Assignee" tasks (New Task → Task for = Task to Assignee) — own collection, so
+    // these never touch the 'Tasks' cache. Status changes also refresh ActiveAlerts so the
+    // assignee's ringing stops right away on Completed/Closed.
+    getAssigneeTasks: builder.query({
+      query: (params) => ({ url: '/tasks/assignee-tasks', params }),
+      providesTags: ['AssigneeTasks'],
+    }),
+    getAssigneeTask: builder.query({
+      query: (id) => ({ url: `/tasks/assignee-tasks/${id}` }),
+      providesTags: (result, error, id) => ['AssigneeTasks', { type: 'AssigneeTasks', id }],
+    }),
+    createAssigneeTasks: builder.mutation({
+      query: (data) => ({ url: '/tasks/assignee-tasks', method: 'post', data }),
+      invalidatesTags: ['AssigneeTasks', 'ActiveAlerts', 'Reports'],
+    }),
+    updateAssigneeTaskStatus: builder.mutation({
+      query: ({ id, status, remarks }) => ({ url: `/tasks/assignee-tasks/${id}/status`, method: 'patch', data: { status, remarks } }),
+      invalidatesTags: ['AssigneeTasks', 'ActiveAlerts', 'Reports'],
+    }),
     approveEmergency: builder.mutation({
       query: (id) => ({ url: `/tasks/${id}/approve-emergency`, method: 'patch' }),
       invalidatesTags: ['Tasks'],
@@ -1545,6 +1565,10 @@ export const apiSlice = createApi({
     getLeadFollowupReport: builder.query({
       query: (params) => ({ url: '/reports/lead-followups', params }),
       providesTags: ['Reports', 'Leads'],
+    }),
+    getAssigneeTaskReport: builder.query({
+      query: (params) => ({ url: '/reports/assignee-tasks', params }),
+      providesTags: ['Reports', 'AssigneeTasks'],
     }),
 
     // ── WhatsApp ────────────────────────────────────────────────────────────
@@ -2040,6 +2064,11 @@ export const {
   useGetDamagedReportQuery,
   useGetPaymentBankReportQuery,
   useGetLeadFollowupReportQuery,
+  useGetAssigneeTaskReportQuery,
+  useGetAssigneeTasksQuery,
+  useGetAssigneeTaskQuery,
+  useCreateAssigneeTasksMutation,
+  useUpdateAssigneeTaskStatusMutation,
   useUploadFilesMutation,
   useDeleteFileMutation,
   // WhatsApp
