@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from 'react'; // useEffect intentionally removed — data from RTK Query
+import React, { useState, useMemo, useEffect } from 'react'; // data from RTK Query — useEffect only syncs the Pay Now form
+import dayjs from 'dayjs';
 import { useCloudinaryUpload } from '../../hooks/useCloudinaryUpload';
 import {
   Row, Col, Card, Table, Tag, Button, Typography, Space, Select, Tabs, Statistic, Divider,
@@ -146,6 +147,17 @@ export default function Financial() {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [selectedForPayment, setSelectedForPayment] = useState(null);
   const [paymentForm] = Form.useForm();
+
+  // The Pay Now form instance is shared by every row, and antd keeps its stored values over a
+  // remount's initialValues — so set the LR Copy Reminder Date explicitly for the row being
+  // opened. Otherwise the previous row's date carries over (and a carried-over blank would
+  // clear this row's existing reminder on submit).
+  useEffect(() => {
+    if (!showPaymentModal || !selectedForPayment) return;
+    paymentForm.setFieldsValue({
+      lr_reminder_date: selectedForPayment.lrReminderDate ? dayjs(selectedForPayment.lrReminderDate.slice(0, 10)) : null,
+    });
+  }, [showPaymentModal, selectedForPayment, paymentForm]);
 
   /* ── Notes: Quotation Requests table (uses Redux raisedRequests.notes) ── */
   const [openReqNotes, setOpenReqNotes] = useState(null);
@@ -391,12 +403,24 @@ export default function Financial() {
       if (proofFile?.url) fd.append('proofUrl', proofFile.url);
       else if (proofFile?.originFileObj) fd.append('proof', proofFile.originFileObj);
 
+      let reminderMsg = '';
       if (selectedForPayment.bill_no?.startsWith('EXP')) {
         await payExpense({ id: selectedForPayment.key, formData: fd }).unwrap();
       } else {
+        // LR Copy Reminder Date — only sent when the field was shown (LR copy not uploaded
+        // yet); a cleared picker sends '' so the backend drops an earlier reminder.
+        if (selectedForPayment.poCode && !selectedForPayment.lrFileUrl) {
+          const d = values.lr_reminder_date;
+          if (d) {
+            fd.append('lrReminderDate', d.format('YYYY-MM-DD'));
+            reminderMsg = ` LR copy reminder set for ${d.format('DD MMM YYYY')}.`;
+          } else if (selectedForPayment.lrReminderDate) {
+            fd.append('lrReminderDate', '');
+          }
+        }
         await payOrder({ id: selectedForPayment.key, formData: fd }).unwrap();
       }
-      enqueueSnackbar(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}`, { variant: 'success' });
+      enqueueSnackbar(`Payment of ₹${paidAmt.toLocaleString()} processed. Status: ${finalStatus}.${reminderMsg}`, { variant: 'success' });
     } catch {
       enqueueSnackbar('Payment failed', { variant: 'error' });
     }
@@ -610,7 +634,16 @@ export default function Financial() {
       render: (_, r) => {
         const order = findOrderForRequest(r);
         if (!order) return <Text type="secondary">—</Text>;
-        return <Tag color={getStatusColor(order.status)} style={{ borderRadius: 10, margin: 0 }}>{order.status}</Tag>;
+        const tag = <Tag color={getStatusColor(order.status)} style={{ borderRadius: 10, margin: 0 }}>{order.status}</Tag>;
+        if (r.isBatchChild || !order.lrReminderDate || order.lrFileUrl) return tag;
+        return (
+          <Space direction="vertical" size={2}>
+            {tag}
+            <Tooltip title="LR Copy Reminder Date — Purchase is alerted from this date until the LR copy is uploaded">
+              <Text type="secondary" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>LR copy by {dayjs(order.lrReminderDate.slice(0, 10)).format('DD MMM')}</Text>
+            </Tooltip>
+          </Space>
+        );
       }
     },
     {
@@ -1541,7 +1574,7 @@ export default function Financial() {
         centered
       >
         {selectedForPayment && (
-          <Form form={paymentForm} layout="vertical" onFinish={handleProcessPayment} initialValues={{ amount_paid: selectedForPayment.amount - (selectedForPayment.paid_amount || 0) }}>
+          <Form form={paymentForm} layout="vertical" onFinish={handleProcessPayment} initialValues={{ amount_paid: selectedForPayment.amount - (selectedForPayment.paid_amount || 0), lr_reminder_date: selectedForPayment.lrReminderDate ? dayjs(selectedForPayment.lrReminderDate.slice(0, 10)) : null }}>
             <Descriptions bordered column={1} size="small">
               <Descriptions.Item label="Payee">{selectedForPayment.item || selectedForPayment.desc}</Descriptions.Item>
               <Descriptions.Item label="Total Amount Due"><Text strong style={{ color: '#B11E6A', fontSize: 18 }}>₹{selectedForPayment.amount.toLocaleString()}</Text></Descriptions.Item>
@@ -1597,6 +1630,30 @@ export default function Financial() {
                 </Form.Item>
               </Col>
             </Row>
+
+            {/* Purchase orders only — rings the Purchase users picked in Settings → Alert
+                Configuration → LR Copy Reminder Alert from this date until the LR copy is
+                uploaded in Purchase → Upload LR Copies. */}
+            {selectedForPayment.poCode && !selectedForPayment.bill_no?.startsWith('EXP') && (
+              selectedForPayment.lrFileUrl ? (
+                <div style={{ marginBottom: 16 }}>
+                  <Tag color="success" style={{ borderRadius: 8 }}><CheckCircleOutlined style={{ marginRight: 4 }} />LR copy already uploaded by Purchase</Tag>
+                </div>
+              ) : (
+                <Form.Item
+                  label="LR Copy Reminder Date"
+                  name="lr_reminder_date"
+                  extra="Optional — from this date Purchase is alerted until the LR copy is uploaded."
+                >
+                  <DatePicker
+                    style={{ width: '100%' }}
+                    format="DD MMM YYYY"
+                    placeholder="Select reminder date"
+                    disabledDate={(d) => d && d.isBefore(dayjs(), 'day')}
+                  />
+                </Form.Item>
+              )
+            )}
 
             {selectedForPayment?.proofUrl && (
               <div style={{ marginBottom: 16 }}>

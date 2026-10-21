@@ -89,6 +89,7 @@ const ALERT_CONFIG_ROWS = [
   { group: 'sample_followup', role: null },
   { group: 'lead_followup', role: null },
   { group: 'assignee_task', role: null },
+  { group: 'lr_copy_reminder', role: null },
 ];
 
 const seedAlertConfigsIfMissing = async () => {

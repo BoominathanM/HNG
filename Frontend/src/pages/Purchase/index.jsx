@@ -281,6 +281,7 @@ export default function Purchase() {
       status: o.paymentStatus, paid_amount: o.paidAmount || 0,
       payment_proof: o.paymentProofUrl || null, paymentHistory: o.paymentHistory || [],
       lrNumber: o.lrNumber || null, lrFileUrl: o.lrFileUrl || null,
+      lrReminderDate: o.lrReminderDate ? o.lrReminderDate.slice(0, 10) : null,
       expectedDeliveryDate: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : null,
       lrPaymentStatus: o.lrPaymentStatus || null,
       billTotalAmount: o.billTotalAmount || 0,
@@ -636,6 +637,21 @@ export default function Purchase() {
   const lrFileWatch = Form.useWatch('lr_file', lrUploadForm);
   const lrFileUploading = !!lrFileWatch?.fileList?.some((f) => f.status === 'uploading');
   const [lrScanLoading, setLrScanLoading] = useState(false);
+  // Finance's LR Copy Reminder Date (Financial → Process Payment & Upload Proof) — the
+  // 'lr_copy_reminder' alert rings Purchase from that date until an LR copy FILE is saved,
+  // so the file is mandatory in the LR modal while such a reminder is pending.
+  const lrCopyReminderPending = (order) => !!order?.lrReminderDate && !order.lrFileUrl;
+  const renderLrReminderTag = (order) => {
+    if (!lrCopyReminderPending(order)) return null;
+    const due = !dayjs().isBefore(dayjs(order.lrReminderDate), 'day');
+    return (
+      <Tooltip title="Finance set an LR copy reminder — the alert rings from this date until the LR copy file is uploaded">
+        <Tag color={due ? 'error' : 'orange'} style={{ borderRadius: 8, margin: 0, fontSize: 10 }}>
+          {due ? 'LR copy due' : 'LR copy by'} {dayjs(order.lrReminderDate).format('DD MMM')}
+        </Tag>
+      </Tooltip>
+    );
+  };
 
   /* ── "Verified by" for received orders ── */
   const [verifiedByName, setVerifiedByName] = useState('');
@@ -2419,6 +2435,7 @@ export default function Purchase() {
                                     </Tag>
                                     <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
                                     <Text type="secondary" style={{ fontSize: 10 }}>Delivery: {lr.deliveryDate}</Text>
+                                    {renderLrReminderTag(linkedOrder)}
                                     <Button size="small" icon={<EditOutlined />}
                                       onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus, bill_total_amount: lr.billTotalAmount || linkedOrder.billTotalAmount || 0, lr_gst_amount: linkedOrder.lrGstAmount || 0, lr_cgst_amount: linkedOrder.lrCgstAmount || 0, lr_sgst_amount: linkedOrder.lrSgstAmount || 0, lr_igst_amount: linkedOrder.lrIgstAmount || 0 }); setShowLRUploadModal(true); }}
                                       style={{ fontSize: 11, height: 22, padding: '0 8px' }}>Edit</Button>
@@ -2426,11 +2443,14 @@ export default function Purchase() {
                                 );
                               }
                               return (
-                                <Button size="small" icon={<UploadOutlined />}
-                                  onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.resetFields(); setShowLRUploadModal(true); }}
-                                  style={{ borderColor: '#1890ff', color: '#1890ff' }}>
-                                  Upload
-                                </Button>
+                                <Space direction="vertical" size={2}>
+                                  <Button size="small" icon={<UploadOutlined />}
+                                    onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.name }); lrUploadForm.resetFields(); setShowLRUploadModal(true); }}
+                                    style={{ borderColor: '#1890ff', color: '#1890ff' }}>
+                                    Upload
+                                  </Button>
+                                  {renderLrReminderTag(linkedOrder)}
+                                </Space>
                               );
                             }
                           },
@@ -2844,6 +2864,7 @@ export default function Purchase() {
                                     </Tag>
                                     <Text type="secondary" style={{ fontSize: 11 }}>LR: <Text strong style={{ fontSize: 11 }}>{lr.lrNumber}</Text></Text>
                                     <Text type="secondary" style={{ fontSize: 10 }}>Delivery: {lr.deliveryDate}</Text>
+                                    {renderLrReminderTag(linkedOrder)}
                                     <Button size="small" icon={<EditOutlined />}
                                       onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.setFieldsValue({ lr_number: lr.lrNumber, delivery_date: dayjs(lr.deliveryDate), paid_status: lr.paidStatus, bill_total_amount: lr.billTotalAmount || linkedOrder.billTotalAmount || 0, lr_gst_amount: linkedOrder.lrGstAmount || 0, lr_cgst_amount: linkedOrder.lrCgstAmount || 0, lr_sgst_amount: linkedOrder.lrSgstAmount || 0, lr_igst_amount: linkedOrder.lrIgstAmount || 0 }); setShowLRUploadModal(true); }}
                                       style={{ fontSize: 11, height: 22, padding: '0 8px' }}>Edit</Button>
@@ -2851,11 +2872,14 @@ export default function Purchase() {
                                 );
                               }
                               return (
-                                <Button size="small" icon={<UploadOutlined />}
-                                  onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.resetFields(); setShowLRUploadModal(true); }}
-                                  style={{ borderColor: '#1890ff', color: '#1890ff' }}>
-                                  Upload
-                                </Button>
+                                <Space direction="vertical" size={2}>
+                                  <Button size="small" icon={<UploadOutlined />}
+                                    onClick={() => { setLrUploadTarget({ order: linkedOrder, itemName: r.item }); lrUploadForm.resetFields(); setShowLRUploadModal(true); }}
+                                    style={{ borderColor: '#1890ff', color: '#1890ff' }}>
+                                    Upload
+                                  </Button>
+                                  {renderLrReminderTag(linkedOrder)}
+                                </Space>
                               );
                             }
                           },
@@ -6267,6 +6291,10 @@ export default function Purchase() {
               }
               const fileUrl = fileItem?.url || null;
               const fileName = fileItem?.name || '';
+              if (!fileUrl && lrCopyReminderPending(lrUploadTarget.order)) {
+                enqueueSnackbar('Finance set an LR copy reminder for this order — attach the LR copy to save.', { variant: 'warning' });
+                return;
+              }
               try {
                 // Persists the LR + Expected Delivery Date on the PurchaseOrder and
                 // upserts the matching Dispatch "Pick Up Order" entry — this is what
@@ -6326,7 +6354,21 @@ export default function Purchase() {
                 <Option value="Not Paid">Not Paid — Finance will be notified on delivery date</Option>
               </Select>
             </Form.Item>
-            <Form.Item label="Upload LR Copy" name="lr_file">
+            {lrCopyReminderPending(lrUploadTarget.order) && (
+              <Alert
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12, borderRadius: 8 }}
+                message={`Finance set an LR copy reminder for ${dayjs(lrUploadTarget.order.lrReminderDate).format('DD MMM YYYY')} — attach the LR copy below to stop the reminder alert.`}
+              />
+            )}
+            <Form.Item
+              label="Upload LR Copy"
+              name="lr_file"
+              rules={lrCopyReminderPending(lrUploadTarget.order) ? [{
+                validator: (_, v) => (v?.fileList?.length ? Promise.resolve() : Promise.reject(new Error('Attach the LR copy (Finance reminder pending)'))),
+              }] : []}
+            >
               <Upload.Dragger maxCount={1} customRequest={makeUpload('purchase/lr')} style={{ background: isDark ? '#1a1a2e' : '#fafafa', borderRadius: 8 }}>
                 <p className="ant-upload-drag-icon"><FileTextOutlined style={{ color: '#1890ff' }} /></p>
                 <p className="ant-upload-text">Click or drag LR document to upload</p>

@@ -18,7 +18,7 @@ const OPTIONAL_GRACE_GROUPS = ['lead_followup'];
 exports.saveAlertConfig = asyncHandler(async (req, res, next) => {
   const { group, role, recipientUserIds, startTime, endTime, days, durationMinutes, graceValue, graceUnit, audioUrl, audioPublicId, audioName, isEnabled } = req.body;
 
-  if (!['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'dispatch_status', 'lr_payment', 'low_stock', 'quotation_request', 'short_received', 'consumption_forecast', 'sample_followup', 'lead_followup', 'assignee_task'].includes(group)) {
+  if (!['design', 'sales_approval', 'operations_approval', 'task', 'dispatch_reason', 'dispatch_status', 'lr_payment', 'low_stock', 'quotation_request', 'short_received', 'consumption_forecast', 'sample_followup', 'lead_followup', 'assignee_task', 'lr_copy_reminder'].includes(group)) {
     return next(new AppError('Invalid alert group', 400));
   }
   if (group === 'design' && !['Sticker', 'Box', 'Ziplock', 'Butter Paper', 'Wooden Brush', 'Other'].includes(role)) {

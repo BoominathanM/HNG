@@ -494,6 +494,29 @@ export default function AlertConfigurationTab() {
       <Divider />
 
       <div style={{ marginBottom: 16 }}>
+        <Title level={5} style={{ color: textColor, margin: 0 }}>LR Copy Reminder Alert</Title>
+        <Text style={{ color: subText, fontSize: 13 }}>
+          From the LR Copy Reminder Date Finance picks while paying a purchase order (Financial → Process Payment &amp; Upload Proof), rings the selected Purchase users — repeating on the schedule below — until the LR copy is uploaded in Purchase → Upload LR Copies.
+        </Text>
+      </div>
+      <Row gutter={[16, 16]}>
+        <Col xs={24} md={12}>
+          <AlertConfigCard
+            key={findConfig('lr_copy_reminder', null)?._id || 'lr_copy_reminder'}
+            title="LR Copy Reminder Alert"
+            description="Notifies selected Purchase users about purchase orders whose LR copy is still not uploaded on/after Finance's reminder date."
+            group="lr_copy_reminder"
+            role={null}
+            config={findConfig('lr_copy_reminder', null)}
+            recipientPool={purchaseUsers}
+            deptLabel="Purchase"
+          />
+        </Col>
+      </Row>
+
+      <Divider />
+
+      <div style={{ marginBottom: 16 }}>
         <Title level={5} style={{ color: textColor, margin: 0 }}>Short-Received Purchase Orders Alert</Title>
         <Text style={{ color: subText, fontSize: 13 }}>
           Rings the selected Dispatch / Financial / Purchase users while a purchase order is partially received (missed by the lorry/vendor), repeating on the schedule below, until Purchase marks it "Completely Received" in the Missing/Short-Received Orders table's Action Taken dropdown.

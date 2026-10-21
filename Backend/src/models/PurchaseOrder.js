@@ -74,6 +74,13 @@ const purchaseOrderSchema = new mongoose.Schema({
   // lrPaymentStatus once Finance starts paying in parts (Financial → Reimbursement
   // Expense → LR Payment tab).
   lrPaidAmount: { type: Number, default: 0 },
+  // LR Copy Reminder Date — picked by Finance in Financial → Process Payment & Upload
+  // Proof. From this business day the 'lr_copy_reminder' AlertConfig rings the selected
+  // Purchase users (on its repeat cadence) until an LR copy file is saved via Purchase →
+  // Upload LR Copies (lrFileUrl). Stored as UTC midnight of the picked 'YYYY-MM-DD'.
+  lrReminderDate: { type: Date, default: null },
+  lrReminderSetBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  lrReminderSetAt: Date,
   dispatchStatus: { type: String, enum: ['Pending', 'In Transit', 'Received', 'Partially Received'], default: 'Pending' },
   receivedAt: Date,
   stockUpdated: { type: Boolean, default: false },

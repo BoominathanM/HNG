@@ -425,7 +425,8 @@ export const apiSlice = createApi({
     }),
     uploadPurchaseLR: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/purchase/orders/${id}/lr`, method: 'patch', data }),
-      invalidatesTags: ['PurchaseOrders', 'Reports'],
+      // 'Financial' — the Quotation Requests table/payment modal show the LR copy reminder state.
+      invalidatesTags: ['PurchaseOrders', 'Reports', 'Financial'],
     }),
     scanPurchaseLR: builder.mutation({
       // Backend gives the OpenAI call up to 180s for large scanned documents —

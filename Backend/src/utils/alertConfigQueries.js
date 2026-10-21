@@ -17,6 +17,7 @@ const {
   followupSchedule, fmtFollowup, followupDateFilter, leadIdsWithOrders, resolveFollowupRecipients,
 } = require('./leadFollowup');
 const { OPEN_STATUSES: ASSIGNEE_OPEN_STATUSES, alertTitle: assigneeTaskAlertTitle } = require('./assigneeTask');
+const { businessDayRange } = require('./businessTime');
 
 // Grace period ('low_stock'/'quotation_request'/'consumption_forecast'/'sample_followup'
 // only) — how long a record must stay pending before the FIRST alert fires, in
@@ -222,6 +223,30 @@ async function getPendingRecordsForConfig(config) {
       title: `LR payment due — ${r.itemName || r.poCode}${r.lrNumber ? ` (LR ${r.lrNumber})` : ''}${r.lrPaymentStatus === 'Partial Paid' ? ' (Partially Paid)' : ''}`,
       link: '/financial',
     }));
+  }
+
+  if (config.group === 'lr_copy_reminder') {
+    // Finance's LR Copy Reminder Date (Financial → Process Payment & Upload Proof) — from
+    // that business day, ring the selected Purchase users (fixed recipientUserIds, like
+    // 'lr_payment') on the config's cadence until an LR copy FILE is saved against the
+    // order via Purchase → Upload LR Copies (lrFileUrl). Moving the date later drops the
+    // order out of this set until then, so the reconciliation re-rings it afresh.
+    const { todayEnd } = businessDayRange();
+    const items = await PurchaseOrder.find({
+      lrReminderDate: { $ne: null, $lte: todayEnd },
+      $or: [{ lrFileUrl: null }, { lrFileUrl: '' }],
+    }).populate('vendorId', 'name').lean();
+    return items.map((r) => {
+      const what = r.items?.length > 1 ? `${r.items.length} products` : (r.itemName || 'order');
+      const vendor = r.vendorId?.name;
+      return {
+        recordType: 'PurchaseOrder',
+        recordId: r._id,
+        record: r,
+        title: `LR copy not uploaded — ${r.poCode || 'PO'}: ${what}${vendor ? ` (${vendor})` : ''}${r.lrNumber ? `, LR ${r.lrNumber}` : ''} · reminder ${new Date(r.lrReminderDate).toISOString().slice(0, 10)}`,
+        link: '/purchase',
+      };
+    });
   }
 
   if (config.group === 'short_received') {

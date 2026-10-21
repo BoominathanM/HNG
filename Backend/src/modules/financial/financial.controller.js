@@ -151,6 +151,17 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
   const order = await PurchaseOrder.findById(req.params.id);
   if (!order) return next(new AppError('Purchase order not found', 404));
 
+  // Optional LR Copy Reminder Date ('YYYY-MM-DD') — drives the 'lr_copy_reminder' alert to
+  // Purchase until the LR copy is uploaded. Absent = leave as-is, '' = clear it.
+  let lrReminderDate;
+  if (req.body.lrReminderDate !== undefined) {
+    const raw = String(req.body.lrReminderDate || '').trim();
+    if (raw && (!/^\d{4}-\d{2}-\d{2}$/.test(raw) || Number.isNaN(new Date(raw).getTime()))) {
+      return next(new AppError('Invalid LR copy reminder date', 400));
+    }
+    lrReminderDate = raw ? new Date(raw) : null;
+  }
+
   const proofUrl = req.file?.path || req.body.proofUrl || order.paymentProofUrl;
   const paidBy = req.body.paidBy || req.user.fullName;
   const remaining = Math.max(0, (order.amount || 0) - (order.paidAmount || 0));
@@ -164,6 +175,16 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
 
   const remainingAfter = (order.amount || 0) - order.paidAmount;
   order.paymentStatus = remainingAfter <= 0 ? 'Paid' : (order.paidAmount > 0 ? 'Partial Paid' : 'Unpaid');
+
+  if (lrReminderDate !== undefined) {
+    const prevMs = order.lrReminderDate ? order.lrReminderDate.getTime() : null;
+    const newMs = lrReminderDate ? lrReminderDate.getTime() : null;
+    if (prevMs !== newMs) {
+      order.lrReminderDate = lrReminderDate;
+      order.lrReminderSetBy = lrReminderDate ? req.user._id : undefined;
+      order.lrReminderSetAt = lrReminderDate ? new Date() : undefined;
+    }
+  }
 
   await order.save({ validateBeforeSave: false });
 
@@ -183,7 +204,10 @@ exports.payPurchaseOrder = asyncHandler(async (req, res, next) => {
     createdBy: req.user._id,
   });
 
-  notifyRoles({ modules: ['Purchase', 'Inventory'], type: 'purchase', title: 'Purchase Order Payment', message: `Payment of ₹${payAmount?.toLocaleString()} recorded for PO ${order.poCode} (${order.itemName})`, link: '/purchase' }).catch(() => {});
+  const lrReminderNote = order.lrReminderDate && !order.lrFileUrl
+    ? ` — upload the LR copy by ${order.lrReminderDate.toISOString().slice(0, 10)}`
+    : '';
+  notifyRoles({ modules: ['Purchase', 'Inventory'], type: 'purchase', title: 'Purchase Order Payment', message: `Payment of ₹${payAmount?.toLocaleString()} recorded for PO ${order.poCode} (${order.itemName})${lrReminderNote}`, link: '/purchase' }).catch(() => {});
   res.status(200).json({ success: true, data: order });
 });
 
