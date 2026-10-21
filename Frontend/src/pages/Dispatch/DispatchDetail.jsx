@@ -19,6 +19,7 @@ import {
 import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import LogoThumb from '../../components/common/LogoThumb';
 import CameraCaptureModal from '../../components/common/CameraCaptureModal';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
 import {
@@ -47,7 +48,7 @@ import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
-import { buildDispatchGroupedProducts, summarizeDispatchVerification, getRowPendingQty } from '../../utils/dispatchGrouping';
+import { buildDispatchGroupedProducts, summarizeDispatchVerification, getRowPendingQty, getRowDispatchableQty } from '../../utils/dispatchGrouping';
 import { fingerprintFile } from '../../utils/photoFingerprint';
 
 const { Title, Text } = Typography;
@@ -738,6 +739,8 @@ export default function DispatchDetail() {
       key: d._id, id: o.orderCode || d.orderCode || d._id,
       orderObjectId: o._id || d.orderId,
       client: o.clientName || lead.hotelName || '—', contactPerson: o.contactPerson || lead.contactPerson || '—',
+      // Hotel logo (order copy → lead → same-hotel-name lead, resolved in getDispatch).
+      logoUrl: o.logoUrl || lead.hotelLogoUrl || '',
       phone: o.clientPhone || lead.phone || '', email: o.email || o.clientEmail || lead.email || '',
       // Secondary/landline contacts aren't denormalized onto the order — only the lead
       // carries them (altNumber = alternative/secondary, landlineNumber = landline).
@@ -1149,10 +1152,11 @@ export default function DispatchDetail() {
   const borderColor = isDark ? '#2a2a3e' : '#f0f0f0';
   const sectionBg = isDark ? '#161622' : '#fafbff';
 
-  // How many units of `row` are entered to go out this round, clamped to its pending qty.
+  // How many units of `row` are entered to go out this round, clamped to its pending qty and
+  // to what Task Management has completed so far (getRowDispatchableQty).
   const setDispatchNow = (row, value) => {
-    const pending = getRowPendingQty(row);
-    const clamped = Math.max(0, Math.min(Number(value) || 0, pending));
+    const maxNow = getRowDispatchableQty(row);
+    const clamped = Math.max(0, Math.min(Number(value) || 0, maxNow));
     setDispatchNowCounts((prev) => ({ ...prev, [row.key]: clamped }));
   };
 
@@ -1320,8 +1324,8 @@ export default function DispatchDetail() {
           { variant: 'success' }
         );
       }
-    } catch {
-      enqueueSnackbar('Failed to confirm dispatch.', { variant: 'error' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || 'Failed to confirm dispatch.', { variant: 'error', style: WRAP_TOAST_STYLE });
     }
   };
 
@@ -2075,6 +2079,9 @@ export default function DispatchDetail() {
                   <Text strong style={{ color: '#B11E6A' }}>{order.id}</Text>
                 </Descriptions.Item>
                 <Descriptions.Item label="Client"><Text strong>{order.client}</Text></Descriptions.Item>
+                <Descriptions.Item label="Logo">
+                  {order.logoUrl ? <LogoThumb url={order.logoUrl} size={48} radius={8} /> : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
                 <Descriptions.Item label="Contact Person">{order.contactPerson}</Descriptions.Item>
                 <Descriptions.Item label="Phone">
                   <a href={`tel:${order.phone}`} style={{ color: '#B11E6A' }}>{order.phone}</a>
@@ -2248,6 +2255,20 @@ export default function DispatchDetail() {
                           .join(' • ')}
                       />
                     )}
+                    {/* Dispatch Now is capped at what Task Management has completed — say why a
+                        row stops short of its pending qty instead of silently clamping it. */}
+                    {products.some((p) => p.assigned !== false && getRowDispatchableQty(p) < getRowPendingQty(p)) && (
+                      <Alert
+                        type="warning"
+                        showIcon
+                        style={{ borderRadius: 0, borderLeft: 'none', borderRight: 'none' }}
+                        message="Only the quantity completed in Task Management can be dispatched"
+                        description={products
+                          .filter((p) => p.assigned !== false && getRowDispatchableQty(p) < getRowPendingQty(p))
+                          .map((p) => `${p.name || p.kitName || 'Item'}: ${p.completedQty} of ${p.overallQty ?? p.qtyOrdered ?? 0} completed — ${getRowDispatchableQty(p)} can go now`)
+                          .join(' • ')}
+                      />
+                    )}
                     <Table
                       size="small"
                       pagination={false}
@@ -2336,6 +2357,7 @@ export default function DispatchDetail() {
                             const total = row.overallQty ?? row.qtyOrdered ?? 0;
                             const done = row.dispatchedQty ?? row.qtyDispatched ?? 0;
                             const pending = getRowPendingQty(row);
+                            const completed = row.completedQty;
                             return (
                               <Space direction="vertical" size={0}>
                                 <Text style={{ fontSize: 12 }}>{done} / {total}</Text>
@@ -2344,6 +2366,11 @@ export default function DispatchDetail() {
                                   : done > 0
                                   ? <Tag color="orange" style={{ borderRadius: 20, fontSize: 11 }}>Partial — {pending} pending</Tag>
                                   : <Tag color="default" style={{ borderRadius: 20, fontSize: 11 }}>Pending</Tag>}
+                                {pending > 0 && Number.isFinite(completed) && (
+                                  <Text style={{ fontSize: 11, color: completed < total ? '#fa8c16' : '#52c41a' }}>
+                                    Task Done: {completed} / {total}
+                                  </Text>
+                                )}
                               </Space>
                             );
                           },
@@ -2354,16 +2381,25 @@ export default function DispatchDetail() {
                           render: (_, row) => {
                             if (!row.bucket) return null;
                             const pending = getRowPendingQty(row);
+                            // Capped at the Task Management completed count, not just pending.
+                            const maxNow = getRowDispatchableQty(row);
                             return (
-                              <InputNumber
-                                size="small"
-                                min={0}
-                                max={pending}
-                                value={dispatchNowCounts[row.key] || 0}
-                                onChange={(v) => setDispatchNow(row, v)}
-                                disabled={dispatched || pending === 0 || row.assigned === false}
-                                style={{ width: 90 }}
-                              />
+                              <Space direction="vertical" size={2}>
+                                <InputNumber
+                                  size="small"
+                                  min={0}
+                                  max={maxNow}
+                                  value={dispatchNowCounts[row.key] || 0}
+                                  onChange={(v) => setDispatchNow(row, v)}
+                                  disabled={dispatched || maxNow === 0 || row.assigned === false}
+                                  style={{ width: 90 }}
+                                />
+                                {pending > 0 && maxNow < pending && row.assigned !== false && (
+                                  <Text style={{ fontSize: 10, color: '#fa8c16' }}>
+                                    {maxNow > 0 ? `Max ${maxNow} (task done)` : 'Tasks not done yet'}
+                                  </Text>
+                                )}
+                              </Space>
                             );
                           },
                         },

@@ -24,6 +24,7 @@ const { storedTotalWithRoundOff, computeCompositionGrandTotal, r2 } = require('.
 const Kit = require('../../models/Kit');
 const { buildOrderEditHistory } = require('../../utils/orderEditHistory');
 const { buildLeadEditHistory } = require('../../utils/leadEditHistory');
+const { backfillLogoUrlByHotelName, syncLeadLogoCopies } = require('../../utils/hotelLogo');
 
 // Lead.category defaults to 'Hotel' but leads created before this field existed have no
 // `category` stored in Mongo at all — a raw { category: 'Hotel' } match would wrongly
@@ -141,12 +142,7 @@ exports.updateLead = asyncHandler(async (req, res, next) => {
   // logo added or replaced on the lead afterwards must reach them too, or every order raised
   // before the upload keeps showing no logo / the old one.
   if ('hotelLogoUrl' in req.body && (req.body.hotelLogoUrl || '') !== (existingLead.hotelLogoUrl || '')) {
-    const newLogo = req.body.hotelLogoUrl || '';
-    await Promise.all([
-      Order.updateMany({ leadId: lead._id, deletedAt: null }, { $set: { logoUrl: newLogo } }),
-      Quotation.updateMany({ leadId: lead._id }, { $set: { logoUrl: newLogo, hotelLogoUrl: newLogo } }),
-      Negotiation.updateMany({ leadId: lead._id }, { $set: { logoUrl: newLogo, hotelLogoUrl: newLogo } }),
-    ]).catch(() => {});
+    await syncLeadLogoCopies(lead._id, req.body.hotelLogoUrl).catch(() => {});
   }
 
   res.status(200).json({ success: true, data: lead });
@@ -343,7 +339,7 @@ exports.getQuotations = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.leadId) filter.leadId = req.query.leadId;
   if (req.query.status) filter.status = req.query.status;
-  const quotations = await Quotation.find(filter).populate('leadId', 'hotelName leadType paymentTerms paymentReminderDate creditDueDate createdAt').sort('-createdAt');
+  const quotations = await Quotation.find(filter).populate('leadId', 'hotelName leadType paymentTerms paymentReminderDate creditDueDate createdAt hotelLogoUrl').sort('-createdAt');
   const convertedQuotIds = await Order.distinct('quotationId', { deletedAt: null, quotationId: { $ne: null } });
   const convertedSet = new Set(convertedQuotIds.map(id => String(id)));
   const active = quotations.filter(q => !convertedSet.has(String(q._id)));
@@ -623,7 +619,13 @@ exports.getNegotiations = asyncHandler(async (req, res) => {
   const convertedNegIds = await Order.distinct('negotiationId', { deletedAt: null, negotiationId: { $ne: null } });
   const convertedSet = new Set(convertedNegIds.map(id => String(id)));
   const active = negotiations.filter(n => !convertedSet.has(String(n._id)));
-  res.status(200).json({ success: true, total: active.length, data: active });
+  // Hotel logo for the Negotiation detail header. leadId stays a bare id here (the frontend
+  // compares it as one), so the lead's logo rides along as a separate read-only field.
+  const leadIds = [...new Set(active.map(n => n.leadId && String(n.leadId)).filter(Boolean))];
+  const logoLeads = leadIds.length ? await Lead.find({ _id: { $in: leadIds } }).select('hotelLogoUrl').lean() : [];
+  const logoByLead = new Map(logoLeads.map(l => [String(l._id), l.hotelLogoUrl || '']));
+  const data = active.map(n => ({ ...n.toJSON(), leadHotelLogoUrl: logoByLead.get(String(n.leadId)) || '' }));
+  res.status(200).json({ success: true, total: data.length, data });
 });
 
 // Finds or creates a Customer party by name; returns its _id.
@@ -1229,12 +1231,16 @@ exports.createDirectOrder = asyncHandler(async (req, res) => {
   // Same reasoning as convertToOrder: fall back to the originating lead's assigned sales
   // exec so the order stays visible to them, not just to whoever created it (e.g. an admin).
   let leadAssignedTo;
+  let leadLogoUrl;
   if (req.body.leadId) {
-    const leadForAssignment = await Lead.findById(req.body.leadId).select('assignedTo').lean();
+    const leadForAssignment = await Lead.findById(req.body.leadId).select('assignedTo hotelLogoUrl').lean();
     leadAssignedTo = leadForAssignment?.assignedTo;
+    leadLogoUrl = leadForAssignment?.hotelLogoUrl;
   }
   const order = await Order.create({
     ...req.body,
+    // Freeze the hotel logo like convertToOrder does when the caller didn't send one.
+    ...(!req.body.logoUrl && leadLogoUrl ? { logoUrl: leadLogoUrl } : {}),
     orderCode,
     clientPartyId,
     assignedTo: req.body.assignedTo || leadAssignedTo || req.user._id,
@@ -1307,6 +1313,7 @@ exports.getOrders = asyncHandler(async (req, res) => {
     Order.countDocuments(filter),
   ]);
   const data = await attachDispatchStage(orders);
+  await backfillLogoUrlByHotelName(data).catch(() => {});
   res.status(200).json({ success: true, total, page, data });
 });
 
@@ -1319,6 +1326,7 @@ exports.getOrder = asyncHandler(async (req, res, next) => {
     .populate('quotationId', 'quotCode');
   if (!order) return next(new AppError('Order not found', 404));
   const [data] = await attachDispatchStage([order]);
+  await backfillLogoUrlByHotelName([data]).catch(() => {});
   // Informational only: lines whose stock hasn't been committed to ANY task yet. Inventory/
   // Material Stock are deducted per task (utils/taskQuantity.js's deductStockForTask), not in
   // bulk at order creation — a line nobody has assigned a task for yet has no stock reserved
@@ -1524,6 +1532,29 @@ exports.updateOrder = asyncHandler(async (req, res, next) => {
     { new: true, runValidators: true }
   );
   if (!order) return next(new AppError('Order not found', 404));
+  // A logo changed from Sales → Orders → Edit Order is the hotel's logo, not just this
+  // order's: write it back to the originating Lead (the source every module falls back to)
+  // and re-sync that lead's other orders/quotations/negotiations, same as updateLead does.
+  // (Compared against the lead too, not just the order's own copy: an order whose copy was
+  // empty showed the lead's logo, so removing it here must still clear the lead.)
+  if ('logoUrl' in req.body && order.leadId) {
+    const newLogo = req.body.logoUrl || '';
+    const lead = await Lead.findOne({ _id: order.leadId, deletedAt: null }).lean();
+    const leadChanged = !!lead && (lead.hotelLogoUrl || '') !== newLogo;
+    if (leadChanged) {
+      // Keep the lead form's Upload fileList in step so its Hotel card edit shows the new file.
+      const leadPatch = {
+        hotelLogoUrl: newLogo,
+        hotelLogo: newLogo ? [{ uid: '-1', name: 'hotel-logo', status: 'done', url: newLogo }] : [],
+      };
+      const leadHistory = buildLeadEditHistory(lead, leadPatch, req.user);
+      await Lead.updateOne(
+        { _id: lead._id },
+        leadHistory.length ? { $set: leadPatch, $push: { editHistory: { $each: leadHistory } } } : { $set: leadPatch }
+      ).catch(() => {});
+    }
+    await syncLeadLogoCopies(order.leadId, newLogo).catch(() => {});
+  }
   if (Array.isArray(req.body.items) || Array.isArray(req.body.kitOrders)) {
     await syncDispatchRecordQuantities(order._id, existingForQtyCheck, req.body).catch((err) => {
       console.error(`Dispatch qty resync failed for order ${order.orderCode}:`, err.message);

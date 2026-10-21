@@ -710,9 +710,11 @@ export default function Reports() {
     return matchType && matchSearch;
   });
   const exportSwExcel = () => {
-    const headers = ['Type', 'Reference', 'Order Code', 'Client', 'Switch From', 'Switch To', 'Switch By', 'Switch Date', 'Switch Time'];
+    const headers = ['Type', 'Reference', 'Order Code', 'Client', 'Switch From', 'Switch To', 'Total Qty', 'Completed', 'Remaining', 'New Task', 'Switch By', 'Switch Date', 'Switch Time'];
     const rows = swFilteredRows.map((r) => [
-      r.type, r.reference, r.orderCode, r.clientName, r.switchFrom, r.switchTo, r.switchBy, r.switchDate, r.switchTime,
+      r.type, r.reference, r.orderCode, r.clientName, r.switchFrom, r.switchTo,
+      r.totalQty ?? '', r.completedQty ?? '', r.remainingQty ?? '', r.newTaskCode || '',
+      r.switchBy, r.switchDate, r.switchTime,
     ]);
     exportToExcel(headers, rows, 'Switch_Report.csv');
   };
@@ -3145,8 +3147,9 @@ export default function Reports() {
             label: 'Switch Report',
             children: (() => {
               const swTypeMeta = {
-                task: { label: 'Task Reassignment', color: '#1890ff' },
-                vendor: { label: 'Printing Supplier Switch', color: '#7c3aed' },
+                task: { label: 'Task Reassignment', color: '#1890ff', sub: 'Task Management · before start' },
+                task_mid: { label: 'Mid-task Switch', color: '#fa8c16', sub: 'Task Management · in progress' },
+                vendor: { label: 'Printing Supplier Switch', color: '#7c3aed', sub: 'Operations Design/Vendors' },
               };
               const summary = apiSwitchReport.summary || {};
 
@@ -3177,6 +3180,20 @@ export default function Reports() {
                 {
                   title: 'Switch To', dataIndex: 'switchTo', key: 'switchTo', width: 160,
                   render: (v) => <Tag style={{ background: '#52c41a18', color: '#52c41a', border: '1px solid #52c41a44', borderRadius: 20, fontSize: 11 }}>{v || '—'}</Tag>,
+                },
+                {
+                  // Mid-task switches only — how the task's qty was split between the two people.
+                  title: 'Completed / Remaining', key: 'qtySplit', width: 170,
+                  render: (_, r) => (r.module === 'task_mid' ? (
+                    <div>
+                      <Text style={{ fontSize: 12 }}>
+                        <Text strong style={{ color: '#52c41a' }}>{r.completedQty ?? '—'}</Text> done · <Text strong style={{ color: '#fa8c16' }}>{r.remainingQty ?? '—'}</Text> moved
+                      </Text>
+                      <div style={{ fontSize: 11, color: isDark ? '#aaa' : '#888' }}>
+                        of {r.totalQty ?? '—'}{r.newTaskCode ? ` → ${r.newTaskCode}` : ''}
+                      </div>
+                    </div>
+                  ) : <Text type="secondary" style={{ fontSize: 11 }}>—</Text>),
                 },
                 {
                   title: 'Switch Date / Time', key: 'switchAt', width: 150,
@@ -3228,10 +3245,10 @@ export default function Reports() {
                           label: swTypeMeta[t.module]?.label || t.module,
                           value: t.count,
                           color: swTypeMeta[t.module]?.color || '#888',
-                          sub: t.module === 'task' ? 'Task Management' : 'Operations Design/Vendors',
+                          sub: swTypeMeta[t.module]?.sub || '',
                         })),
                       ].map((s, i) => (
-                        <Col xs={12} sm={8} key={s.label}>
+                        <Col xs={12} sm={6} key={s.label}>
                           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.06 }}>
                             <Card style={{ borderRadius: 12, border: `1px solid ${s.color}22`, background: `linear-gradient(135deg,${s.color}22,${s.color}08)` }} styles={{ body: { padding: '12px 14px' } }}>
                               <Text style={{ fontSize: 10, color: isDark ? '#aaa' : '#888', display: 'block', marginBottom: 3 }}>{s.label}</Text>

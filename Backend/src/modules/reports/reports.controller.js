@@ -1368,9 +1368,9 @@ exports.getTaskPerformanceReport = asyncHandler(async (req, res) => {
     const userMatch = { $or: [{ assignedTo: u._id }, { assignedToMany: u._id }] };
 
     const [assignedTasks, doneTasks] = await Promise.all([
-      Task.find({ ...userMatch, deletedAt: null, ...assignedDateFilter }).select('status'),
+      Task.find({ ...userMatch, deletedAt: null, ...assignedDateFilter }).select('status switchedFromTask'),
       Task.find({ ...userMatch, status: 'Done', deletedAt: null, ...completedDateFilter })
-        .select('completedAt dueDate rating efficiencyPct isEmergency'),
+        .select('completedAt dueDate rating efficiencyPct isEmergency switchedOut'),
     ]);
 
     const totalAssigned = assignedTasks.length;
@@ -1392,6 +1392,11 @@ exports.getTaskPerformanceReport = asyncHandler(async (req, res) => {
       : 0;
 
     const emergencyHandled = doneTasks.filter((t) => t.isEmergency).length;
+    // Mid-task switches (tasks.controller switchInProgressTask): a switched-out task is this
+    // user's finished portion — already counted in `completed` and rated on just those units;
+    // switchedIn is a continuation task they took over from someone else.
+    const switchedOut = doneTasks.filter((t) => t.switchedOut).length;
+    const switchedIn = assignedTasks.filter((t) => t.switchedFromTask).length;
 
     const completionRate = totalAssigned > 0 ? Math.round((completed / totalAssigned) * 100) : 0;
     const onTimeRate = withDueDate.length > 0 ? Math.round((onTime / withDueDate.length) * 100) : 0;
@@ -1426,6 +1431,8 @@ exports.getTaskPerformanceReport = asyncHandler(async (req, res) => {
       avgRating,
       avgEfficiencyPct,
       emergencyHandled,
+      switchedOut,
+      switchedIn,
       score,
       color: PERFORMANCE_PALETTE[idx % PERFORMANCE_PALETTE.length],
     };
@@ -1839,11 +1846,13 @@ exports.getEmergencyApprovalsReport = asyncHandler(async (req, res) => {
 // Two independent "switch" actions exist in the app, each logging its own history array
 // (see Task.switchHistory / StickerRequest.switchHistory, populated by tasks.controller
 // reassignTask and operations.controller reassignStickerRequest):
-//   • Task Management > Reassign column — admin switches a Pending task's assignee
+//   • Task Management > Reassign column — admin switches a Pending task's assignee ('task'),
+//     or splits an In Progress/Paused task mid-way ('task_mid', stage 'In Progress' — carries
+//     the completed/remaining counts and the continuation task's code)
 //   • Operations > Design/Vendors > Printing Supplier — switches a design/print request's vendor
 // This report flattens both histories (one row per switch event, oldest actions are just as
 // visible as the latest) into one shape: Switch From / Switch To / Switch Date & Time / Switch By.
-const SWITCH_MODULES = ['task', 'vendor'];
+const SWITCH_MODULES = ['task', 'task_mid', 'vendor'];
 
 exports.getSwitchReport = asyncHandler(async (req, res) => {
   const [tasks, stickerRequests] = await Promise.all([
@@ -1860,10 +1869,11 @@ exports.getSwitchReport = asyncHandler(async (req, res) => {
   tasks.forEach((t) => {
     const order = t.orderId && typeof t.orderId === 'object' ? t.orderId : null;
     (t.switchHistory || []).forEach((h, i) => {
+      const isMid = h.stage === 'In Progress';
       rows.push({
         key: `task-${t._id}-${i}`,
-        module: 'task',
-        type: 'Task Reassignment',
+        module: isMid ? 'task_mid' : 'task',
+        type: isMid ? 'Mid-task Switch' : 'Task Reassignment',
         reference: t.taskName || t.product || t.taskCode || 'Task',
         taskCode: t.taskCode || '',
         orderCode: order?.orderCode || '',
@@ -1872,6 +1882,10 @@ exports.getSwitchReport = asyncHandler(async (req, res) => {
         switchTo: h.toName || '—',
         switchBy: h.byName || '',
         switchAtRaw: h.at,
+        totalQty: isMid ? (h.totalQty ?? null) : null,
+        completedQty: isMid ? (h.completedQty ?? null) : null,
+        remainingQty: isMid ? (h.remainingQty ?? null) : null,
+        newTaskCode: isMid ? (h.newTaskCode || '') : '',
       });
     });
   });
@@ -1891,6 +1905,10 @@ exports.getSwitchReport = asyncHandler(async (req, res) => {
         switchTo: h.toName || '—',
         switchBy: h.byName || '',
         switchAtRaw: h.at,
+        totalQty: null,
+        completedQty: null,
+        remainingQty: null,
+        newTaskCode: '',
       });
     });
   });

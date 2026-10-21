@@ -1,3 +1,5 @@
+import { kitsReadyForNextStep } from './kitPackingProgress';
+
 // Groups a dispatch's line items into the same three buckets Sales/Operations use:
 //   personalizedKit   — a kit + extras customized as one unit (dispatched as ONE unit —
 //                        one count, one open/close photo pair, regardless of how many
@@ -18,6 +20,34 @@
 // existed have no kitDispatch entries — those kits are treated as already fully
 // dispatched (matching the old all-dispatched-on-creation behavior they were built
 // under), so they show 0 pending and no photo action is needed.
+//
+// Each dispatchable row also gets `completedQty` (when `tasks` is passed): how many of its
+// units are FINISHED in Task Management (Done tasks). "Dispatch Now" is capped at that minus
+// what's already dispatched (getRowDispatchableQty) — ORD-260042 had every task Done at 500
+// of 1000 personalized kits and Dispatch still accepted 1000. Backend confirmDispatch
+// enforces the same cap via utils/dispatchTaskProgress.js — keep the two in sync.
+const KIT_PACKING_TASK_TYPES = ['Kit Packing', 'Separate Kit Packing', 'Personalized Kit Packing'];
+
+// Units of one order line finished in Task Management. Each task name is its own step
+// (e.g. "Soap packing" + "Soap stickering"), so the line is only as far along as its
+// least-done step. A name holding a task saved without a qty can't be counted — it counts
+// as fully done once every task under it is Done. `fullQty` = the line's total qty.
+function lineDoneQty(tasks, fullQty) {
+  if (!tasks || !tasks.length) return 0;
+  const byName = new Map();
+  tasks.forEach((t) => {
+    const name = (t.taskName || '').trim().toLowerCase();
+    const g = byName.get(name) || { doneQty: 0, hasUnsized: false, allDone: true };
+    const qty = Number(t.qty) || 0;
+    const done = t.status === 'Done';
+    if (qty > 0) { if (done) g.doneQty += qty; } else g.hasUnsized = true;
+    if (!done) g.allDone = false;
+    byName.set(name, g);
+  });
+  const perName = [...byName.values()].map((g) => (g.hasUnsized && g.allDone ? fullQty : g.doneQty));
+  return Math.max(0, Math.min(fullQty, ...perName));
+}
+
 export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, boxes, kitDispatch, packagingIncludes, packagingIncludesQty, tasks }) {
   const dispatchItems = items || [];
   const sourceOrderItems = orderItems || [];
@@ -38,23 +68,20 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
   // Only a caller that explicitly passes an array (even an empty one, meaning genuinely
   // no tasks assigned yet) opts into gating rows by assignment.
   const gatingActive = tasks !== undefined;
-  // Matched by kitName (via each task's own `product` field, set to the kit group's kitName
-  // at creation — same convention OperationDetail.jsx's separateKitTasksFor/
-  // personalizedKitTasksFor already use), NOT order-wide — an order-wide `.some()` let ONE
-  // kit's assigned packing task satisfy every OTHER kit in the same order too (e.g. a Dental
-  // Kit's assigned task wrongly unlocking a sibling Shaving Kit's "Dispatch Now" row even
-  // though the Shaving Kit itself never had a kit-packing task assigned).
-  const personalizedKitPackingAssignedFor = (kitName) => !gatingActive || taskList.some((t) =>
-    t.taskType === 'Personalized Kit Packing' && isTaskAssigned(t)
-    && (t.product || '').toLowerCase() === (kitName || '').toLowerCase());
-  const separateKitPackingAssignedFor = (kitName) => !gatingActive || taskList.some((t) =>
-    (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') && isTaskAssigned(t)
-    && (t.product || '').toLowerCase() === (kitName || '').toLowerCase());
   const assignedProductIndices = new Set(
     taskList
       .filter((t) => t.taskType !== 'Kit Packing' && t.productIndex !== undefined && t.productIndex !== null && isTaskAssigned(t))
       .map((t) => Number(t.productIndex))
   );
+  // Per-product tasks (Suggested Tasks / assignTasksPerProduct) by order-line index — feeds
+  // lineDoneQty for each row's completedQty.
+  const productTasksByIndex = new Map();
+  taskList.forEach((t) => {
+    if (KIT_PACKING_TASK_TYPES.includes(t.taskType) || t.productIndex === undefined || t.productIndex === null) return;
+    const idx = Number(t.productIndex);
+    if (!productTasksByIndex.has(idx)) productTasksByIndex.set(idx, []);
+    productTasksByIndex.get(idx).push(t);
+  });
 
   // "Select Kit(s) to Include" (order.packagingIncludes) is Sales' physical packing
   // instruction — a separate kit's kitId, or a separate product's name, that's packed
@@ -130,6 +157,10 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       qtyDispatched: item.qtyDispatched || 0,
       pendingQty: Math.max(0, orderedQty - (item.qtyDispatched || 0)),
       assigned: !gatingActive || assignedProductIndices.has(item.productIndex),
+      // Finished units, less the bundled portion — that's reserved for the personalized kit.
+      ...(gatingActive ? {
+        completedQty: Math.max(0, lineDoneQty(productTasksByIndex.get(item.productIndex), item.qtyOrdered || 0) - bundledQty),
+      } : {}),
     };
   };
 
@@ -151,17 +182,30 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
   if (kitOrdersList.length > 0) {
     // Which OTHER kitOrders entries are packed inside the personalized kit (see comment
     // above) — these get folded into the personalized header's children below instead of
-    // getting their own Separate Kit header. Only meaningful when a personalized kit
-    // actually exists in this order; otherwise packagingIncludes is ignored entirely.
+    // getting their own header. Only meaningful when a personalized kit actually exists in
+    // this order; otherwise packagingIncludes is ignored entirely. A kit tagged
+    // 'personalized' itself is folded too when it's listed — e.g. ORD-260042: Dental kit +
+    // Shaving kit (both 'personalized') + Lilly soap + Shampoo all packed into ONE outer
+    // box × 1000. Skipping those gave the Shaving kit its own Personalized header, so the
+    // page showed "Kit 1" + "Kit 2" and 0/2000 instead of one package of 1000. A second
+    // personalized kit NOT listed in packagingIncludes (ORD-260041) keeps its own header.
     const personalizedIndex = kitOrdersList.findIndex((ko) => (ko.category || 'separate_kit') === 'personalized');
     const includedKitOrderIndices = new Set();
     if (personalizedIndex !== -1 && includedIds.size > 0) {
       kitOrdersList.forEach((ko, ki) => {
         if (ki === personalizedIndex) return;
-        if ((ko.category || 'separate_kit') === 'personalized') return;
         if (ko.kitId && includedIds.has(String(ko.kitId))) includedKitOrderIndices.add(ki);
       });
     }
+    // kitOrders entries don't carry a kitName — the real one ("Dental kit") lives on the
+    // kit's own component items. Falls back to the generic label when none has it.
+    const kitNameFromItems = (items, fallback) => items.find((it) => it.kitName)?.kitName || fallback;
+    // Names of the personalized kits that get their own header — each claims the
+    // Personalized Kit Packing tasks filed under its name (see kitLevelTasks below).
+    const personalizedHeaderNames = kitOrdersList
+      .filter((ko, ki) => (ko.category || 'separate_kit') === 'personalized' && !includedKitOrderIndices.has(ki))
+      .map((ko) => (rawItems.find((it) => ko.kitId && String(it.kitId) === String(ko.kitId) && it.kitName)?.kitName
+        || ko.kitName || ko.kitType || '').trim().toLowerCase());
 
     kitOrdersList.forEach((ko, ki) => {
       if (includedKitOrderIndices.has(ki)) return; // folded into the personalized kit below instead
@@ -189,14 +233,7 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       // set by OperationDetail.jsx's submitKitPackingTask), lives on this kit's own
       // component items. Resolve it from a matched component so the kit-level task lookup
       // below is scoped to THIS kit, not every kit in the order.
-      const realKitName = kitItems.find((it) => it.kitName)?.kitName || kitName;
-      const kitLevelAssigned = isPersonalized ? personalizedKitPackingAssignedFor(realKitName) : separateKitPackingAssignedFor(realKitName);
-      // A component is covered either by the shared kit-level task, or by its OWN
-      // per-product task (Suggested Tasks / assignTasksPerProduct, matched via
-      // productIndex) — so assigning every component individually is enough even if the
-      // kit-level task was never created, and one truly unassigned component can't be
-      // masked by an unrelated sibling's assignment.
-      const componentAssigned = (item) => kitLevelAssigned || assignedProductIndices.has(item.productIndex);
+      const realKitName = kitNameFromItems(kitItems, kitName);
 
       // Any OTHER kit/products folded into this (personalized) kit's box — matched up
       // front so the header's completeness check below covers every component that will
@@ -212,7 +249,7 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
             return !!incKitId && !!it.kitId && String(it.kitId) === incKitId;
           });
           incItems.forEach((it) => { if (it._id) matchedItemIds.add(it._id); });
-          if (incItems.length) incGroups.push({ items: incItems, includedFrom: incKitName });
+          if (incItems.length) incGroups.push({ items: incItems, includedFrom: kitNameFromItems(incItems, incKitName) });
         });
       }
       let includedProdItems = [];
@@ -238,6 +275,31 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
         });
       }
 
+      // This kit's own kit-level packing tasks — the step that finishes it as ONE unit.
+      // Matched by kitName (each task's `product`, set to the kit group's kitName at creation
+      // — same as OperationDetail.jsx's separateKitTasksFor/personalizedKitTasksFor), NOT
+      // order-wide, so one kit's task can't unlock a sibling kit (Dental Kit's task opening
+      // the Shaving Kit row). Exception: a personalized box holding other kits/products
+      // (ORD-260042) is filed by Operations under the outer display unit ("box"), not a kit
+      // name — so that box, like an order's only personalized kit, also takes every
+      // Personalized Kit Packing task no other personalized kit claims by name.
+      const realKitLow = realKitName.trim().toLowerCase();
+      const takesUnclaimed = isPersonalized
+        && (incGroups.length > 0 || includedProdItems.length > 0 || personalizedHeaderNames.length === 1);
+      const kitLevelTasks = taskList.filter((t) => {
+        const product = (t.product || '').trim().toLowerCase();
+        if (!isPersonalized) return (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') && product === realKitLow;
+        if (t.taskType !== 'Personalized Kit Packing') return false;
+        return product === realKitLow || (takesUnclaimed && !personalizedHeaderNames.includes(product));
+      });
+      const kitLevelAssigned = !gatingActive || kitLevelTasks.some(isTaskAssigned);
+      // A component is covered either by the shared kit-level task, or by its OWN
+      // per-product task (Suggested Tasks / assignTasksPerProduct, matched via
+      // productIndex) — so assigning every component individually is enough even if the
+      // kit-level task was never created, and one truly unassigned component can't be
+      // masked by an unrelated sibling's assignment.
+      const componentAssigned = (item) => kitLevelAssigned || assignedProductIndices.has(item.productIndex);
+
       // The kit ships/photographs as ONE unit, so its header is only actionable once
       // every component actually inside the box is covered — one unassigned component
       // (no kit-level task AND no per-product task of its own) blocks the whole header.
@@ -246,12 +308,43 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       const headerAssigned = allComponents.length === 0 ? kitLevelAssigned : unassignedComponents.length === 0;
       const unassignedNames = unassignedComponents.map((it) => it.product || it.name || it.itemName || 'item');
 
+      // Kits a component's OWN per-product tasks have finished — the fallback when the kit
+      // has no kit-level packing task. A kit component's qty is per kit; a Separate Product
+      // packed into the box counts only its bundled portion.
+      const componentKitsDone = (item) => {
+        const lineTasks = productTasksByIndex.get(item.productIndex);
+        if (item.kitId || item.isKit) {
+          const perKit = Number(item.qtyOrdered) || 1;
+          return Math.floor(lineDoneQty(lineTasks, perKit * overallQty) / perKit);
+        }
+        const totalQty = Number(item.qtyOrdered) || 0;
+        const bundled = partiallyBundledQtyByItemId.get(String(item._id || '')) ?? totalQty;
+        if (bundled <= 0 || overallQty <= 0) return overallQty;
+        return Math.floor((Math.min(lineDoneQty(lineTasks, totalQty), bundled) * overallQty) / bundled);
+      };
+      // Kits finished in Task Management: the kit-level step's Done count, batch by batch
+      // (kitsReadyForNextStep — 500 of 1000 Done → 500). With no kit-level task at all, the
+      // fewest kits any component's own tasks cover.
+      let completedQty;
+      if (gatingActive) {
+        if (kitLevelTasks.length) completedQty = kitsReadyForNextStep(kitLevelTasks, overallQty);
+        else completedQty = allComponents.length ? Math.min(...allComponents.map(componentKitsDone)) : 0;
+        if (overallQty > 0) completedQty = Math.min(completedQty, overallQty);
+      }
+
       // Kit-level dispatch progress — the kit ships as ONE unit. Legacy records with no
       // kitDispatch entry for this kit are treated as already fully dispatched (see file
       // header comment), so they never show spurious "pending" or demand a photo re-upload.
       const kd = kitDispatchByKitId.get(kitId);
       const dispatchedQty = kd ? Number(kd.dispatchedQty) || 0 : overallQty;
       const pendingQty = Math.max(0, overallQty - dispatchedQty);
+      // Show the real kit name, not "Kit 1". A personalized package holding other kits is
+      // named after everything inside it ("Dental kit + Shaving kit"), and each component
+      // row gets its own kit's name as a tag so the two kits stay distinguishable.
+      const bundlesOtherKits = incGroups.length > 0;
+      const headerName = bundlesOtherKits
+        ? [realKitName, ...incGroups.map((g) => g.includedFrom)].join(' + ')
+        : realKitName;
 
       const headerRow = {
         key: headerKey,
@@ -259,12 +352,13 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
         itemId: headerKey,
         kitDispatchId: kd?._id || null,
         kitId,
-        name: kitName,
-        kitName,
+        name: headerName,
+        kitName: headerName,
         qty: overallQty,
         overallQty,
         dispatchedQty,
         pendingQty,
+        ...(completedQty !== undefined ? { completedQty } : {}),
         openBoxPhotos: kd?.openBoxPhotos || [],
         closeBoxPhotos: kd?.closeBoxPhotos || [],
         boxes: isPersonalized ? orderBoxes : kitItems.reduce((s, it) => s + (Number(it.boxes) || 0), 0),
@@ -284,20 +378,24 @@ export function buildDispatchGroupedProducts({ items, kitOrders, orderItems, box
       // where every component demanded its own open/close photo pair. Each still carries
       // its OWN `assigned` (per componentAssigned above) so a specific unassigned product
       // can be called out on its own row instead of every sibling sharing one flag.
+      // A kit component's qty is already PER KIT (see Sales "QTY / KIT") — dividing it by
+      // the kit count again showed "(0/kit)" for every component.
+      const perKitQtyOf = (item) => Number(item.qtyOrdered ?? item.qty) || null;
       kitItems.forEach((item, ii) => {
-        const totalQty = Number(item.qty || item.qtyOrdered) || 0;
-        const perKitQty = overallQty > 0 ? Math.round(totalQty / overallQty) : null;
         const itemType = isPersonalized ? 'personalized_item' : 'kit_item';
-        const row = toRow(item, ii, itemType, { perKitQty, boxes: item.boxes || 0, bucket: null, assigned: componentAssigned(item) });
+        const row = toRow(item, ii, itemType, {
+          perKitQty: perKitQtyOf(item), boxes: item.boxes || 0, bucket: null, assigned: componentAssigned(item),
+          ...(bundlesOtherKits ? { includedFrom: realKitName } : {}),
+        });
         rows.push(row);
       });
 
-      // Fold in any separate kits packed INSIDE this personalized kit's box (see comment
+      // Fold in any other kits packed INSIDE this personalized kit's box (see comment
       // at the top of the function) — their own components render as more child rows
       // right here, with no header of their own and no independent dispatch count.
       incGroups.forEach(({ items, includedFrom }) => {
         items.forEach((item, ii) => {
-          const row = toRow(item, ii, 'personalized_item', { boxes: item.boxes || 0, bucket: null, includedFrom, assigned: componentAssigned(item) });
+          const row = toRow(item, ii, 'personalized_item', { perKitQty: perKitQtyOf(item), boxes: item.boxes || 0, bucket: null, includedFrom, assigned: componentAssigned(item) });
           rows.push(row);
         });
       });
@@ -374,6 +472,16 @@ export function getRowPendingQty(row) {
   const total = row.overallQty ?? row.qtyOrdered ?? 0;
   const done = row.dispatchedQty ?? row.qtyDispatched ?? 0;
   return Math.max(0, total - done);
+}
+
+// The most "Dispatch Now" may send for `row` this round: its pending qty, further capped at
+// what Task Management has finished (row.completedQty) minus what's already gone out. Rows
+// built without task data carry no completedQty and stay capped at pending only.
+export function getRowDispatchableQty(row) {
+  const pending = getRowPendingQty(row);
+  if (row.completedQty == null) return pending;
+  const done = row.dispatchedQty ?? row.qtyDispatched ?? 0;
+  return Math.max(0, Math.min(pending, row.completedQty - done));
 }
 
 // Given the verifiable units (each tagged with `bucket`), returns per-category

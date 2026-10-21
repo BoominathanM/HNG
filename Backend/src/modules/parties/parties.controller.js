@@ -5,9 +5,12 @@ const Invoice = require('../../models/Invoice');
 const Payment = require('../../models/Payment');
 const Order = require('../../models/Order');
 const Negotiation = require('../../models/Negotiation');
+const Quotation = require('../../models/Quotation');
+const Lead = require('../../models/Lead');
 const Kit = require('../../models/Kit');
 const asyncHandler = require('../../utils/asyncHandler');
 const AppError = require('../../utils/AppError');
+const escapeRegex = require('../../utils/escapeRegex');
 const { computeCompositionGrandTotal, storedTotalWithRoundOff } = require('../../utils/orderCalc');
 // Consumption Forecast math lives in utils/consumptionForecast.js so the Alert
 // Configuration 'consumption_forecast' group fires on exactly the same "Reorder Now"
@@ -339,6 +342,120 @@ exports.getConsumptionForecast = asyncHandler(async (req, res) => {
   });
 
   res.status(200).json({ success: true, total: data.length, data });
+});
+
+// ─── Switch Party Category (Super Admin / Admin only) ─────────────────────────
+// A party's category (Hotel/Hospital/custom) is copied onto its Lead and onto every
+// Quotation/Negotiation/Order made from it, and each module reads its own copy (Leads/Orders
+// category filters, the "Old Hotel"/"Old Hospital" lookup, Hotel/Hospital labels). Fixing a
+// party added under the wrong category therefore rewrites every copy. Records are tied to the
+// party the same way the Parties tab ties them: by hotel name, plus the party ref / lead ref
+// where a record carries one. Only active (non-deleted) records are touched.
+const canSwitchPartyCategory = (user) => user?.role === 'Super Admin' || user?.role === 'Admin';
+const SWITCH_CATEGORY_DENIED = 'Only Super Admin or Admin can switch a party\'s category.';
+
+// Legacy records have no category stored: quotations/negotiations/orders fall back to their
+// lead's category, and anything still blank reads as 'Hotel' — the same rule every reader uses.
+const effectiveCategory = (rec, leadCatById) =>
+  rec.category || (rec.leadId && leadCatById.get(String(rec.leadId))) || 'Hotel';
+
+const findPartyLinkedRecords = async (party) => {
+  const nameRe = new RegExp(`^${escapeRegex(party.name.trim())}$`, 'i');
+  const leads = await Lead.find({ hotelName: nameRe, deletedAt: null }).select('category createdAt').sort('createdAt').lean();
+  const leadIds = leads.map((l) => l._id);
+  const linkOr = [{ hotelName: nameRe }, { clientName: nameRe }, ...(leadIds.length ? [{ leadId: { $in: leadIds } }] : [])];
+  const [quotations, negotiations, orders] = await Promise.all([
+    Quotation.find({ $or: linkOr, deletedAt: null }).select('category leadId').lean(),
+    Negotiation.find({ $or: linkOr, deletedAt: null }).select('category leadId').lean(),
+    Order.find({ $or: [...linkOr, { clientPartyId: party._id }], deletedAt: null }).select('category leadId').lean(),
+  ]);
+  const leadCatById = new Map(leads.map((l) => [String(l._id), l.category || 'Hotel']));
+  return { leads, quotations, negotiations, orders, leadCatById };
+};
+
+// The records a switch to `category` would actually change (already-matching ones are skipped).
+const pendingCategoryChanges = (linked, category) => {
+  const changing = (list) => list.filter((r) => effectiveCategory(r, linked.leadCatById) !== category);
+  return {
+    leads: changing(linked.leads),
+    quotations: changing(linked.quotations),
+    negotiations: changing(linked.negotiations),
+    orders: changing(linked.orders),
+  };
+};
+
+const countsOf = (pending) => ({
+  leads: pending.leads.length,
+  quotations: pending.quotations.length,
+  negotiations: pending.negotiations.length,
+  orders: pending.orders.length,
+});
+
+// Category shown for the party today: its own, else its first lead's, else 'Hotel' — matches
+// the Parties tab eye-view, which reads the party first and falls back to the lead.
+const partyCurrentCategory = (party, linked) =>
+  party.category || linked.leads.find((l) => l.category)?.category || 'Hotel';
+
+exports.getPartyCategoryImpact = asyncHandler(async (req, res, next) => {
+  if (!canSwitchPartyCategory(req.user)) return next(new AppError(SWITCH_CATEGORY_DENIED, 403));
+  const party = await Party.findOne({ _id: req.params.id, deletedAt: null });
+  if (!party) return next(new AppError('Party not found', 404));
+  const category = String(req.query.category || '').trim();
+  const linked = await findPartyLinkedRecords(party);
+  const counts = category
+    ? countsOf(pendingCategoryChanges(linked, category))
+    : countsOf(linked);
+  res.status(200).json({ success: true, data: { currentCategory: partyCurrentCategory(party, linked), counts } });
+});
+
+exports.switchPartyCategory = asyncHandler(async (req, res, next) => {
+  if (!canSwitchPartyCategory(req.user)) return next(new AppError(SWITCH_CATEGORY_DENIED, 403));
+  const category = String(req.body.category || '').trim();
+  const reason = String(req.body.reason || '').trim();
+  if (!category) return next(new AppError('Category is required', 400));
+  if (category.length > 60) return next(new AppError('Category is too long', 400));
+
+  const party = await Party.findOne({ _id: req.params.id, deletedAt: null });
+  if (!party) return next(new AppError('Party not found', 404));
+
+  const linked = await findPartyLinkedRecords(party);
+  const fromCategory = partyCurrentCategory(party, linked);
+  const pending = pendingCategoryChanges(linked, category);
+  const counts = countsOf(pending);
+  const nothingToChange = Object.values(counts).every((n) => n === 0);
+  if (nothingToChange && (party.category || 'Hotel') === category) {
+    return next(new AppError(`${party.name} is already in ${category}`, 400));
+  }
+
+  const changedAt = new Date();
+  const changedByName = req.user.fullName || req.user.name || req.user.role;
+  // Same entry shape as the Lead/Order editHistory written by updateLead/updateOrder, so it
+  // shows on the Parties "Change Timeline" and the Order Detail Activity Timeline as-is.
+  const historyEntry = (rec) => ({
+    field: 'Category',
+    oldValue: effectiveCategory(rec, linked.leadCatById),
+    newValue: category,
+    changedAt,
+    changedBy: req.user._id,
+    changedByName,
+  });
+  const withHistoryOps = (list) => list.map((r) => ({
+    updateOne: { filter: { _id: r._id }, update: { $set: { category }, $push: { editHistory: historyEntry(r) } } },
+  }));
+  const idsOf = (list) => list.map((r) => r._id);
+
+  await Promise.all([
+    pending.leads.length ? Lead.bulkWrite(withHistoryOps(pending.leads)) : null,
+    pending.orders.length ? Order.bulkWrite(withHistoryOps(pending.orders)) : null,
+    pending.quotations.length ? Quotation.updateMany({ _id: { $in: idsOf(pending.quotations) } }, { $set: { category } }) : null,
+    pending.negotiations.length ? Negotiation.updateMany({ _id: { $in: idsOf(pending.negotiations) } }, { $set: { category } }) : null,
+  ]);
+
+  party.category = category;
+  party.categoryHistory.push({ from: fromCategory, to: category, reason, counts, changedAt, changedBy: req.user._id, changedByName });
+  await party.save({ validateBeforeSave: false });
+
+  res.status(200).json({ success: true, data: { party, counts, from: fromCategory, to: category } });
 });
 
 exports.deleteParty = asyncHandler(async (req, res, next) => {

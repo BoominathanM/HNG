@@ -17,7 +17,7 @@ import {
   ShoppingCartOutlined, SettingOutlined, CarOutlined, CreditCardOutlined,
   HistoryOutlined, StarOutlined, SaveOutlined, GiftOutlined, TrophyOutlined,
   WarningOutlined, ExclamationCircleOutlined, DollarOutlined, AlertFilled, ExperimentOutlined,
-  AppstoreOutlined, LoadingOutlined, DeleteOutlined, ReloadOutlined,
+  AppstoreOutlined, LoadingOutlined, DeleteOutlined, ReloadOutlined, SwapOutlined,
 } from '@ant-design/icons';
 import { motion } from 'framer-motion';
 import { useSelector } from 'react-redux';
@@ -27,6 +27,7 @@ import { buildDocComposition } from '../../utils/docComposition';
 import { sumRoundOff, sumCourierCharges } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import { isImageUrl } from '../../utils/logoFile';
+import LogoThumb from '../../components/common/LogoThumb';
 import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
@@ -66,6 +67,8 @@ import {
   useGetPartyOrdersQuery,
   useGetConsumptionForecastQuery,
   useCreatePartyMutation,
+  useGetPartyCategoryImpactQuery,
+  useSwitchPartyCategoryMutation,
   useGetOrdersByHotelNameQuery,
   useGetRemindersQuery,
   useGetHotelNamesQuery,
@@ -2470,6 +2473,10 @@ export default function Sales() {
   const [customerCategoryFilter, setCustomerCategoryFilter] = useState(null);
   const [customerSourceFilter, setCustomerSourceFilter] = useState(null);
   const [viewPartyInfo, setViewPartyInfo] = useState(null);
+  // Super Admin "Switch Category" dialog inside the Parties eye-view modal.
+  const [switchCatOpen, setSwitchCatOpen] = useState(false);
+  const [switchCatValue, setSwitchCatValue] = useState(null);
+  const [switchCatReason, setSwitchCatReason] = useState('');
   const [viewMode, setViewMode] = useState('table');
   const [selectedRecord, setSelectedRecord] = useState(null);
 
@@ -2894,6 +2901,8 @@ export default function Sales() {
       billingName: order.billingName || order.clientName || '',
       contactPerson: order.contactPerson || '',
       pocDesignation: order.pocDesignation || '',
+      // Upload fileList for the hotel logo; saveOrderEdit sends logoUrl only when it changes.
+      hotelLogo: order.logoUrl ? [{ uid: '-1', name: 'hotel-logo', status: 'done', url: order.logoUrl }] : [],
       phone: order.phone || '',
       email: order.email || '',
       alternativeName: order.alternativeName || '',
@@ -2949,6 +2958,17 @@ export default function Sales() {
       // so validateFields() omits them — read the full form store so values loaded into the edit
       // form (including those resolved from the linked lead) are persisted, not dropped.
       const editStore = orderEditForm.getFieldsValue(true);
+      // Hotel logo: resolve the Upload fileList to a URL and send it only when it changed —
+      // the backend writes it back to the order's lead and that lead's other orders/quotations/
+      // negotiations, so every module shows the same logo.
+      const logoList = Array.isArray(vals.hotelLogo) ? vals.hotelLogo : (Array.isArray(editStore.hotelLogo) ? editStore.hotelLogo : []);
+      if (logoList.some((f) => f?.status === 'uploading')) {
+        enqueueSnackbar('Logo is still uploading — please wait a moment and save again', { variant: 'warning' });
+        return;
+      }
+      const editLogoFile = logoList.find((f) => f?.url || f?.response?.url);
+      const editLogoUrl = editLogoFile ? (editLogoFile.url || editLogoFile.response.url) : '';
+      const logoChanged = editLogoUrl !== (orderEditTarget.logoUrl || '');
       const newAdvance = vals.advance ?? orderEditTarget.advance ?? 0;
       // The form's paymentCollection field holds only entries added THIS session (see
       // openOrderEditModal) — append them to the untouched original array rather than replacing
@@ -3044,6 +3064,7 @@ export default function Sales() {
         billingName: vals.billingName || orderEditTarget.billingName,
         contactPerson: vals.contactPerson || orderEditTarget.contactPerson,
         pocDesignation: vals.pocDesignation || orderEditTarget.pocDesignation,
+        logoUrl: logoChanged ? editLogoUrl : orderEditTarget.logoUrl,
         phone: vals.phone || orderEditTarget.phone,
         email: vals.email || orderEditTarget.email,
         alternativeName: vals.alternativeName || orderEditTarget.alternativeName,
@@ -3117,6 +3138,7 @@ export default function Sales() {
           billingName: updated.billingName,
           contactPerson: updated.contactPerson,
           pocDesignation: updated.pocDesignation || undefined,
+          ...(logoChanged ? { logoUrl: editLogoUrl } : {}),
           clientPhone: updated.phone,
           email: updated.email || undefined,
           alternativeName: updated.alternativeName || undefined,
@@ -4060,6 +4082,14 @@ export default function Sales() {
     { hotelName: viewPartyInfo?.hotelName, approved: 'true' },
     { skip: !viewPartyInfo?.hotelName },
   );
+  // Super Admin / Admin "Switch Category": live count of the Lead/Quotation/Negotiation/Order
+  // records the chosen switch would move, shown before confirming. Only runs while the dialog is open.
+  const canSwitchPartyCategory = currentUser?.role === 'Super Admin' || currentUser?.role === 'Admin';
+  const [switchPartyCategoryMutation, { isLoading: switchingPartyCategory }] = useSwitchPartyCategoryMutation();
+  const { data: switchCatImpactRaw, isFetching: switchCatImpactLoading } = useGetPartyCategoryImpactQuery(
+    { id: viewPartyInfo?._id, category: switchCatValue },
+    { skip: !canSwitchPartyCategory || !switchCatOpen || !switchCatValue || !viewPartyInfo?._id, refetchOnMountOrArgChange: true },
+  );
   const partyDesigns = React.useMemo(() => {
     const seen = new Set();
     return (partyDesignsRaw?.data || [])
@@ -4245,6 +4275,9 @@ export default function Sales() {
         billType: q.billType || (q.type === 'GST' ? 'GST' : q.type === 'Non-GST' ? 'NON_GST' : q.type),
         products: qProducts,
         itemCount: (q.products?.length || q.items?.length || 0),
+        // Hotel logo: the quotation's synced copy, else its lead's (also carried onto the
+        // order when this quotation is converted).
+        hotelLogoUrl: q.hotelLogoUrl || q.logoUrl || q.leadId?.hotelLogoUrl || '',
       };
     }));
   }, [quotationsRaw]);
@@ -4278,6 +4311,9 @@ export default function Sales() {
         billType: n.billType || (n.type === 'GST' ? 'GST' : n.type === 'Non-GST' ? 'NON_GST' : n.type),
         products: nProducts,
         itemCount: (n.products?.length || n.items?.length || 0),
+        // Hotel logo: the negotiation's synced copy, else its lead's (leadHotelLogoUrl is
+        // attached server-side by getNegotiations).
+        hotelLogoUrl: n.hotelLogoUrl || n.logoUrl || n.leadHotelLogoUrl || '',
       };
     }));
   }, [negotiationsRaw]);
@@ -4375,6 +4411,9 @@ export default function Sales() {
         forwardingCharge: o.forwardingCharge ?? o.leadId?.forwardingCharge,
         forwardingChargeAmount: o.forwardingChargeAmount ?? o.leadId?.forwardingChargeAmount,
         paymentTerms: o.paymentTerms || o.leadId?.paymentTerms,
+        // Hotel logo: the order's own copy (kept in sync with its lead server-side), else the
+        // lead's — same resolution Operations/Task Management/Dispatch use.
+        logoUrl: o.logoUrl || o.leadId?.hotelLogoUrl || '',
         totalAmount: total,
         gstAmount: effectiveGst,
         paidAmount: paidTotal,
@@ -5322,7 +5361,7 @@ export default function Sales() {
         orderCategory: 'SAMPLE',
         status: 'In Production',
         logoRequired: lead.logoRequired,
-        logoUrl: lead.logoUrl,
+        logoUrl: lead.logoUrl || lead.hotelLogoUrl,
         displayUnit: lead.displayUnit,
         kitDisplayUnit: lead.kitDisplayUnit,
         displayUnitTab: lead.displayUnitTab,
@@ -6388,6 +6427,43 @@ export default function Sales() {
   };
 
   const openPartyInfo = (record) => setViewPartyInfo(mergePartyWithLead(record));
+
+  // ── Super Admin / Admin: Switch Category (Parties eye-view) ──
+  // Moves a party added under the wrong category (e.g. a hotel saved as Hospital) to the right
+  // one. The backend rewrites the category on the party AND on every linked Lead/Quotation/
+  // Negotiation/Order, and logs the switch on the party (categoryHistory) and on each Lead/Order
+  // editHistory. The open modal is patched in place; the lists refresh via tag invalidation.
+  const partyCountsText = (c = {}) => [
+    [c.leads, 'lead'], [c.quotations, 'quotation'], [c.negotiations, 'negotiation'], [c.orders, 'order'],
+  ].map(([n, w]) => `${n || 0} ${w}${n === 1 ? '' : 's'}`).join(', ');
+
+  const openSwitchPartyCategory = () => {
+    setSwitchCatValue(null);
+    setSwitchCatReason('');
+    setSwitchCatOpen(true);
+  };
+
+  const submitSwitchPartyCategory = async () => {
+    if (!viewPartyInfo?._id || !switchCatValue) return;
+    try {
+      const res = await switchPartyCategoryMutation({
+        id: viewPartyInfo._id, category: switchCatValue, reason: switchCatReason.trim(),
+      }).unwrap();
+      const { party, counts = {}, from, to } = res?.data || {};
+      setViewPartyInfo((prev) => prev && ({
+        ...prev,
+        category: to,
+        categoryHistory: party?.categoryHistory || prev.categoryHistory,
+        editHistory: counts.leads > 0
+          ? [...(prev.editHistory || []), { field: 'Category', oldValue: from, newValue: to, changedAt: new Date().toISOString(), changedByName: currentUser?.fullName || currentUser?.role }]
+          : prev.editHistory,
+      }));
+      setSwitchCatOpen(false);
+      enqueueSnackbar(`Category switched ${from} → ${to} (updated ${partyCountsText(counts)})`, { variant: 'success' });
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to switch category', { variant: 'error' });
+    }
+  };
 
   // Single source of truth for the "Hotel / Company Information" card — the same
   // rows the Descriptions block renders, as [label, value] pairs. Empty/optional
@@ -7909,6 +7985,7 @@ export default function Sales() {
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                {(q.hotelLogoUrl || qLead?.hotelLogoUrl) && <LogoThumb url={q.hotelLogoUrl || qLead.hotelLogoUrl} size={56} radius={10} />}
                 <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{q.qid}</Tag>
                 <Tag color={STATUS_COLORS[q.status]} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{q.status}</Tag>
                 <Space>
@@ -8458,6 +8535,7 @@ export default function Sales() {
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                {(n.hotelLogoUrl || nLead?.hotelLogoUrl) && <LogoThumb url={n.hotelLogoUrl || nLead.hotelLogoUrl} size={56} radius={10} />}
                 <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>{n.nid}</Tag>
                 <Tag style={{ background: '#B11E6A18', color: '#B11E6A', border: '1px solid #B11E6A33', borderRadius: 20, fontSize: 12 }}>from {n.quotationId}</Tag>
                 <Tag color={STATUS_COLORS[n.status] || 'orange'} style={{ borderRadius: 20, fontSize: 13, padding: '4px 14px', fontWeight: 600, border: 'none' }}>{n.status}</Tag>
@@ -9102,6 +9180,7 @@ export default function Sales() {
         occupancy: base.occupancy || full.occupancy || lead.occupancy || lead.generalOccupancy,
         branch: base.branch || full.branch || lead.branch || '',
         pocDesignation: base.pocDesignation || full.pocDesignation || lead.pocDesignation || '',
+        logoUrl: base.logoUrl || full.logoUrl || lead.hotelLogoUrl || '',
         // packagingIncludes: order first, then populated lead (covers hotel-only→kit-edit scenario)
         packagingIncludes: (Array.isArray(base.packagingIncludes) && base.packagingIncludes.length > 0 ? base.packagingIncludes : null)
           ?? (Array.isArray(full.packagingIncludes) && full.packagingIncludes.length > 0 ? full.packagingIncludes : null)
@@ -9283,6 +9362,7 @@ export default function Sales() {
                 </div>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
+                {o.logoUrl && <LogoThumb url={o.logoUrl} size={56} radius={10} />}
                 <Space size={6} align="center">
                   {(o.isUrgent || o.isEmergency) && (
                     <Tag color="error" icon={<AlertFilled />} style={{ borderRadius: 20, fontSize: 12, fontWeight: 700, padding: '2px 10px' }}>
@@ -9553,6 +9633,13 @@ export default function Sales() {
               <Descriptions bordered size="small" column={{ xs: 1, sm: 2, lg: 3 }} labelStyle={{ fontSize: 12 }} contentStyle={{ fontSize: 13, fontWeight: 500 }} style={{ background: isDark ? 'transparent' : '#fff' }}>
                 <Descriptions.Item label="Hotel / Company">{o.hotelName || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Billing Name">{o.billingName || '—'}</Descriptions.Item>
+                <Descriptions.Item label={`${o.category || 'Hotel'} Logo`}>
+                  {o.logoUrl ? (
+                    <Button size="small" icon={<EyeOutlined />} href={o.logoUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#B11E6A', borderColor: '#B11E6A55' }}>
+                      View Logo
+                    </Button>
+                  ) : '—'}
+                </Descriptions.Item>
                 {o.hotelType && (
                   <Descriptions.Item label="Hotel Type">
                     <Tag color={o.hotelType === 'OLD' ? 'blue' : 'green'}>{o.hotelType === 'OLD' ? 'Old Hotel' : 'New Hotel'}</Tag>
@@ -10241,6 +10328,20 @@ export default function Sales() {
                   <Col xs={24} sm={8}><Form.Item label="Assigned To (Sales)" name="salesPerson"><Input placeholder="Sales person name" disabled={isSalesExec} /></Form.Item></Col>
                   <Col xs={24} sm={8}><Form.Item label="Branch" name="branch"><Input placeholder="e.g. Main Branch" disabled={isSalesExec} /></Form.Item></Col>
                   <Col xs={24} sm={8}><Form.Item label="POC Designation" name="pocDesignation"><Input placeholder="GM, Manager" disabled={isSalesExec} /></Form.Item></Col>
+                  <Col xs={24} sm={8}>
+                    {/* Saved back to the order's lead too, so the new logo shows in every module. */}
+                    <Form.Item label={`${orderEditTarget?.category || 'Hotel'} Logo`} name="hotelLogo" valuePropName="fileList" getValueFromEvent={(e) => Array.isArray(e) ? e : e?.fileList}>
+                      <Upload
+                        customRequest={makeCloudinaryRequest('logos')}
+                        accept="image/*,.pdf,.svg,.ai"
+                        maxCount={1}
+                        listType="picture"
+                        disabled={isSalesExec}
+                      >
+                        <Button icon={<UploadOutlined />} disabled={isSalesExec} style={{ borderColor: '#B11E6A55', color: '#B11E6A', width: '100%' }}>Upload Logo</Button>
+                      </Upload>
+                    </Form.Item>
+                  </Col>
                 </Row>
               </Card>
 
@@ -16694,7 +16795,18 @@ export default function Sales() {
         {viewPartyInfo && (
           <div style={{ overflowX: 'auto' }}>
           <Descriptions bordered size="small" column={{ xs: 1, sm: 1, md: 2, lg: 2, xl: 3, xxl: 3 }} labelStyle={{ fontSize: 12, whiteSpace: 'nowrap' }} contentStyle={{ fontSize: 13, fontWeight: 500, wordBreak: 'break-word' }} style={{ marginTop: 8, minWidth: 480 }}>
-            <Descriptions.Item label="Category">{viewPartyInfo.category || 'Hotel'}</Descriptions.Item>
+            <Descriptions.Item label="Category">
+              <Space size={8} wrap>
+                <span>{viewPartyInfo.category || 'Hotel'}</span>
+                {canSwitchPartyCategory && viewPartyInfo._id && (
+                  <Tooltip title="Super Admin / Admin only — moves this party and its leads, quotations, negotiations and orders to another category">
+                    <Button size="small" icon={<SwapOutlined />} onClick={openSwitchPartyCategory} style={{ borderRadius: 6, fontSize: 12, color: '#B11E6A', borderColor: '#B11E6A' }}>
+                      Switch Category
+                    </Button>
+                  </Tooltip>
+                )}
+              </Space>
+            </Descriptions.Item>
             <Descriptions.Item label={`${viewPartyInfo.category || 'Hotel'} / Company`}>{viewPartyInfo.hotelName || '—'}</Descriptions.Item>
             {viewPartyInfo.billingName && <Descriptions.Item label="Billing Name">{viewPartyInfo.billingName}</Descriptions.Item>}
             {viewPartyInfo.hotelType && (
@@ -16796,6 +16908,35 @@ export default function Sales() {
             )}
           </div>
         )}
+        {viewPartyInfo && (viewPartyInfo.categoryHistory || []).length > 0 && (
+          <div style={{ marginTop: 20 }}>
+            <Divider style={{ margin: '0 0 12px' }}>
+              <Space size={6}>
+                <SwapOutlined style={{ color: '#B11E6A' }} />
+                <Text style={{ fontSize: 12, color: '#B11E6A', fontWeight: 700 }}>Category Switch Log</Text>
+              </Space>
+            </Divider>
+            <Timeline
+              mode="left"
+              items={[...(viewPartyInfo.categoryHistory || [])].reverse().map((h, i) => ({
+                color: '#B11E6A',
+                label: <Text style={{ fontSize: 12, fontWeight: i === 0 ? 600 : 400, color: i === 0 ? (isDark ? '#fff' : '#222') : (isDark ? '#aaa' : '#666') }}>{fmtDateTimeShort(h.changedAt)}</Text>,
+                children: (
+                  <div>
+                    <div style={{ fontSize: 12 }}>
+                      <Text type="secondary">{h.from || '—'}</Text>
+                      {' → '}
+                      <Text strong style={{ color: '#52c41a' }}>{h.to}</Text>
+                    </div>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>Updated {partyCountsText(h.counts)}</Text>
+                    {h.reason && <Text style={{ fontSize: 12, display: 'block' }}>Reason: {h.reason}</Text>}
+                    <Text type="secondary" style={{ fontSize: 11 }}>by {h.changedByName || 'Admin'}</Text>
+                  </div>
+                ),
+              }))}
+            />
+          </div>
+        )}
         {viewPartyInfo && (
           <div style={{ marginTop: 20 }}>
             <Divider style={{ margin: '0 0 12px' }}>
@@ -16830,6 +16971,66 @@ export default function Sales() {
           </div>
         )}
       </Modal>
+
+      {/* ── Switch Party Category (Super Admin / Admin, opened from the Party View Modal) ── */}
+      {canSwitchPartyCategory && (
+        <Modal
+          title={
+            <Space>
+              <SwapOutlined style={{ color: '#B11E6A' }} />
+              <span>Switch Category — {viewPartyInfo?.hotelName || ''}</span>
+            </Space>
+          }
+          open={switchCatOpen && !!viewPartyInfo}
+          onCancel={() => setSwitchCatOpen(false)}
+          onOk={submitSwitchPartyCategory}
+          okText="Switch Category"
+          okButtonProps={{
+            disabled: !switchCatValue || switchCatImpactLoading,
+            loading: switchingPartyCategory,
+            style: { background: '#B11E6A', border: 'none' },
+          }}
+          width={Math.min(520, window.innerWidth - 32)}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 12 }}>
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>Current Category</Text>
+              <Tag color="purple" style={{ fontSize: 13 }}>{viewPartyInfo?.category || 'Hotel'}</Tag>
+            </div>
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>New Category</Text>
+              <Select
+                value={switchCatValue}
+                onChange={setSwitchCatValue}
+                placeholder="Select new category"
+                options={categoryFilterOptions.filter((o) => o.value !== (viewPartyInfo?.category || 'Hotel'))}
+                style={{ width: '100%' }}
+              />
+            </div>
+            {switchCatValue && (
+              <Alert
+                type="warning"
+                showIcon
+                message={switchCatImpactLoading
+                  ? 'Checking linked records…'
+                  : `This will move ${partyCountsText(switchCatImpactRaw?.data?.counts)} to ${switchCatValue}.`}
+                description="The party, its leads, quotations, negotiations and orders all switch together, and the change is logged."
+                style={{ borderRadius: 8 }}
+              />
+            )}
+            <div>
+              <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 4 }}>Reason (optional)</Text>
+              <Input.TextArea
+                value={switchCatReason}
+                onChange={(e) => setSwitchCatReason(e.target.value)}
+                placeholder="e.g. Added under Hospital by mistake"
+                autoSize={{ minRows: 2, maxRows: 4 }}
+                maxLength={300}
+              />
+            </div>
+          </div>
+        </Modal>
+      )}
 
       {/* ── Raise Complaint Modal ─────────────────────────────────────────────── */}
       <Modal

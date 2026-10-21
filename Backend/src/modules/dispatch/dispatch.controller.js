@@ -16,10 +16,12 @@ const escapeRegex = require('../../utils/escapeRegex');
 const { notifyMany, notifyRoles } = require('../../utils/notify');
 const { sendMessage } = require('../../services/whatsAppService');
 const { resolveOrderPaymentStatus, resolveOrderPaymentSummaries } = require('../../utils/syncOrderPayment');
+const { backfillLogoUrlByHotelName } = require('../../utils/hotelLogo');
 const aiService = require('../../services/aiService');
 const photoDup = require('../../services/photoDuplicateService');
 const { cloudinary } = require('../../config/cloudinary');
 const { businessDayInstantRange } = require('../../utils/businessTime');
+const { computeDispatchCompletedCaps } = require('../../utils/dispatchTaskProgress');
 
 // Sends the "Dispatch Notify" WhatsApp template (configured in Integrations → WhatsApp →
 // Event Mapping) to both the order's sales person and the customer, with the confirmed
@@ -102,11 +104,12 @@ async function visibleOrderIds(user) {
 // so the frontend can tell an assigned product/kit apart from one nobody's been
 // assigned to yet (see dispatchGrouping.js `assigned` flag) — Task itself only links
 // to Order, not DispatchRecord, so this has to be joined in manually per orderId.
+// taskName/qty/status feed each row's completedQty, which caps "Dispatch Now".
 async function attachOrderTasks(dispatches) {
   const orderIds = [...new Set(dispatches.map((d) => d.orderId?._id || d.orderId).filter(Boolean).map(String))];
   if (orderIds.length === 0) return;
   const tasks = await Task.find({ orderId: { $in: orderIds }, deletedAt: null })
-    .select('orderId productIndex taskType assignedTo assignedToMany product')
+    .select('orderId productIndex taskType taskName qty status assignedTo assignedToMany product')
     .lean();
   const tasksByOrder = new Map();
   tasks.forEach((t) => {
@@ -431,7 +434,7 @@ exports.getDispatch = asyncHandler(async (req, res, next) => {
     .populate({
       path: 'orderId',
       populate: [
-        { path: 'leadId', select: 'leadType hotelName contactPerson phone altNumber landlineNumber email destination detailedAddress address city state pincode shippingAddress shippingCity shippingState shippingPincode salesPerson products transportName paymentTerms paymentReminderDate creditDueDate createdAt' },
+        { path: 'leadId', select: 'leadType hotelName contactPerson phone altNumber landlineNumber email destination detailedAddress address city state pincode shippingAddress shippingCity shippingState shippingPincode salesPerson products transportName paymentTerms paymentReminderDate creditDueDate createdAt hotelLogoUrl' },
         { path: 'assignedTo', select: 'fullName' },
       ],
     })
@@ -442,6 +445,8 @@ exports.getDispatch = asyncHandler(async (req, res, next) => {
   plain.orderPaymentStatus = ordObjectId
     ? await resolveOrderPaymentStatus(ordObjectId).catch(() => 'Pending')
     : 'Pending';
+  // Hotel logo for the Order Details card (same lead/hotel-name fallback as Operations).
+  if (plain.orderId && typeof plain.orderId === 'object') await backfillLogoUrlByHotelName([plain.orderId]).catch(() => {});
   await attachOrderTasks([plain]);
   res.status(200).json({ success: true, data: plain });
 });
@@ -551,6 +556,40 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
   const kitCounts = parseCounts(req.body.kitCounts);
   const productCounts = parseCounts(req.body.productCounts);
 
+  // Never dispatch more than Task Management has actually completed — the same per-row cap
+  // the Dispatch Now inputs use (utils/dispatchTaskProgress.js). Checked before anything is
+  // applied, so an over-count rejects the whole round instead of half-applying it.
+  const orderTasks = await Task.find({ orderId: orderDoc._id, deletedAt: null })
+    .select('productIndex taskType taskName qty status product')
+    .lean();
+  const { kitCaps, itemCaps } = computeDispatchCompletedCaps(dispatch, orderDoc, orderTasks);
+  const overCompleted = [];
+  const checkCap = (cap, requested, pending, alreadyDispatched) => {
+    if (!cap) return;
+    const wanted = Math.min(requested, Math.max(0, pending));
+    const allowed = Math.max(0, cap.completed - alreadyDispatched);
+    if (wanted > allowed) {
+      overCompleted.push(`${cap.name}: entered ${wanted}, only ${allowed} can go (${cap.completed} completed in Task Management, ${alreadyDispatched} already dispatched)`);
+    }
+  };
+  for (const entry of kitCounts) {
+    const dispatchNow = Number(entry?.dispatchNow) || 0;
+    if (dispatchNow <= 0) continue;
+    const kd = dispatch.kitDispatch.id(entry.id) || dispatch.kitDispatch.find((k) => String(k.kitId) === String(entry.id));
+    if (!kd) continue;
+    checkCap(kitCaps.get(String(kd._id)), dispatchNow, kd.overallQty - kd.dispatchedQty, kd.dispatchedQty || 0);
+  }
+  for (const entry of productCounts) {
+    const dispatchNow = Number(entry?.dispatchNow) || 0;
+    if (dispatchNow <= 0) continue;
+    const item = dispatch.items.id(entry.id);
+    if (!item) continue;
+    checkCap(itemCaps.get(String(item._id)), dispatchNow, (item.qtyOrdered || 0) - (item.qtyDispatched || 0), item.qtyDispatched || 0);
+  }
+  if (overCompleted.length) {
+    return next(new AppError(`Dispatch Now is more than what's completed in Task Management. ${overCompleted.join('; ')}.`, 400));
+  }
+
   // This round's actual movement, for the dispatch history log below — only rows with a
   // real delta (not just whatever was requested) are recorded.
   const historyKits = [];
@@ -620,11 +659,14 @@ exports.confirmDispatch = asyncHandler(async (req, res, next) => {
     const explicit = piQty[name];
     return explicit != null ? Number(explicit) || 0 : fullQty;
   };
+  // A second kit tagged 'personalized' that's listed in packagingIncludes is packed inside
+  // the same outer box too (ORD-260042: Dental + Shaving kit in one box) — dispatchGrouping.js
+  // folds it into the personalized header, so its own kitDispatch entry is never counted.
   const includedKitIds = new Set();
   if (personalizedKitOrder && includedIds.size > 0) {
     orderKitOrders.forEach((ko) => {
       if (!ko || ko === personalizedKitOrder) return;
-      if ((ko.category || 'separate_kit') === 'personalized') return;
+      if (String(ko.kitId) === String(personalizedKitOrder.kitId)) return; // never exempt the header's own entry
       if (ko.kitId && includedIds.has(String(ko.kitId))) includedKitIds.add(String(ko.kitId));
     });
   }

@@ -56,7 +56,9 @@ const taskSchema = new mongoose.Schema({
   // Full Start/Pause/Resume/Completion history with timestamps, for detailed task
   // tracking (Task Detail's Timeline). Supports multiple pause/resume cycles per task.
   timeline: [{
-    event: { type: String, enum: ['Start', 'Pause', 'Resume', 'Completion'] },
+    // 'Switch' = admin moved the rest of an In Progress/Paused task to another assignee
+    // (see tasks.controller switchInProgressTask) — closes this task's clock like Completion.
+    event: { type: String, enum: ['Start', 'Pause', 'Resume', 'Completion', 'Switch'] },
     at: Date,
     by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     byName: String,
@@ -100,7 +102,26 @@ const taskSchema = new mongoose.Schema({
     by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     byName: String,
     at: { type: Date, default: Date.now },
+    // Mid-task switches only (stage 'In Progress') — older/pre-start entries leave these
+    // unset. completedQty stayed on this task; remainingQty moved to newTaskCode.
+    stage: { type: String, enum: ['Pending', 'In Progress'] },
+    totalQty: Number,
+    completedQty: Number,
+    remainingQty: Number,
+    newTaskCode: String,
   }],
+  // ── Mid-task switch (Task Management > Reassign column, In Progress/Paused task) ──
+  // The task is split in two: this one keeps the units the outgoing assignee finished
+  // (qty reduced to completedQty, closed as Done, rated on that portion), and a new
+  // Pending task carries the remainingQty for the incoming assignee. Total qty across both
+  // equals the original, so every qty-sum consumer (dispatch readiness, checklist, Ops
+  // cards, overflow guard, stock) keeps working unchanged.
+  switchedOut: { type: Boolean, default: false },
+  originalQty: Number, // qty before the split, on the switched-out task
+  switchedToTask: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
+  switchedToTaskCode: String,
+  switchedFromTask: { type: mongoose.Schema.Types.ObjectId, ref: 'Task' },
+  switchedFromTaskCode: String,
   // Soft-delete (Admin department only, via Task Management > Current Task) — mirrors
   // the same deletedAt/deletedBy convention as User/Vendor/Lead/etc. so this task
   // surfaces in Settings > Deleted Records and can be restored from there.

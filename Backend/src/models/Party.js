@@ -15,6 +15,17 @@ const partySchema = new mongoose.Schema({
   // store) — set when a Customer party is auto-registered from a Lead. Absent/legacy
   // parties are treated as 'Hotel' by readers, matching Lead/Order's convention.
   category: String,
+  // Audit log of Super Admin / Admin "Switch Category" corrections (Parties tab eye-view) — one entry
+  // per switch, with how many Lead/Quotation/Negotiation/Order copies were rewritten.
+  categoryHistory: [{
+    from: String,
+    to: String,
+    reason: String,
+    counts: { leads: Number, quotations: Number, negotiations: Number, orders: Number },
+    changedAt: { type: Date, default: Date.now },
+    changedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    changedByName: String,
+  }],
   contactPerson: String,
   dob: Date,
   street: String,

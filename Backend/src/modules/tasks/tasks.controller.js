@@ -10,6 +10,7 @@ const generateCode = require('../../utils/codeGenerator');
 const { notifyRoles } = require('../../utils/notify');
 const { computeTaskEstimate, computeRating } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
+const { backfillLogoUrlByHotelName } = require('../../utils/hotelLogo');
 const {
   checkTaskQuantityOverflow, checkLiveStockAvailability, deductStockForTask, reverseStockForTask,
 } = require('../../utils/taskQuantity');
@@ -19,6 +20,36 @@ const aiService = require('../../services/aiService');
 // (Personalized/Separate Kit Packing tasks), else just the single assignedTo.
 function taskRecipients(task) {
   return (task.assignedToMany && task.assignedToMany.length) ? task.assignedToMany : [task.assignedTo].filter(Boolean);
+}
+
+// One person works one task at a time: a task can't be started/resumed while any of its
+// assignees (or, for an unassigned task, the user pressing Start) already has another task
+// In Progress. Paused doesn't count — pausing or completing that task frees them up.
+// Returns a user-facing message, or null when nobody is busy.
+async function findActiveTaskConflict(task, user) {
+  const recipients = taskRecipients(task);
+  const userIds = recipients.length ? recipients : [user._id].filter(Boolean);
+  if (!userIds.length) return null;
+  const busy = await Task.findOne({
+    _id: { $ne: task._id },
+    status: 'In Progress',
+    deletedAt: null,
+    $or: [{ assignedTo: { $in: userIds } }, { assignedToMany: { $in: userIds } }],
+  }).select('taskCode taskName product assignedTo assigneeName assignedToMany assigneeNames').lean();
+  if (!busy) return null;
+
+  const busyIds = [busy.assignedTo, ...(busy.assignedToMany || [])].filter(Boolean).map(String);
+  const busyUserId = userIds.map(String).find((id) => busyIds.includes(id));
+  const label = busy.taskName || busy.product || 'Task';
+  if (user._id && busyUserId === String(user._id)) {
+    return `You already have task ${busy.taskCode} (${label}) in progress — pause or complete it before starting another task.`;
+  }
+  const manyIdx = (busy.assignedToMany || []).findIndex((id) => String(id) === busyUserId);
+  const name = (manyIdx >= 0 && busy.assigneeNames?.[manyIdx])
+    || (String(busy.assignedTo) === busyUserId && busy.assigneeName)
+    || (await User.findById(busyUserId).select('fullName').lean())?.fullName
+    || 'The assignee';
+  return `${name} is already working on task ${busy.taskCode} (${label}) — it must be paused or completed before this task can start.`;
 }
 
 // Resolve the time-management fields for a task being created, from its configured
@@ -48,6 +79,18 @@ async function buildTimeFields(body = {}) {
     fields.plannedEndTime = new Date(body.plannedEndTime);
   }
   return fields;
+}
+
+// The payment gate dispatchOrder applies to Current Task → Send to Dispatch — settled payment,
+// a sample order, or an approved Emergency Dispatch (task- or order-level) — shared with the
+// all-tasks-Done auto-forward in updateTaskStatus so that path can't move an unpaid order into
+// Dispatch either. `order` needs leadId populated with leadType for the sample check.
+async function dispatchPaymentCleared(order, task) {
+  if (!order) return false;
+  if (order.orderCategory === 'SAMPLE' || order.leadId?.leadType === 'SAMPLE') return true;
+  if (task?.emergencyApproved || order.emergencyApproved) return true;
+  const payStatus = await resolveOrderPaymentStatus(order._id).catch(() => 'Pending');
+  return payStatus === 'Paid';
 }
 
 // Forward an order to Dispatch: mark it Dispatch Ready and create its DispatchRecord
@@ -125,8 +168,8 @@ exports.getTasks = asyncHandler(async (req, res) => {
     Task.find(filter)
       .populate({
         path: 'orderId',
-        select: 'orderCode clientName orderCategory leadId items status expectedDeliveryDate',
-        populate: { path: 'leadId', select: 'leadType' },
+        select: 'orderCode clientName hotelName orderCategory leadId items status expectedDeliveryDate logoUrl',
+        populate: { path: 'leadId', select: 'leadType hotelLogoUrl' },
       })
       .populate('assignedTo', 'fullName role')
       .populate('assignedToMany', 'fullName role')
@@ -150,6 +193,9 @@ exports.getTasks = asyncHandler(async (req, res) => {
     const oid = t.orderId?._id && String(t.orderId._id);
     if (oid && statusByOrder[oid]) t.paymentStatus = statusByOrder[oid];
   });
+
+  // Hotel logo for the Current Task "Logo" column — same fallback Operations uses.
+  await backfillLogoUrlByHotelName(tasks.map((t) => t.orderId)).catch(() => {});
 
   res.status(200).json({ success: true, total, page, data: tasks });
 });
@@ -243,30 +289,102 @@ function relevantTaskNamesFor(it, timeConfigs, designType, needsPrinting) {
 // Mirrors the per-kit scoping OperationDetail.jsx's own separateKitTasksFor/
 // personalizedKitTasksFor already use for the Task Assignment cards (see that file's comment
 // on separateKitTasksFor for the same bug in that context).
-function buildKitPackingDoneMap(doneTasks) {
-  const map = new Map(); // "orderId::kitNameLower" -> { separate: bool, personalized: bool }
-  doneTasks.forEach((t) => {
-    if (!t.orderId) return;
+//
+// Takes ALL of the kit's active (non-deleted) kit-packing tasks, any status — not just Done
+// ones. "Add Another Task" splits one kit's packing into several partial-qty batches, so a
+// kit only counts as packed once it has at least one such task AND every one of them is
+// Done. Counting any single Done task let batch 1 finishing mark the whole kit packed while
+// batch 2 was still Pending (early dispatch forward / kit vanishing from Today's Checklist).
+// Same rule the Task Assignment cards already show (kgAllDone / separateKitPackingAllDone in
+// Tasks/index.jsx and OperationDetail.jsx).
+//
+// It also must cover every kit ordered — all assigned batches being Done isn't enough when
+// only 50 of 100 kits were ever assigned. Kit-packing qty is a KIT COUNT tracked per task
+// name (the Kit Packing modal shows "Assembly: 50 / 100 units", and checkTaskQuantityOverflow
+// caps same-name batches at the kit count), so each task name used for the kit must reach
+// the kit count (see kitComponentCoveredByKitTask). Qty is optional in that modal, so a name
+// group containing any task saved without a qty can't be judged by count — it stays on the
+// all-Done rule alone, exactly as before.
+// A switched-out task (see switchInProgressTask) is the finished PART of a split task; its
+// qty counts toward its name's total, and its Pending continuation keeps the kit unpacked.
+const KIT_PACKING_TASK_TYPES = ['Kit Packing', 'Separate Kit Packing', 'Personalized Kit Packing'];
+function buildKitPackingDoneMap(kitTasks) {
+  // "orderId::kitNameLower" -> { separate, personalized }, each { total, done, byName: Map(nameLower -> { qty, hasUnsized }) }
+  const map = new Map();
+  kitTasks.forEach((t) => {
+    if (!t.orderId || t.deletedAt) return;
+    const kind = (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') ? 'separate'
+      : t.taskType === 'Personalized Kit Packing' ? 'personalized' : null;
+    if (!kind) return;
     const key = `${String(t.orderId)}::${(t.product || '').trim().toLowerCase()}`;
-    if (!map.has(key)) map.set(key, { separate: false, personalized: false });
-    const entry = map.get(key);
-    if (t.taskType === 'Separate Kit Packing' || t.taskType === 'Kit Packing') entry.separate = true;
-    if (t.taskType === 'Personalized Kit Packing') entry.personalized = true;
+    if (!map.has(key)) {
+      map.set(key, {
+        separate: { total: 0, done: 0, byName: new Map() },
+        personalized: { total: 0, done: 0, byName: new Map() },
+      });
+    }
+    const c = map.get(key)[kind];
+    c.total += 1;
+    if (t.status === 'Done') c.done += 1;
+    const name = (t.taskName || '').trim().toLowerCase();
+    const g = c.byName.get(name) || { qty: 0, hasUnsized: false };
+    const qty = Number(t.qty) || 0;
+    if (qty > 0) g.qty += qty; else g.hasUnsized = true;
+    c.byName.set(name, g);
   });
   return map;
 }
 
-// Whether a kit-flagged item's own row is already covered by ITS OWN kit's Done packing
-// task — see buildKitPackingDoneMap above. A 'personalized' component needs the
-// Personalized Kit Packing task Done; any other kit category (separate_kit, or legacy
-// blank) needs the Separate Kit Packing task Done — both looked up by this specific item's
-// kitName, not any other kit sharing the order.
-function kitComponentCoveredByKitTask(it, kitPackingDoneMap, orderId) {
+// Kits ordered for a kit-flagged item — same kitOrders match (kitId, then kitName/kitType)
+// and overallQty fallback computeOrderDispatchReadiness uses for its own kitOverallQty.
+// 0 when unknown, which skips the kit-count check.
+function kitCountForItem(it, order) {
+  const match = (order?.kitOrders || []).find((k) =>
+    (it.kitId && k.kitId && String(k.kitId) === String(it.kitId))
+    || (k.kitName && it.kitName && k.kitName.toLowerCase() === it.kitName.toLowerCase())
+    || (k.kitType && it.kitType && k.kitType.toLowerCase() === it.kitType.toLowerCase()));
+  return Number(match?.overallQty) || Number(it.overallQty) || 0;
+}
+
+// Whether a kit-flagged item's own row is already covered by ITS OWN kit's packing tasks —
+// see buildKitPackingDoneMap above. A 'personalized' component needs the Personalized Kit
+// Packing task(s); any other kit category (separate_kit, or legacy blank) needs the Separate
+// Kit Packing task(s) — both looked up by this specific item's kitName, not any other kit
+// sharing the order. Covered = at least one task, every one Done, and every task name's
+// summed qty reaching the kit count (when both the count and the qtys are known).
+function kitComponentCoveredByKitTask(it, kitPackingDoneMap, orderId, order) {
   if (!kitPackingDoneMap) return false;
   const key = `${String(orderId)}::${(it.kitName || '').trim().toLowerCase()}`;
   const entry = kitPackingDoneMap.get(key);
   if (!entry) return false;
-  return it.category === 'personalized' ? !!entry.personalized : !!entry.separate;
+  const c = it.category === 'personalized' ? entry.personalized : entry.separate;
+  if (!(c.total > 0 && c.done === c.total)) return false;
+  const kitCount = kitCountForItem(it, order);
+  if (kitCount <= 0) return true;
+  return [...c.byName.values()].every((g) => g.hasUnsized || g.qty >= kitCount);
+}
+
+// Done qty per task NAME for one product line — `groups` is a Map(productKey -> Map(nameLower
+// -> { qty, hasUnsized })). Feeds doneNamesCoverQty below.
+function addDoneNameGroup(groups, productKey, t) {
+  if (!groups.has(productKey)) groups.set(productKey, new Map());
+  const byName = groups.get(productKey);
+  const name = (t.taskName || '').trim().toLowerCase();
+  const g = byName.get(name) || { qty: 0, hasUnsized: false };
+  const qty = Number(t.qty) || 0;
+  if (qty > 0) g.qty += qty; else g.hasUnsized = true;
+  byName.set(name, g);
+}
+
+// Coverage for a product with NO configured (Time Management) task name — judged by the task
+// names actually used for it: each name is its own step and needs the full required qty,
+// the same per-name rule the configured-name path and the checklist's "X/Y name" badges use.
+// This used to be "any Done task exists", which called e.g. Shampoo finished at 500 of 1000
+// and hid the unassigned 500 from Today's Checklist / Pending Remaining Qty. A name with a
+// task saved without a qty can't be judged by count and keeps that old any-Done behaviour.
+function doneNamesCoverQty(byName, requiredQty) {
+  if (!byName || byName.size === 0) return false;
+  return [...byName.values()].every((g) => g.hasUnsized || g.qty >= requiredQty);
 }
 
 // Whether EVERY product in this order has enough Done-status task coverage for its full
@@ -293,16 +411,16 @@ async function computeOrderDispatchReadiness(orderId) {
     .select('items kitOrders displayUnitTab').lean();
   if (!order || !(order.items || []).length) return { ready: false, missingProducts: [] };
 
-  const tasks = await Task.find({ orderId }).select('productIndex taskName qty status taskType product').lean();
+  const tasks = await Task.find({ orderId }).select('productIndex taskName qty status taskType product deletedAt').lean();
   const doneQtyByKey = new Map();
   const doneQtyByProduct = new Map();
   const anyDoneSet = new Set();
-  const doneTasks = [];
+  const doneNamesByProduct = new Map(); // productIndex -> doneNameGroups (see addDoneNameGroup)
   tasks.forEach((t) => {
     if (t.status !== 'Done') return;
-    doneTasks.push({ ...t, orderId });
     const idxKey = `${t.productIndex ?? 'x'}`;
     anyDoneSet.add(idxKey);
+    addDoneNameGroup(doneNamesByProduct, idxKey, t);
     const key = `${idxKey}-${(t.taskName || '').trim().toLowerCase()}`;
     doneQtyByKey.set(key, (doneQtyByKey.get(key) || 0) + (Number(t.qty) || 0));
     // Total Done qty for this product regardless of which task name it was filed under —
@@ -311,7 +429,10 @@ async function computeOrderDispatchReadiness(orderId) {
     // real, completed, full-qty work permanently invisible to the dispatch gate.
     doneQtyByProduct.set(idxKey, (doneQtyByProduct.get(idxKey) || 0) + (Number(t.qty) || 0));
   });
-  const kitPackingDoneMap = buildKitPackingDoneMap(doneTasks);
+  // Every status, not just Done — see buildKitPackingDoneMap (deleted ones are skipped there).
+  const kitPackingDoneMap = buildKitPackingDoneMap(
+    tasks.filter((t) => KIT_PACKING_TASK_TYPES.includes(t.taskType)).map((t) => ({ ...t, orderId })),
+  );
 
   const timeConfigs = await TaskTimeConfig.find({ active: true }).select('taskName product active').lean();
 
@@ -330,7 +451,7 @@ async function computeOrderDispatchReadiness(orderId) {
       : (Number(it.overallQty) || Number(it.qty) || 0);
     if (requiredQty <= 0) return; // nothing required from this line — can't block on it
     // This component's own kit is already packed as a unit — see kitComponentCoveredByKitTask.
-    if (isKitItem && kitComponentCoveredByKitTask(it, kitPackingDoneMap, orderId)) return;
+    if (isKitItem && kitComponentCoveredByKitTask(it, kitPackingDoneMap, orderId, order)) return;
 
     const designType = resolveDesignType(it, order);
     const needsPrintStep = normYN(it.printing) === 'YES';
@@ -353,9 +474,9 @@ async function computeOrderDispatchReadiness(orderId) {
         productReady = (doneQtyByProduct.get(`${idx}`) || 0) >= requiredQty;
       }
     } else {
-      // No configured task name matches this product — fall back to "at least one Done task
-      // exists for it", matching computeSuggestedTasks' own any-task-exists fallback.
-      productReady = anyDoneSet.has(`${idx}`);
+      // No configured task name matches this product — judge it by the task names actually
+      // used for it (see doneNamesCoverQty), same as computeSuggestedTasks' fallback.
+      productReady = doneNamesCoverQty(doneNamesByProduct.get(`${idx}`), requiredQty);
     }
 
     if (!productReady) {
@@ -527,7 +648,7 @@ async function computeSuggestedTasks() {
   // therefore ride along to Dispatch Ready untouched — excluding that status here would make
   // it vanish from this checklist forever with no path back onto it. Genuinely-finished
   // products/kits on a Dispatch Ready order still drop off normally via the fullyCovered/
-  // anyTaskSet checks below, so only the truly-neglected ones resurface. Dispatched/Completed/
+  // doneNamesCoverQty checks below, so only the truly-neglected ones resurface. Dispatched/Completed/
   // Closed/Cancelled orders are still excluded — those are past the point this checklist acts on.
   const orders = await Order.find({ deletedAt: null, status: { $in: ['In Production', 'Dispatch Ready'] } })
     .select('orderCode clientName hotelName items kitOrders printingStatus printingStatusOverrides isUrgent isEmergency emergencyApproved displayUnitTab createdAt splitDates packagingIncludes packagingIncludesQty kitOverallQty').lean();
@@ -547,9 +668,18 @@ async function computeSuggestedTasks() {
     const key = `${t.orderId}-${t.productIndex ?? 'x'}-${(t.taskName || '').trim().toLowerCase()}`;
     qtyByKey.set(key, (qtyByKey.get(key) || 0) + (Number(t.qty) || 0));
   });
-  const anyTaskSet = new Set(existingTasks.map((t) => `${t.orderId}-${t.productIndex ?? 'x'}`));
+  // `${orderId}-${productIndex}` -> Done qty per task name — for products with no configured
+  // task name (see doneNamesCoverQty).
+  const doneNamesByLine = new Map();
+  existingTasks.forEach((t) => addDoneNameGroup(doneNamesByLine, `${t.orderId}-${t.productIndex ?? 'x'}`, t));
   // "orderId::kitNameLower" -> { separate, personalized } — see buildKitPackingDoneMap/kitComponentCoveredByKitTask.
-  const kitPackingDoneMap = buildKitPackingDoneMap(existingTasks);
+  // Needs every active kit-packing task (Pending batches included), not just the Done ones above.
+  const kitPackingTasks = await Task.find({
+    orderId: { $in: orders.map((o) => o._id) },
+    taskType: { $in: KIT_PACKING_TASK_TYPES },
+    deletedAt: null,
+  }).select('orderId taskType taskName qty product status').lean();
+  const kitPackingDoneMap = buildKitPackingDoneMap(kitPackingTasks);
   // Done qty per product regardless of task name — used only to gate a partially-emergency
   // product's REMAINING/tentative split-card (see isPartialEmergencySplit below), same
   // "any task name counts" fallback computeOrderDispatchReadiness already uses for
@@ -735,7 +865,7 @@ async function computeSuggestedTasks() {
       if (!printingReady) return;
 
       // This component's own kit is already packed as a unit — see kitComponentCoveredByKitTask.
-      if (isKitItem && kitComponentCoveredByKitTask(it, kitPackingDoneMap, o._id)) return;
+      if (isKitItem && kitComponentCoveredByKitTask(it, kitPackingDoneMap, o._id, o)) return;
 
       // Only drop this product off the checklist once every task NAME relevant to it
       // (Filling, Packing, etc. — see relevantTaskNamesFor) has enough DONE qty to cover
@@ -750,9 +880,10 @@ async function computeSuggestedTasks() {
           return (qtyByKey.get(key) || 0) >= requiredQty;
         });
         if (fullyCovered) return;
-      } else if (anyTaskSet.has(`${o._id}-${idx}`)) {
-        // No configured task name matches this product — fall back to the original
-        // any-task-exists rule so the card doesn't linger forever with nothing to clear it.
+      } else if (doneNamesCoverQty(doneNamesByLine.get(`${o._id}-${idx}`), requiredQty)) {
+        // No configured task name matches this product — drop it once every task name used
+        // for it has its full qty Done (see doneNamesCoverQty), so a partly-done product
+        // (500 of 1000) keeps showing its unassigned remainder.
         return;
       }
 
@@ -970,8 +1101,8 @@ exports.getTask = asyncHandler(async (req, res, next) => {
   const task = await Task.findById(req.params.id)
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName orderCategory leadId items status expectedDeliveryDate',
-      populate: { path: 'leadId', select: 'leadType' },
+      select: 'orderCode clientName hotelName orderCategory leadId items status expectedDeliveryDate logoUrl',
+      populate: { path: 'leadId', select: 'leadType hotelLogoUrl' },
     })
     .populate('assignedTo', 'fullName role')
     .populate('assignedToMany', 'fullName role');
@@ -986,6 +1117,7 @@ exports.getTask = asyncHandler(async (req, res, next) => {
   if (result.orderId?._id) {
     const livePaymentStatus = await resolveOrderPaymentStatus(result.orderId._id).catch(() => null);
     if (livePaymentStatus) result.paymentStatus = livePaymentStatus;
+    await backfillLogoUrlByHotelName([result.orderId]).catch(() => {});
   }
 
   // Resolve the order line item this task corresponds to (by index first, then by name).
@@ -1081,6 +1213,17 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
   const { status } = req.body;
   const task = await Task.findById(req.params.id);
   if (!task) return next(new AppError('Task not found', 404));
+  // The outgoing assignee's finished portion of a mid-task switch is final — reopening it
+  // would double-count its qty/time against the continuation task (switchedToTaskCode).
+  if (task.switchedOut) {
+    return next(new AppError(`This task was switched mid-way — the remaining work continues in ${task.switchedToTaskCode || 'another task'}`, 400));
+  }
+  // Start (Pending → In Progress) and Resume (Paused → In Progress) both claim the
+  // assignee's single active slot — see findActiveTaskConflict.
+  if (status === 'In Progress' && task.status !== 'In Progress') {
+    const conflictMsg = await findActiveTaskConflict(task, req.user || {});
+    if (conflictMsg) return next(new AppError(conflictMsg, 409));
+  }
 
   const now = new Date();
   const pushTimeline = (event) => {
@@ -1162,14 +1305,16 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
   // Automation: when every product on the order has full Done-status task coverage,
   // forward the order to Dispatch — see isOrderReadyForDispatch for why this is NOT simply
   // "every task document that exists is Done" (that was vacuously true for a product that
-  // never got any task assigned at all).
+  // never got any task assigned at all). Only once payment is cleared, same rule as Current
+  // Task → Send to Dispatch (see dispatchPaymentCleared); an unpaid order stays put until it's
+  // Paid or an Emergency Dispatch is approved, then goes through Send to Dispatch as usual.
   let orderForwarded = false;
   if (status === 'Done' && task.orderId) {
     const siblings = await Task.find({ orderId: task.orderId });
     const allDone = await isOrderReadyForDispatch(task.orderId);
     if (allDone) {
       // Kit orders require a Kit Packing task to be completed before forwarding.
-      const orderDoc = await Order.findById(task.orderId).populate('leadId', 'kitDisplayUnit displayUnit');
+      const orderDoc = await Order.findById(task.orderId).populate('leadId', 'kitDisplayUnit displayUnit leadType');
       const kitDisplayUnit = orderDoc?.kitDisplayUnit || orderDoc?.displayUnit
         || orderDoc?.leadId?.kitDisplayUnit || orderDoc?.leadId?.displayUnit;
       const hasKitPackingTask = siblings.some((t) => t.taskType === 'Kit Packing');
@@ -1177,7 +1322,7 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
       if (kitDisplayUnit && !hasKitPackingTask) {
         // All product tasks done but Kit Packing not yet assigned — signal the UI.
         await Order.findByIdAndUpdate(task.orderId, { taskStatus: 'Kit Packing Required' });
-      } else {
+      } else if (await dispatchPaymentCleared(orderDoc, task)) {
         await forwardOrderToDispatch(task.orderId, req.user._id);
         orderForwarded = true;
       }
@@ -1513,6 +1658,218 @@ exports.reassignTask = asyncHandler(async (req, res, next) => {
   }
 
   res.status(200).json({ success: true, data: task });
+});
+
+// Fields a mid-task switch's continuation task inherits unchanged from the original.
+const SWITCH_CARRY_OVER_FIELDS = [
+  'orderId', 'taskType', 'taskName', 'product', 'productIndex', 'printingType', 'clientName',
+  'priority', 'paymentStatus', 'dueDate', 'description', 'timePerUnitSec',
+  'isEmergency', 'emergencyRequested', 'emergencyRequestedAt', 'emergencyRequestedBy', 'emergencyReason',
+  'emergencySalesApproved', 'emergencySalesApprovedBy', 'emergencySalesApprovedAt',
+  'emergencyOpsApproved', 'emergencyOpsApprovedBy', 'emergencyOpsApprovedAt',
+  'emergencyApproved', 'emergencyApprovedBy', 'emergencyApprovedAt',
+];
+
+// Mid-task switch: hand an In Progress/Paused task to another Task Management staff member
+// part-way through. Admin-only, same as reassignTask (which stays the Pending-only move).
+// The admin enters how many units the current assignee completed and how many remain —
+// the two must add up to the task's qty.
+//
+// Rather than swapping the assignee on one record (which would mix two people's time and
+// units into one rating), the task is split:
+//   • this task keeps completedQty and is closed as Done right now — clock stopped (open
+//     pause folded in), estimate scaled to completedQty, auto-rated on that portion — so the
+//     outgoing assignee's performance report reflects exactly the work they did;
+//   • a new Pending task carries remainingQty + the rest of the estimate for the incoming
+//     assignee, whose own clock only starts when they press Start.
+// The two quantities always sum to the original, so dispatch readiness, Today's Checklist,
+// Ops cards, checkTaskQuantityOverflow and stock all see the same total as before. Stock is
+// NOT deducted again for the new task — the original's reservation already covers the line
+// (and reverseStockForTask's hasOtherActiveTaskForLine keeps it in place while either exists).
+// updateTaskStatus's completion side-effects (StickerRequest → Done sync, dispatch forwarding,
+// "Task Completed" notification) are deliberately NOT run — the work isn't finished; they run
+// when the continuation task is marked Done.
+// Multi-assignee tasks (Personalized/Separate Kit Packing): `fromAssignedTo` names the one
+// person leaving; the finished portion stays credited to the whole original group, and the
+// continuation goes to the same group with only that slot swapped.
+exports.switchInProgressTask = asyncHandler(async (req, res, next) => {
+  if (!req.user || (req.user.role !== 'Super Admin' && req.user.role !== 'Admin')) {
+    return next(new AppError('Only an Admin can switch tasks', 403));
+  }
+
+  const task = await Task.findOne({ _id: req.params.id, deletedAt: null });
+  if (!task) return next(new AppError('Task not found', 404));
+  if (task.status !== 'In Progress' && task.status !== 'Paused') {
+    return next(new AppError('Only an In Progress or Paused task can be switched mid-way — use Reassign for a task that has not started', 400));
+  }
+
+  const totalQty = Number(task.qty) || 0;
+  const completedQty = Number(req.body.completedQty);
+  const remainingQty = Number(req.body.remainingQty);
+  if (totalQty <= 0) return next(new AppError('This task has no quantity to split', 400));
+  if (!Number.isFinite(completedQty) || completedQty <= 0) {
+    return next(new AppError('Completed count must be greater than 0', 400));
+  }
+  if (!Number.isFinite(remainingQty) || remainingQty <= 0) {
+    return next(new AppError('Remaining count must be greater than 0 — if everything is finished, mark the task Done instead', 400));
+  }
+  if (Math.round((completedQty + remainingQty) * 1000) !== Math.round(totalQty * 1000)) {
+    return next(new AppError(`Completed (${completedQty}) + Remaining (${remainingQty}) must equal the total assigned qty (${totalQty})`, 400));
+  }
+
+  const { assignedTo, fromAssignedTo } = req.body;
+  if (!assignedTo) return next(new AppError('assignedTo is required', 400));
+  const newUser = await User.findOne({ _id: assignedTo, department: 'Task Management' }).select('_id fullName').lean();
+  if (!newUser) return next(new AppError('Selected user is not a Task Management staff member', 400));
+
+  const hasMany = Boolean(task.assignedToMany && task.assignedToMany.length);
+  let fromId;
+  let fromName;
+  const assigneeFields = {};
+  if (hasMany) {
+    if (!fromAssignedTo) return next(new AppError('fromAssignedTo is required to switch one of several assignees', 400));
+    const idx = task.assignedToMany.findIndex((id) => id.toString() === fromAssignedTo.toString());
+    if (idx === -1) return next(new AppError('Selected assignee is not on this task', 400));
+    if (task.assignedToMany.some((id) => id.toString() === assignedTo.toString())) {
+      return next(new AppError('Selected user is already assigned to this task', 400));
+    }
+    fromId = task.assignedToMany[idx];
+    const namesAligned = task.assigneeNames && task.assigneeNames.length === task.assignedToMany.length;
+    fromName = (namesAligned && task.assigneeNames[idx])
+      || (await User.findById(fromId).select('fullName').lean())?.fullName || '';
+    assigneeFields.assignedToMany = task.assignedToMany.map((id, i) => (i === idx ? newUser._id : id));
+    assigneeFields.assigneeNames = namesAligned ? task.assigneeNames.map((n, i) => (i === idx ? newUser.fullName : n)) : [];
+    // assignedTo/assigneeName mirror the first entry — same rule as reassignTask.
+    const swapsFirst = task.assignedTo && task.assignedTo.toString() === fromId.toString();
+    assigneeFields.assignedTo = swapsFirst ? newUser._id : task.assignedTo;
+    assigneeFields.assigneeName = swapsFirst ? newUser.fullName : task.assigneeName;
+  } else {
+    if (task.assignedTo && task.assignedTo.toString() === assignedTo.toString()) {
+      return next(new AppError('Selected user is already assigned to this task', 400));
+    }
+    fromId = task.assignedTo;
+    fromName = task.assigneeName || '';
+    assigneeFields.assignedTo = newUser._id;
+    assigneeFields.assigneeName = newUser.fullName;
+  }
+
+  // Outgoing assignee's worked time — same start → now minus paused spans formula
+  // updateTaskStatus uses on Done.
+  const now = new Date();
+  if (task.lastPausedAt) {
+    task.pausedDurationSec = (task.pausedDurationSec || 0)
+      + Math.max(0, Math.round((now.getTime() - new Date(task.lastPausedAt).getTime()) / 1000));
+    task.lastPausedAt = null;
+  }
+  const startMs = task.startedAt ? new Date(task.startedAt).getTime()
+    : task.plannedStartTime ? new Date(task.plannedStartTime).getTime()
+    : new Date(task.createdAt).getTime();
+  const actualDurationSec = Math.max(0, Math.round((now.getTime() - startMs) / 1000) - (task.pausedDurationSec || 0));
+
+  // Estimate split pro-rata by qty (the stored estimate may be a client-side sum across
+  // several task names, so scaling it is more faithful than re-deriving per-unit × qty).
+  const originalEstSec = Number(task.estimatedDurationSec) || 0;
+  const doneEstSec = originalEstSec > 0 ? Math.round(originalEstSec * (completedQty / totalQty)) : 0;
+  const remainingEstSec = originalEstSec > 0 ? Math.max(0, originalEstSec - doneEstSec) : 0;
+
+  const carried = {};
+  SWITCH_CARRY_OVER_FIELDS.forEach((f) => {
+    if (task[f] !== undefined && task[f] !== null) carried[f] = task[f];
+  });
+  const newTaskCode = await generateCode('TASK');
+  const newTask = await Task.create({
+    ...carried,
+    ...assigneeFields,
+    taskCode: newTaskCode,
+    qty: remainingQty,
+    status: 'Pending',
+    plannedStartTime: now,
+    ...(originalEstSec > 0 ? {
+      estimatedDurationSec: remainingEstSec,
+      plannedEndTime: new Date(now.getTime() + remainingEstSec * 1000),
+    } : {}),
+    // Keep the original creator so whoever could see the original task can see its continuation.
+    createdBy: task.createdBy || req.user._id,
+    switchedFromTask: task._id,
+    switchedFromTaskCode: task.taskCode,
+  });
+
+  task.timeline = task.timeline || [];
+  task.timeline.push({ event: 'Switch', at: now, by: req.user._id, byName: req.user.fullName || '' });
+  task.status = 'Done';
+  task.completedAt = now;
+  task.actualDurationSec = actualDurationSec;
+  task.originalQty = totalQty;
+  task.qty = completedQty;
+  if (originalEstSec > 0) {
+    task.estimatedDurationSec = doneEstSec;
+    if (task.plannedStartTime) task.plannedEndTime = new Date(new Date(task.plannedStartTime).getTime() + doneEstSec * 1000);
+  }
+  const { rating, ratingReason, efficiencyPct } = computeRating(task.estimatedDurationSec, actualDurationSec);
+  if (rating !== null) {
+    task.rating = rating;
+    task.ratingReason = ratingReason;
+    task.efficiencyPct = efficiencyPct;
+  }
+  task.switchedOut = true;
+  task.switchedToTask = newTask._id;
+  task.switchedToTaskCode = newTaskCode;
+  task.switchHistory = task.switchHistory || [];
+  task.switchHistory.push({
+    from: fromId || null,
+    fromName: fromName || '',
+    to: newUser._id,
+    toName: newUser.fullName,
+    by: req.user._id,
+    byName: req.user.fullName,
+    at: now,
+    stage: 'In Progress',
+    totalQty,
+    completedQty,
+    remainingQty,
+    newTaskCode,
+  });
+  try {
+    await task.save();
+  } catch (err) {
+    // Don't leave a continuation task behind for a switch that didn't happen — its qty
+    // would otherwise double-count against the still-unsplit original.
+    await Task.deleteOne({ _id: newTask._id }).catch(() => {});
+    throw err;
+  }
+
+  const taskLabel = task.taskName || task.product || 'Task';
+  notifyRoles({
+    modules: ['Task Management'],
+    userIds: [newUser._id],
+    type: 'task',
+    title: 'Task Switched To You',
+    message: `Task ${newTaskCode}: ${taskLabel} — ${remainingQty} of ${totalQty} remaining (${fromName || 'previous assignee'} completed ${completedQty}). Press Start to begin.`,
+    link: '/tasks',
+  }).catch(() => {});
+  const continuing = (assigneeFields.assignedToMany || []).filter((id) => id.toString() !== newUser._id.toString());
+  if (continuing.length) {
+    notifyRoles({
+      modules: ['Task Management'],
+      userIds: continuing,
+      type: 'task',
+      title: 'Task Continues As New Task',
+      message: `Task ${task.taskCode}: ${taskLabel} — ${completedQty} done; remaining ${remainingQty} continues as ${newTaskCode} with ${newUser.fullName} replacing ${fromName || 'a teammate'}`,
+      link: '/tasks',
+    }).catch(() => {});
+  }
+  if (fromId) {
+    notifyRoles({
+      modules: ['Task Management'],
+      userIds: [fromId],
+      type: 'task',
+      title: 'Task Switched',
+      message: `Task ${task.taskCode}: ${taskLabel} — your ${completedQty} of ${totalQty} recorded as completed; remaining ${remainingQty} moved to ${newUser.fullName} (${newTaskCode})`,
+      link: '/tasks',
+    }).catch(() => {});
+  }
+
+  res.status(200).json({ success: true, data: { previousTask: task, newTask } });
 });
 
 // Soft-delete only — Admin/Management department, or Super Admin role, from Task

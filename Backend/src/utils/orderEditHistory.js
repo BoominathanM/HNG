@@ -11,6 +11,7 @@ const SCALAR_FIELDS = {
   billingName: 'Billing Name',
   contactPerson: 'Contact Person',
   pocDesignation: 'POC Designation',
+  logoUrl: 'Hotel Logo',
   phone: 'Phone',
   clientPhone: 'Phone',
   email: 'Email',

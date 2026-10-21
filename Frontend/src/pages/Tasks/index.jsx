@@ -9,7 +9,7 @@ import { enqueueSnackbar } from 'notistack';
 import {
   PlusOutlined, CheckOutlined, UserOutlined, ClockCircleOutlined, SearchOutlined,
   PlayCircleOutlined, PauseCircleOutlined, EyeOutlined, BellOutlined, ExclamationCircleOutlined, ShoppingOutlined,
-  FileImageOutlined, CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
+  CheckCircleOutlined, AlertFilled, BulbOutlined, ExperimentOutlined,
   EditOutlined, DeleteOutlined, FieldTimeOutlined, RobotOutlined, TeamOutlined,
   InfoCircleOutlined, GiftOutlined, SwapOutlined, TrophyOutlined, CalendarOutlined, UsergroupAddOutlined,
 } from '@ant-design/icons';
@@ -17,11 +17,14 @@ import { useSelector } from 'react-redux';
 import { motion } from 'framer-motion';
 import dayjs from 'dayjs';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import LogoThumb from '../../components/common/LogoThumb';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import TaskPerformanceReport from '../../components/reports/TaskPerformanceReport';
 import AssigneeTasksTab from './AssigneeTasksTab';
-import { estimateSecFor, secToHuman, perUnitLabel, unitToSec, secToUnit, ratingColor, ratingLabel } from '../../utils/taskTime';
+import { estimateSecFor, secToHuman, perUnitLabel, unitToSec, secToUnit, ratingColor, ratingLabel, ratingFromDurations } from '../../utils/taskTime';
+import { kitPackingProgress, isKitPackingComplete, kitsReadyForNextStep, kitsLeftUnderCap } from '../../utils/kitPackingProgress';
+import { buildActiveTaskMap, findStartBlocker, startBlockerMessage } from '../../utils/activeTaskLock';
 import {
   useGetTasksQuery,
   useGetSuggestedTasksQuery,
@@ -31,6 +34,7 @@ import {
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useReassignTaskMutation,
+  useSwitchTaskMutation,
   useDispatchTaskOrderMutation,
   useRequestEmergencyDispatchMutation,
   useRequestEmergencyDispatchForOrderMutation,
@@ -403,6 +407,7 @@ export default function Tasks() {
   const [createAssigneeTasks, { isLoading: creatingAssigneeTask }] = useCreateAssigneeTasksMutation();
   const [updateTaskStatus] = useUpdateTaskStatusMutation();
   const [reassignTask, { isLoading: reassigning }] = useReassignTaskMutation();
+  const [switchTask, { isLoading: switchingTask }] = useSwitchTaskMutation();
   const [dispatchTaskOrder, { isLoading: dispatching }] = useDispatchTaskOrderMutation();
   const [fetchOrderDispatchReadiness] = useLazyGetOrderDispatchReadinessQuery();
   const [requestEmergencyDispatch, { isLoading: requesting }] = useRequestEmergencyDispatchMutation();
@@ -549,6 +554,14 @@ export default function Tasks() {
     // assignment. doneQty is still tracked separately for the "X/Y done" + green/gold badge.
     return rows.filter((r) => r.qty > 0).map((r) => ({ ...r, requiredQty, pendingQty: Math.max(0, requiredQty - r.qty) }));
   };
+  // Units of this card still waiting for an assignee — the largest per-task-name shortfall
+  // (each name needs the full qty on its own), or the whole qty when nothing's assigned yet.
+  // `partlyAssigned` = some qty already has an assignee (the "X unassigned" tag only shows then).
+  const getUnassignedQty = (item) => {
+    const progress = getTaskProgress(item);
+    if (!progress.length) return { qty: Number(item.qty) || 0, partlyAssigned: false };
+    return { qty: Math.max(0, ...progress.map((p) => p.pendingQty)), partlyAssigned: true };
+  };
   const [createTimeConfig] = useCreateTaskTimeConfigMutation();
   const [updateTimeConfig] = useUpdateTaskTimeConfigMutation();
   const [deleteTimeConfig] = useDeleteTaskTimeConfigMutation();
@@ -602,6 +615,8 @@ export default function Tasks() {
     orderStatus: t.orderId?.status || '',
     deliveryDate: deliveryDateStr,
     client: t.orderId?.clientName || t.clientName || '—',
+    // Hotel logo from the order (or its lead / same-hotel-name lead, resolved in getTasks).
+    logoUrl: t.orderId?.logoUrl || t.orderId?.leadId?.hotelLogoUrl || '',
     product: t.product || '—',
     assignedTo: assigneeNameList.join(', ') || '—',
     assignee: assigneeNameList.join(', ') || '',
@@ -655,8 +670,33 @@ export default function Tasks() {
     efficiencyPct: t.efficiencyPct ?? null,
     feedback: t.feedback || '',
     createdAt: t.createdAt,
+    // Mid-task switch (backend switchInProgressTask): switchedOut = this row is the
+    // outgoing assignee's finished portion (locked, rest continues in switchedToTaskCode);
+    // switchedFromTaskCode = this row is the continuation of an earlier task.
+    switchedOut: !!t.switchedOut,
+    switchedToTaskCode: t.switchedToTaskCode || '',
+    switchedFromTaskCode: t.switchedFromTaskCode || '',
+    originalQty: t.originalQty ?? null,
+    midSwitch: (t.switchHistory || []).filter((h) => h.stage === 'In Progress').slice(-1)[0] || null,
     };
   }), [tasksData]);
+  // One In Progress task per person (backend updateTaskStatus enforces it) — row key →
+  // tooltip message for every Pending/Paused row whose Start/Resume is blocked by another
+  // task its assignee already has In Progress.
+  const startBlockers = useMemo(() => {
+    const activeMap = buildActiveTaskMap(tasksData?.data || []);
+    const me = currentUser?._id || currentUser?.id;
+    const out = new Map();
+    taskList.forEach((r) => {
+      const blocker = findStartBlocker({
+        taskId: r.key,
+        status: r.status,
+        assigneeIds: r.hasMultipleAssignees ? r.assignedToManyList.map((a) => a.id) : [r.assignedToId],
+      }, activeMap, me);
+      if (blocker) out.set(r.key, startBlockerMessage(blocker));
+    });
+    return out;
+  }, [tasksData, taskList, currentUser]);
   const [searchText, setSearchText] = useState('');
   const [filterType, setFilterType] = useState(null);
   const [filterPriority, setFilterPriority] = useState(null);
@@ -695,6 +735,15 @@ export default function Tasks() {
   const [reassignKitTask, setReassignKitTask] = useState(null);
   const [reassignKitSelections, setReassignKitSelections] = useState({}); // { [assigneeId]: newUserId }
   const [reassignKitSaving, setReassignKitSaving] = useState(false);
+  // Mid-task Switch modal (admin-only) — In Progress/Paused tasks. The admin enters the
+  // outgoing assignee's completed count + the remaining count (must sum to the task qty);
+  // the backend splits the task so each person is timed and rated on their own units.
+  const [midSwitchTask, setMidSwitchTask] = useState(null);
+  const [midSwitchFrom, setMidSwitchFrom] = useState(undefined); // multi-assignee: who's leaving
+  const [midSwitchTo, setMidSwitchTo] = useState(undefined);
+  const [midSwitchCompleted, setMidSwitchCompleted] = useState(null);
+  const [midSwitchRemaining, setMidSwitchRemaining] = useState(null);
+  const [midSwitchOpenedAt, setMidSwitchOpenedAt] = useState(0); // "now" for the worked-so-far preview
   const [assignModalOpen, setAssignModalOpen] = useState(false);
   const [assignTarget, setAssignTarget] = useState(null);
   const [assignForm] = Form.useForm();
@@ -783,6 +832,20 @@ export default function Tasks() {
 
     const product = kitCfg?.kitName || (isPersonalized ? 'Personalized Kit' : 'Separate Kit');
     const kitReqQty = kitCfg?.overallQty || 0;
+
+    // Partial unlock (see readyCap in the modal): no task name may go past the kits whose
+    // separate kit packing is Done so far, counting what's already assigned under that name.
+    if (isPersonalized && kitCfg?.readyCap != null) {
+      const capTasks = personalizedKitTasksFor(orderDoc?._id, kitCfg);
+      const totals = new Map();
+      filledKitSubTasks.forEach((t) => totals.set(normTaskName(t.description), (totals.get(normTaskName(t.description)) || 0) + (Number(t.qty) || 0)));
+      const over = [...totals.entries()].find(([name, qty]) => qty > kitsLeftUnderCap(capTasks, name, kitCfg.readyCap));
+      if (over) {
+        const label = filledKitSubTasks.find((t) => normTaskName(t.description) === over[0])?.description || over[0];
+        enqueueSnackbar(`Only ${kitsLeftUnderCap(capTasks, over[0], kitCfg.readyCap)} more kit(s) are ready for "${label}" — separate kit packing is Done for ${kitCfg.readyCap} kits so far.`, { variant: 'warning' });
+        return;
+      }
+    }
 
     // Multiple assignees on ONE task: everyone selected shares the same task record
     // (mirrors Operations' submitKitPackingTask) so it shows up for every selected user.
@@ -928,11 +991,12 @@ export default function Tasks() {
       // Shaving Kit) still needs assignment/completion, even if a SIBLING kit group (e.g.
       // Dental Kit) is already fully Done. An order-wide "some task somewhere is Done" check
       // would hide the card the moment just one kit finished, stranding the others.
-      const separateNeedsAssignment = separateKitGroups.some((kg) => {
-        const tasks = separateKitTasksFor(o._id, kg);
-        return tasks.length === 0 || !tasks.every((t) => t.status === 'Done');
+      // "Complete" also needs every kit ordered to be assigned — see kitPackingProgress.
+      const separateNeedsAssignment = separateKitGroups.some((kg) => !isKitPackingComplete(separateKitTasksFor(o._id, kg), kg.overallQty));
+      const personalizedNeedsAssignment = personalizedKitGroups.some((kg) => {
+        const tasks = personalizedKitTasksFor(o._id, kg);
+        return tasks.length === 0 || kitPackingProgress(tasks, kg.overallQty).short;
       });
-      const personalizedNeedsAssignment = personalizedKitGroups.some((kg) => personalizedKitTasksFor(o._id, kg).length === 0);
       if (!separateNeedsAssignment && !personalizedNeedsAssignment) return;
       if (!map[hotel]) map[hotel] = {};
       map[hotel][orderCode] = [{
@@ -1162,6 +1226,56 @@ export default function Tasks() {
       enqueueSnackbar(err?.data?.message || err?.data || 'Failed to reassign', { variant: 'error' });
     } finally {
       setReassignKitSaving(false);
+    }
+  };
+
+  // Admin-only mid-task switch (In Progress/Paused) — see the Mid-task Switch modal below.
+  // Backend re-validates role, status, and Completed + Remaining === task qty independently.
+  const openMidSwitchModal = (row) => {
+    setMidSwitchTask(row);
+    setMidSwitchOpenedAt(Date.now());
+    setMidSwitchFrom(row.hasMultipleAssignees ? undefined : (row.assignedToId || undefined));
+    setMidSwitchTo(undefined);
+    setMidSwitchCompleted(null);
+    setMidSwitchRemaining(null);
+  };
+  const closeMidSwitchModal = () => {
+    setMidSwitchTask(null);
+    setMidSwitchFrom(undefined);
+    setMidSwitchTo(undefined);
+    setMidSwitchCompleted(null);
+    setMidSwitchRemaining(null);
+  };
+  const midSwitchTotal = Number(midSwitchTask?.qty) || 0;
+  const midSwitchSumOk = midSwitchCompleted > 0 && midSwitchRemaining > 0
+    && Math.round((midSwitchCompleted + midSwitchRemaining) * 1000) === Math.round(midSwitchTotal * 1000);
+  const midSwitchReady = !!midSwitchTask && midSwitchSumOk && !!midSwitchTo
+    && (!midSwitchTask.hasMultipleAssignees || !!midSwitchFrom);
+  // Outgoing assignee's worked time so far — start → modal-open time minus paused spans,
+  // frozen at the pause point while Paused. Same formula the backend applies at switch time
+  // (the backend's own clock at submit is authoritative).
+  const midSwitchWorkedSec = (() => {
+    const r = midSwitchTask;
+    if (!r?.startTime) return 0;
+    const startMs = new Date(r.startTime).getTime();
+    const endMs = r.status === 'Paused' && r.lastPausedAt ? new Date(r.lastPausedAt).getTime() : midSwitchOpenedAt;
+    return Math.max(0, Math.round((endMs - startMs) / 1000) - (r.pausedDurationSec || 0));
+  })();
+  const submitMidSwitch = async () => {
+    if (!midSwitchReady) return;
+    try {
+      const res = await switchTask({
+        id: midSwitchTask.key,
+        assignedTo: midSwitchTo,
+        fromAssignedTo: midSwitchTask.hasMultipleAssignees ? midSwitchFrom : undefined,
+        completedQty: midSwitchCompleted,
+        remainingQty: midSwitchRemaining,
+      }).unwrap();
+      const newCode = res?.data?.newTask?.taskCode;
+      enqueueSnackbar(`Task switched — remaining ${midSwitchRemaining} moved to ${newCode || 'a new task'}`, { variant: 'success' });
+      closeMidSwitchModal();
+    } catch (err) {
+      enqueueSnackbar(err?.data?.message || err?.data || 'Failed to switch task', { variant: 'error' });
     }
   };
 
@@ -1591,6 +1705,12 @@ export default function Tasks() {
             {r.isSample && (
               <Tag color="purple" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Sample Order</Tag>
             )}
+            {r.switchedFromTaskCode && (
+              <Tag color="geekblue" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>Continued from {r.switchedFromTaskCode}</Tag>
+            )}
+            {r.switchedOut && r.originalQty != null && (
+              <Tag color="default" style={{ fontSize: 10, margin: 0, padding: '0 6px', lineHeight: '18px' }}>{r.qty} of {r.originalQty} done</Tag>
+            )}
           </Space>
         );
       },
@@ -1598,11 +1718,12 @@ export default function Tasks() {
     {
       title: 'Logo',
       key: 'logo',
-      render: (_, r) => (
-        <div style={{ width: 32, height: 32, borderRadius: 6, background: '#B11E6A10', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <FileImageOutlined style={{ color: '#B11E6A' }} />
-        </div>
-      )
+      // The Current Task row opens Task Detail on click — keep clicks on this cell from
+      // reaching it, so clicking the logo only opens the logo file (in a new tab).
+      onCell: () => ({ onClick: (e) => e.stopPropagation(), style: { cursor: 'default' } }),
+      render: (_, r) => (r.logoUrl
+        ? <LogoThumb url={r.logoUrl} size={32} radius={6} />
+        : <Tooltip title="No logo uploaded for this hotel yet"><Text type="secondary" style={{ fontSize: 12 }}>—</Text></Tooltip>),
     },
     { title: 'Type', dataIndex: 'type', render: (v) => <Tag color={typeColor[v]} style={{ borderRadius: 20 }}>{v}</Tag> },
     {
@@ -1654,8 +1775,26 @@ export default function Tasks() {
       key: 'reassign',
       width: 190,
       render: (_, r) => {
+        // Already-started work: switch mid-way (split into completed + remaining) instead of
+        // a plain reassign, so each person keeps their own time/rating.
+        if (r.status === 'In Progress' || r.status === 'Paused') {
+          return (
+            <Tooltip title="Switch mid-way — enter completed & remaining count">
+              <Button size="small" icon={<SwapOutlined />} onClick={(e) => { e.stopPropagation(); openMidSwitchModal(r); }}>
+                Switch
+              </Button>
+            </Tooltip>
+          );
+        }
+        if (r.switchedOut) {
+          return (
+            <Tooltip title={`Remaining ${r.midSwitch?.remainingQty ?? ''} continues in ${r.switchedToTaskCode}`}>
+              <Tag color="purple" style={{ fontSize: 11, margin: 0 }}>Switched → {r.midSwitch?.toName || r.switchedToTaskCode}</Tag>
+            </Tooltip>
+          );
+        }
         if (r.status !== 'Pending') {
-          return <Tooltip title="Only a task that hasn't started can be reassigned"><Text type="secondary" style={{ fontSize: 11 }}>—</Text></Tooltip>;
+          return <Tooltip title="A completed task can't be switched"><Text type="secondary" style={{ fontSize: 11 }}>—</Text></Tooltip>;
         }
         // Personalized/Separate Kit Packing tasks share one task record across several
         // assignees — "the" assignee doesn't mean anything there, so swapping one person
@@ -1717,13 +1856,26 @@ export default function Tasks() {
     { title: 'Due', dataIndex: 'due', responsive: ['lg'], render: (v) => v || '—' },
     {
       title: 'Action', key: 'action',
-      render: (_, r) => (
+      // A switched-out row is only the outgoing assignee's finished portion — the order's
+      // remaining work lives in the continuation task, so no Dispatch/Emergency actions here.
+      render: (_, r) => (r.switchedOut ? (
+        <Space direction="vertical" size={2}>
+          <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>Completed {r.qty}</Tag>
+          <Tag color="purple" icon={<SwapOutlined />} style={{ fontSize: 11, margin: 0 }}>
+            Rest in {r.switchedToTaskCode}{r.midSwitch?.toName ? ` (${r.midSwitch.toName})` : ''}
+          </Tag>
+          {r.startTime && <Text style={{ fontSize: 10, color: '#666' }}>Start: {new Date(r.startTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
+          {r.endTime && <Text style={{ fontSize: 10, color: '#666' }}>Switched: {new Date(r.endTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
+        </Space>
+      ) : (
         <Space direction="vertical" size={2}>
           {r.status === 'Pending' && (
-            <Button size="small" type="primary" icon={<PlayCircleOutlined />}
-              onClick={(e) => { e.stopPropagation(); handleStartTask(r.id); }} style={{ background: '#1890ff', border: 'none' }}>
-              Start
-            </Button>
+            <Tooltip title={startBlockers.get(r.key)}>
+              <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={startBlockers.has(r.key)}
+                onClick={(e) => { e.stopPropagation(); handleStartTask(r.id); }} style={startBlockers.has(r.key) ? undefined : { background: '#1890ff', border: 'none' }}>
+                Start
+              </Button>
+            </Tooltip>
           )}
           {r.status === 'In Progress' && (
             <Space direction="vertical" size={3}>
@@ -1741,10 +1893,12 @@ export default function Tasks() {
           {r.status === 'Paused' && (
             <Space direction="vertical" size={3}>
               <Tag color="warning" icon={<PauseCircleOutlined />} style={{ fontSize: 11, margin: 0 }}>Paused</Tag>
-              <Button size="small" type="primary" icon={<PlayCircleOutlined />}
-                onClick={(e) => { e.stopPropagation(); handleResumeTask(r.id); }} style={{ background: '#1890ff', border: 'none' }}>
-                Resume
-              </Button>
+              <Tooltip title={startBlockers.get(r.key)}>
+                <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={startBlockers.has(r.key)}
+                  onClick={(e) => { e.stopPropagation(); handleResumeTask(r.id); }} style={startBlockers.has(r.key) ? undefined : { background: '#1890ff', border: 'none' }}>
+                  Resume
+                </Button>
+              </Tooltip>
             </Space>
           )}
           {r.status === 'Completed' && (
@@ -1785,7 +1939,7 @@ export default function Tasks() {
           {r.startTime && <Text style={{ fontSize: 10, color: '#666' }}>Start: {new Date(r.startTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
           {r.endTime && <Text style={{ fontSize: 10, color: '#666' }}>End: {new Date(r.endTime).toLocaleString('en-IN', { dateStyle: 'short', timeStyle: 'short' })}</Text>}
         </Space>
-      ),
+      )),
     },
     // Admin-department-only: delete moves the task to Settings > Deleted Records
     // (soft-delete) — hidden entirely for every other department's login.
@@ -1927,6 +2081,13 @@ export default function Tasks() {
               <Space size={4} wrap>
                 {s.isUrgent && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
                 {s.logoType && <Tag color="purple" style={{ fontSize: 11 }}>{s.logoType}</Tag>}
+                {/* The order was already sent to Dispatch (Current Task → Send to Dispatch)
+                    while this product still has quantity left — this card is that remainder. */}
+                {orderStatusById.get(String(s.orderId)) === 'Dispatch Ready' && (
+                  <Tooltip title="This order has already been sent to Dispatch — this card is the quantity still remaining">
+                    <Tag color="cyan" style={{ fontSize: 11 }}>Order in Dispatch</Tag>
+                  </Tooltip>
+                )}
               </Space>
               <Text style={{ fontSize: 11, color: '#999' }}>{s.orderCode}</Text>
             </div>
@@ -1949,6 +2110,12 @@ export default function Tasks() {
                 </>
               )}
               {!s.isEmergencyProduct && s.qty > 0 && <Tag color="blue">{Number(s.qty).toLocaleString()} units</Tag>}
+              {(() => {
+                const unassigned = getUnassignedQty(s);
+                return unassigned.partlyAssigned && unassigned.qty > 0
+                  ? <Tag color="orange">{unassigned.qty.toLocaleString()} unassigned</Tag>
+                  : null;
+              })()}
               {/* Tentative/remaining split card only (see computeSuggestedTasks'
                   isPartialEmergencySplit) — mirrors Operations' own "After Emergency
                   Items" tag: informational only, this card is still fully assignable,
@@ -2035,7 +2202,7 @@ export default function Tasks() {
                           style={{ borderRadius: 10, padding: '3px 10px', fontSize: 12, fontWeight: 600 }}
                         >
                           {Number(p.doneQty).toLocaleString()}/{Number(p.requiredQty).toLocaleString()} {p.name}
-                          {!done && p.pendingQty > 0 ? ` · ${Number(p.pendingQty).toLocaleString()} pending` : ''}
+                          {!done && p.pendingQty > 0 ? ` · ${Number(p.pendingQty).toLocaleString()} unassigned` : ''}
                         </Tag>
                       );
                     })}
@@ -2358,11 +2525,13 @@ export default function Tasks() {
                           // assigned — EVERY Separate Kit / Kit Assembly group in this order (e.g.
                           // both Dental Kit AND Shaving Kit when an order packs more than one
                           // Separate Kit into the same Personalized Kit) needs its own task(s)
-                          // assigned and ALL of them Done, not just whichever kit got a task first.
-                          const separateAllDone = separateKitGroups.length === 0 || separateKitGroups.every((kg) => {
-                            const tasks = separateKitTasksFor(orderIdForGroup, kg);
-                            return tasks.length > 0 && tasks.every((t) => t.status === 'Done');
-                          });
+                          // assigned and Done, not just whichever kit got a task first. It unlocks
+                          // batch by batch: as many kits as EVERY separate group has finished so far
+                          // (e.g. 500 of 1000 Done → 500 personalized kits can be packed now) —
+                          // see kitsReadyForNextStep. Infinity = no separate step to wait on.
+                          const separateReadyKits = separateKitGroups.length === 0 ? Infinity : Math.min(
+                            ...separateKitGroups.map((kg) => kitsReadyForNextStep(separateKitTasksFor(orderIdForGroup, kg), kg.overallQty)),
+                          );
                           return (
                             <Card
                               size="small"
@@ -2379,7 +2548,8 @@ export default function Tasks() {
                                   const printGate = kitPrintGate(kg, orderDoc, suggestedList);
                                   const kgTasks = separateKitTasksFor(orderIdForGroup, kg);
                                   const kgTask = kgTasks[0] || null;
-                                  const kgAllDone = kgTasks.length > 0 && kgTasks.every((t) => t.status === 'Done');
+                                  const kgProgress = kitPackingProgress(kgTasks, kg.overallQty);
+                                  const kgAllDone = kgProgress.complete;
                                   return (
                                   <div
                                     key={kg.key}
@@ -2422,7 +2592,9 @@ export default function Tasks() {
                                       {kgTask && (
                                         <Space wrap>
                                           <Tag color={kgAllDone ? 'green' : 'orange'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
-                                            {kgAllDone ? 'Separate Kit Packing Done' : 'Separate Kit Task Assigned — Pending'}
+                                            {kgAllDone ? 'Separate Kit Packing Done'
+                                              : kgProgress.short ? `Assigned ${kgProgress.assignedKits} / ${kg.overallQty} kits — add task for the rest`
+                                                : 'Separate Kit Task Assigned — Pending'}
                                           </Tag>
                                           <Text type="secondary" style={{ fontSize: 12 }}>{kgTask.taskName}</Text>
                                         </Space>
@@ -2443,7 +2615,11 @@ export default function Tasks() {
                                 })}
 
                                 {personalizedKitGroups.map((kg) => {
-                                  const separateDone = separateAllDone;
+                                  // Kits ready for personalized packing right now — capped by the
+                                  // separate kits finished so far (see separateReadyKits above).
+                                  const readyCap = Math.min(separateReadyKits, kg.overallQty > 0 ? kg.overallQty : Infinity);
+                                  const separateDone = readyCap > 0;
+                                  const partlyUnlocked = separateDone && Number.isFinite(readyCap) && kg.overallQty > 0 && readyCap < kg.overallQty;
                                   const printGate = kitPrintGate(kg, orderDoc, suggestedList);
                                   const kgTasks = personalizedKitTasksFor(orderIdForGroup, kg);
                                   const kgTask = kgTasks[0] || null;
@@ -2488,6 +2664,14 @@ export default function Tasks() {
                                             style={{ borderRadius: 8, fontSize: 12 }}
                                           />
                                         )}
+                                        {partlyUnlocked && (
+                                          <Alert
+                                            type="info"
+                                            showIcon
+                                            message={`Separate kit packing is Done for ${readyCap} of ${kg.overallQty} kits — Personalized Kit Packing can be assigned for up to ${readyCap} kits now. The rest unlocks as more separate kits are Done.`}
+                                            style={{ borderRadius: 8, fontSize: 12 }}
+                                          />
+                                        )}
                                         {renderKitProductSpecs(kg.kitItems, 'magenta', kg.overallQty)}
                                         {printGate.blocked && (
                                           <Alert
@@ -2499,19 +2683,28 @@ export default function Tasks() {
                                             style={{ borderRadius: 8, fontSize: 12 }}
                                           />
                                         )}
-                                        {kgTask && (
-                                          <Space wrap>
-                                            <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>Personalized Kit Task Assigned</Tag>
-                                            <Text type="secondary" style={{ fontSize: 12 }}>{kgTask.taskName}</Text>
-                                          </Space>
-                                        )}
+                                        {kgTask && (() => {
+                                          const pkProgress = kitPackingProgress(kgTasks, kg.overallQty);
+                                          return (
+                                            <Space wrap>
+                                              <Tag color={pkProgress.short ? 'orange' : 'green'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
+                                                {pkProgress.short
+                                                  ? `Assigned ${pkProgress.assignedKits} / ${kg.overallQty} kits — add task for the rest`
+                                                  : 'Personalized Kit Task Assigned'}
+                                              </Tag>
+                                              <Text type="secondary" style={{ fontSize: 12 }}>{kgTask.taskName}</Text>
+                                            </Space>
+                                          );
+                                        })()}
                                         <Button
                                           size="small"
                                           type="primary"
                                           disabled={!separateDone || printGate.blocked}
                                           icon={<TeamOutlined />}
                                           style={separateDone && !printGate.blocked ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8 } : { borderRadius: 8 }}
-                                          onClick={() => separateDone && !printGate.blocked && openKitPackingModal(kg, 'personalized', orderDoc)}
+                                          onClick={() => separateDone && !printGate.blocked && openKitPackingModal(
+                                            { ...kg, readyCap: Number.isFinite(readyCap) ? readyCap : undefined }, 'personalized', orderDoc,
+                                          )}
                                         >
                                           {kgTask ? 'Add Another Task' : 'Assign Personalized Kit Task'}
                                         </Button>
@@ -2698,6 +2891,12 @@ export default function Tasks() {
                           <Badge count={items.length} style={{ background: '#fa8c16' }} />
                           {items.some((i) => i.isUrgent) && <Tag color="red" style={{ fontSize: 11 }}>Emergency</Tag>}
                           {items.every((i) => !i.isEmergencyGated) && <Tag color="green" style={{ fontSize: 11 }}>Ready to Assign</Tag>}
+                          <Tag color="orange" style={{ fontSize: 11 }}>
+                            {items.reduce((sum, i) => sum + getUnassignedQty(i).qty, 0).toLocaleString()} units unassigned
+                          </Tag>
+                          {orderStatusById.get(String(items[0]?.orderId)) === 'Dispatch Ready' && (
+                            <Tag color="cyan" style={{ fontSize: 11 }}>Order in Dispatch</Tag>
+                          )}
                         </div>
                         <Row gutter={[20, 20]}>
                           {items.map((s) => renderSuggestionCard(s))}
@@ -2748,6 +2947,7 @@ export default function Tasks() {
                               <Space size={[6, 6]} wrap style={{ marginBottom: 12 }}>
                                 <Tag color="blue">{orderCount} order{orderCount !== 1 ? 's' : ''}</Tag>
                                 <Tag color="default">{allItems.length} item{allItems.length !== 1 ? 's' : ''} pending</Tag>
+                                <Tag color="orange">{allItems.reduce((sum, i) => sum + getUnassignedQty(i).qty, 0).toLocaleString()} units unassigned</Tag>
                                 {readyCount > 0 && <Tag color="green">{readyCount} ready to assign</Tag>}
                                 {lockedCount > 0 && <Tag color="orange">{lockedCount} after emergency</Tag>}
                               </Space>
@@ -2919,7 +3119,9 @@ export default function Tasks() {
                                 }
                                 <Space direction="vertical" size={2} style={{ width: '100%', marginTop: 8 }}>
                                   {task.status === 'Pending' && (
-                                    <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => handleStartTask(task.id)} style={{ background: '#1890ff', border: 'none', width: '100%' }}>Start</Button>
+                                    <Tooltip title={startBlockers.get(task.key)}>
+                                      <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={startBlockers.has(task.key)} onClick={() => handleStartTask(task.id)} style={startBlockers.has(task.key) ? { width: '100%' } : { background: '#1890ff', border: 'none', width: '100%' }}>Start</Button>
+                                    </Tooltip>
                                   )}
                                   {task.status === 'In Progress' && (
                                     <>
@@ -2931,11 +3133,18 @@ export default function Tasks() {
                                   {task.status === 'Paused' && (
                                     <>
                                       <Tag color="warning" icon={<PauseCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Paused</Tag>
-                                      <Button size="small" type="primary" icon={<PlayCircleOutlined />} onClick={() => handleResumeTask(task.id)} style={{ background: '#1890ff', border: 'none', width: '100%' }}>Resume</Button>
+                                      <Tooltip title={startBlockers.get(task.key)}>
+                                        <Button size="small" type="primary" icon={<PlayCircleOutlined />} disabled={startBlockers.has(task.key)} onClick={() => handleResumeTask(task.id)} style={startBlockers.has(task.key) ? { width: '100%' } : { background: '#1890ff', border: 'none', width: '100%' }}>Resume</Button>
+                                      </Tooltip>
                                     </>
                                   )}
                                   {task.status === 'Completed' && (
                                     <Tag color="success" icon={<CheckCircleOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Completed</Tag>
+                                  )}
+                                  {task.switchedOut && (
+                                    <Tag color="purple" icon={<SwapOutlined />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>
+                                      {task.qty} done · rest in {task.switchedToTaskCode}
+                                    </Tag>
                                   )}
                                   {task.status !== 'Completed' && task.emergencyApproved && (
                                     <Tag color="red" icon={<AlertFilled />} style={{ fontSize: 11, marginBottom: 4, display: 'block', textAlign: 'center' }}>Emergency Approved</Tag>
@@ -2950,11 +3159,11 @@ export default function Tasks() {
                                       Sent to Dispatch
                                     </Button>
                                   )}
-                                  {(task.status === 'Completed' || task.emergencyApproved) && !isAlreadySentToDispatch(task.orderStatus) && (task.isSample || task.paymentStatus === 'Paid' || task.emergencyApproved) && !task.dispatchStatus && (
+                                  {!task.switchedOut && (task.status === 'Completed' || task.emergencyApproved) && !isAlreadySentToDispatch(task.orderStatus) && (task.isSample || task.paymentStatus === 'Paid' || task.emergencyApproved) && !task.dispatchStatus && (
                                     <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}
                                       onClick={(e) => { e.stopPropagation(); handleDispatchClick(task); }}>Dispatch</Button>
                                   )}
-                                  {task.status === 'Completed' && !task.isSample && !task.emergencyApproved && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
+                                  {!task.switchedOut && task.status === 'Completed' && !task.isSample && !task.emergencyApproved && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
                                     <Button size="small" danger icon={<ExclamationCircleOutlined />} onClick={(e) => { e.stopPropagation(); openEmergency(task); }} style={{ width: '100%' }}>
                                       {task.emergencyRequested ? 'View Emergency' : 'Emergency Dispatch'}
                                     </Button>
@@ -3531,6 +3740,137 @@ export default function Tasks() {
         </Space>
       </Modal>
 
+      {/* ── Mid-task Switch Modal (admin-only) — In Progress/Paused tasks. The admin enters
+          the completed count + remaining count (verified against the total assigned); the
+          backend closes this task for the completed units (timed + rated for the outgoing
+          assignee) and creates a Pending task for the remainder (the incoming assignee's
+          clock starts on their own Start). Multi-assignee kit tasks pick who's leaving. */}
+      <Modal
+        open={!!midSwitchTask}
+        onCancel={closeMidSwitchModal}
+        title={
+          <Space>
+            <SwapOutlined style={{ color: '#B11E6A' }} />
+            <span>Switch Task Mid-way</span>
+            {midSwitchTask?.id && <Tag color="default">{midSwitchTask.id}</Tag>}
+          </Space>
+        }
+        footer={[
+          <Button key="cancel" onClick={closeMidSwitchModal}>Cancel</Button>,
+          <Button
+            key="save"
+            type="primary"
+            loading={switchingTask}
+            disabled={switchingTask || !midSwitchReady}
+            onClick={submitMidSwitch}
+            style={{ background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none' }}
+          >
+            Switch Task
+          </Button>,
+        ]}
+        width={Math.min(560, window.innerWidth - 32)}
+        destroyOnClose
+      >
+        {midSwitchTask && (() => {
+          const multi = midSwitchTask.hasMultipleAssignees;
+          const fromName = multi
+            ? ((midSwitchTask.assignedToManyList || []).find((a) => a.id === midSwitchFrom)?.name || '')
+            : midSwitchTask.assignee;
+          const currentIds = multi ? (midSwitchTask.assignedToManyList || []).map((a) => a.id) : [midSwitchTask.assignedToId];
+          const toOptions = assignableUsers.filter((u) => !currentIds.includes(u._id));
+          const toName = assignableUsers.find((u) => u._id === midSwitchTo)?.fullName || '';
+          const estSec = Number(midSwitchTask.estimatedDurationSec) || 0;
+          const doneEstSec = estSec > 0 && midSwitchSumOk ? Math.round(estSec * (midSwitchCompleted / midSwitchTotal)) : 0;
+          const preview = ratingFromDurations(doneEstSec, midSwitchWorkedSec);
+          const enteredSum = (Number(midSwitchCompleted) || 0) + (Number(midSwitchRemaining) || 0);
+          return (
+            <Space direction="vertical" size={12} style={{ width: '100%' }}>
+              <Descriptions size="small" bordered column={2}>
+                <Descriptions.Item label="Task" span={2}>{midSwitchTask.title || midSwitchTask.name} — {midSwitchTask.product}</Descriptions.Item>
+                <Descriptions.Item label="Total Assigned">{midSwitchTotal}</Descriptions.Item>
+                <Descriptions.Item label="Status">{midSwitchTask.status}</Descriptions.Item>
+                <Descriptions.Item label="Current Assignee" span={2}>{midSwitchTask.assignee || '—'}</Descriptions.Item>
+                <Descriptions.Item label="Worked so far" span={2}>
+                  {secToHuman(midSwitchWorkedSec)}
+                  {estSec > 0 && <Text type="secondary" style={{ fontSize: 12 }}> (estimate for all {midSwitchTotal}: {secToHuman(estSec)})</Text>}
+                </Descriptions.Item>
+              </Descriptions>
+
+              {multi && (
+                <div>
+                  <Text strong style={{ fontSize: 12 }}>Switch out</Text>
+                  <Select placeholder="Who is leaving this task?" value={midSwitchFrom} onChange={setMidSwitchFrom} style={{ width: '100%', marginTop: 4 }}>
+                    {(midSwitchTask.assignedToManyList || []).map((a) => <Option key={a.id} value={a.id}>{a.name}</Option>)}
+                  </Select>
+                </div>
+              )}
+
+              <div>
+                <Text strong style={{ fontSize: 12 }}>Switch to</Text>
+                <Select
+                  placeholder="New assignee"
+                  showSearch
+                  optionFilterProp="children"
+                  value={midSwitchTo}
+                  onChange={setMidSwitchTo}
+                  style={{ width: '100%', marginTop: 4 }}
+                >
+                  {toOptions.map((u) => <Option key={u._id} value={u._id}>{u.fullName}</Option>)}
+                </Select>
+              </div>
+
+              <Row gutter={12}>
+                <Col xs={12}>
+                  <Text strong style={{ fontSize: 12 }}>Completed count{multi ? ' (whole group)' : fromName ? ` by ${fromName}` : ''}</Text>
+                  <InputNumber min={0} max={midSwitchTotal} value={midSwitchCompleted} onChange={setMidSwitchCompleted} placeholder="Done so far" style={{ width: '100%', marginTop: 4 }} />
+                </Col>
+                <Col xs={12}>
+                  <Text strong style={{ fontSize: 12 }}>Remaining count{toName ? ` for ${toName}` : ''}</Text>
+                  <InputNumber min={0} max={midSwitchTotal} value={midSwitchRemaining} onChange={setMidSwitchRemaining} placeholder="Still to do" style={{ width: '100%', marginTop: 4 }} />
+                </Col>
+              </Row>
+
+              {(midSwitchCompleted != null || midSwitchRemaining != null) && (
+                midSwitchSumOk
+                  ? <Alert type="success" showIcon message={`Verified: ${midSwitchCompleted} + ${midSwitchRemaining} = ${midSwitchTotal} total assigned`} />
+                  : (
+                    <Alert
+                      type="error"
+                      showIcon
+                      message={
+                        !(midSwitchCompleted > 0) ? 'Completed count must be greater than 0'
+                          : !(midSwitchRemaining > 0) ? 'Remaining count must be greater than 0 — if everything is finished, mark the task Done instead'
+                          : `Completed + Remaining = ${enteredSum}, but the total assigned is ${midSwitchTotal}`
+                      }
+                    />
+                  )
+              )}
+
+              {midSwitchSumOk && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message="What happens"
+                  description={(
+                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+                      <li>
+                        {multi ? 'Current group' : (fromName || 'Current assignee')}: this task closes as Completed for {midSwitchCompleted} units — time stops now ({secToHuman(midSwitchWorkedSec)} worked)
+                        {doneEstSec > 0 ? `, estimate ${secToHuman(doneEstSec)}` : ''}
+                        {preview.rating != null ? `, approx. ${preview.rating}★ / ${preview.efficiencyPct}% efficiency` : ''}.
+                      </li>
+                      <li>
+                        {multi ? `Group with ${toName || 'the new assignee'} replacing ${fromName || 'the selected person'}` : (toName || 'New assignee')}: new Pending task for {midSwitchRemaining} units
+                        {estSec > 0 ? ` (estimate ${secToHuman(estSec - doneEstSec)})` : ''} — time starts when they press Start.
+                      </li>
+                    </ul>
+                  )}
+                />
+              )}
+            </Space>
+          );
+        })()}
+      </Modal>
+
       {/* ── Kit Packing Task Assignment Modal (Separate Kit / Personalized Kit) ──
           Mirrors Operations' Kit Packing modal (OperationDetail.jsx): shows the kit's
           product composition, then a Task Breakdown by Quantity where each row's
@@ -3595,11 +3935,25 @@ export default function Tasks() {
             Name, its own Qty, and its own duration shown right on its card. */}
         {(() => {
           const kitReqQty = kitPackingModalKitCfg?.overallQty || 0;
+          // Personalized Kit Packing opened while only part of the separate kits are Done —
+          // each task name may cover at most that many kits in total (existing tasks included).
+          const readyCap = kitPackingModalCategory === 'personalized' ? kitPackingModalKitCfg?.readyCap : undefined;
+          const capTasks = readyCap != null && kitPackingModalOrder
+            ? personalizedKitTasksFor(kitPackingModalOrder._id, kitPackingModalKitCfg)
+            : [];
           return (
             <>
               <Divider orientation="left" style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A30' }}>
                 Task Breakdown by Quantity
               </Divider>
+              {readyCap != null && (
+                <Alert
+                  type="info"
+                  showIcon
+                  message={`Ready now: ${readyCap} of ${kitReqQty || readyCap} kits (separate kit packing Done). Each task name can cover up to ${readyCap} kits in total until more separate kits are Done.`}
+                  style={{ borderRadius: 8, marginBottom: 10, fontSize: 12 }}
+                />
+              )}
               <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
               <Space direction="vertical" style={{ width: '100%', minWidth: 460 }} size={8}>
                 {kitSubTasks.map((task, idx) => {
@@ -3609,7 +3963,12 @@ export default function Tasks() {
                     : [];
                   const groupTotal = sameNameRows.reduce((sum, t) => sum + (Number(t.qty) || 0), 0);
                   const otherSameNameTotal = groupTotal - (Number(task.qty) || 0);
-                  const groupMax = kitReqQty > 0 ? Math.max(0, kitReqQty - otherSameNameTotal) : undefined;
+                  const capLeft = readyCap != null && task.description ? kitsLeftUnderCap(capTasks, task.description, readyCap) : undefined;
+                  const maxCandidates = [
+                    kitReqQty > 0 ? kitReqQty - otherSameNameTotal : undefined,
+                    capLeft !== undefined ? capLeft - otherSameNameTotal : undefined,
+                  ].filter((v) => v !== undefined);
+                  const groupMax = maxCandidates.length ? Math.max(0, Math.min(...maxCandidates)) : undefined;
                   const groupMet = kitReqQty > 0 && groupTotal >= kitReqQty;
                   return (
                   <div
@@ -3677,6 +4036,11 @@ export default function Tasks() {
                       {task.description && kitReqQty > 0 && (
                         <Tag color={groupMet ? 'success' : 'default'} style={{ fontSize: 10, margin: 0 }}>
                           {task.description}: {groupTotal.toLocaleString()} / {kitReqQty.toLocaleString()} units
+                        </Tag>
+                      )}
+                      {capLeft !== undefined && (
+                        <Tag color={groupTotal > capLeft ? 'error' : 'magenta'} style={{ fontSize: 10, margin: 0 }}>
+                          Ready now: {capLeft.toLocaleString()} kits left for {task.description}
                         </Tag>
                       )}
                     </Space>

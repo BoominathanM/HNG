@@ -16,6 +16,9 @@ const { findHotelMaterialStock, buildHotelStockGroups } = require('../../utils/m
 const { sendMessage } = require('../../services/whatsAppService');
 const { computeTaskEstimate } = require('../../utils/taskTime');
 const { resolveOrderPaymentStatus } = require('../../utils/syncOrderPayment');
+// Shared with Sales/Tasks/Dispatch: vendor tabs' Logo column falls back to any other Lead
+// sharing the order's hotel name when the order's own lead has no logo.
+const { backfillLogoUrlByHotelName } = require('../../utils/hotelLogo');
 const {
   checkTaskQuantityOverflow, checkLiveStockAvailability, deductStockForTask,
 } = require('../../utils/taskQuantity');
@@ -120,45 +123,6 @@ exports.getOrders = asyncHandler(async (req, res) => {
 
   res.status(200).json({ success: true, total, page, data: orders });
 });
-
-// A hotel's logo is only ever captured once, on whichever Lead happened to have it
-// uploaded (or via the "Old Hotel" lookup at lead-creation time, sales.controller.js
-// getHotelByName). A repeat hotel that gets a fresh Lead/Order created WITHOUT going
-// through that lookup (e.g. picked "New Hotel" again, or its own leadId never had the
-// upload) still has no logo of its own, so o.logoUrl and o.leadId?.hotelLogoUrl are
-// both empty even though the hotel's logo already exists on another Lead — leaving
-// the vendor tabs' (Sticker/Box/Ziplock/Butter Paper/Wooden Brush/Other) Logo column
-// blank for no real reason. Backfill from the most recent Lead sharing that hotel
-// name so any order for a hotel whose logo is on record anywhere shows it.
-async function backfillLogoUrlByHotelName(orders) {
-  const missingNames = [...new Set(
-    orders
-      .filter((o) => !o.logoUrl && !o.leadId?.hotelLogoUrl)
-      .map((o) => (o.hotelName || o.clientName || '').trim())
-      .filter(Boolean)
-  )];
-  if (!missingNames.length) return;
-  const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const fallbackLeads = await Lead.find({
-    // Allow stray leading/trailing spaces on the Lead's saved hotelName so "ESSENCE " still
-    // matches an order for "ESSENCE" (the key below is trimmed the same way on both sides).
-    hotelName: { $in: missingNames.map((n) => new RegExp(`^\\s*${escapeRegex(n)}\\s*$`, 'i')) },
-    hotelLogoUrl: { $exists: true, $ne: '' },
-    deletedAt: null,
-  }).sort('-createdAt').select('hotelName hotelLogoUrl').lean();
-  const logoByHotel = new Map();
-  for (const l of fallbackLeads) {
-    const key = (l.hotelName || '').trim().toLowerCase();
-    if (key && !logoByHotel.has(key)) logoByHotel.set(key, l.hotelLogoUrl);
-  }
-  if (!logoByHotel.size) return;
-  orders.forEach((o) => {
-    if (o.logoUrl || o.leadId?.hotelLogoUrl) return;
-    const key = (o.hotelName || o.clientName || '').trim().toLowerCase();
-    const fallback = logoByHotel.get(key);
-    if (fallback) o.logoUrl = fallback;
-  });
-}
 
 exports.getTodaysOrders = asyncHandler(async (req, res) => {
   const start = new Date(); start.setHours(0, 0, 0, 0);

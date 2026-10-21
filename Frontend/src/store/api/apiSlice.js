@@ -812,9 +812,10 @@ export const apiSlice = createApi({
     updateLead: builder.mutation({
       query: ({ id, ...data }) => ({ url: `/sales/leads/${id}`, method: 'put', data }),
       // A logo change is copied server-side onto the lead's orders/quotations/negotiations
-      // (sales.controller updateLead) — refresh those too so Operations' Logo column updates.
+      // (sales.controller updateLead) — refresh those too so every Logo display (Sales Orders,
+      // Operations, Task Management, Dispatch) updates.
       invalidatesTags: (result, error, arg) => ('hotelLogoUrl' in (arg || {})
-        ? ['Leads', 'Orders', 'Operations', 'Quotations', 'Negotiations']
+        ? ['Leads', 'Orders', 'Operations', 'Quotations', 'Negotiations', 'Tasks', 'Dispatch']
         : ['Leads']),
     }),
     deleteLead: builder.mutation({
@@ -896,7 +897,11 @@ export const apiSlice = createApi({
       // provides 'Tasks'/'SuggestedTasks') need to recompute against — this used to only
       // invalidate Orders/Operations/Reports, so those tabs kept showing stale quantities
       // until something else happened to refetch them.
-      invalidatesTags: ['Orders', 'Operations', 'Reports', 'Tasks', 'SuggestedTasks'],
+      // A logo change is written back to the order's lead and its quotations/negotiations
+      // (sales.controller updateOrder) — refresh those and Dispatch too.
+      invalidatesTags: (result, error, arg) => ('logoUrl' in (arg || {})
+        ? ['Orders', 'Operations', 'Reports', 'Tasks', 'SuggestedTasks', 'Leads', 'Quotations', 'Negotiations', 'Dispatch']
+        : ['Orders', 'Operations', 'Reports', 'Tasks', 'SuggestedTasks']),
     }),
     updateSalesOrderStatus: builder.mutation({
       query: ({ id, status }) => ({ url: `/sales/orders/${id}/status`, method: 'patch', data: { status } }),
@@ -1113,6 +1118,17 @@ export const apiSlice = createApi({
     reassignTask: builder.mutation({
       query: ({ id, assignedTo, fromAssignedTo }) => ({ url: `/tasks/${id}/reassign`, method: 'patch', data: { assignedTo, ...(fromAssignedTo ? { fromAssignedTo } : {}) } }),
       invalidatesTags: ['Tasks'],
+    }),
+    // Mid-task switch (In Progress/Paused) — splits the task into the outgoing assignee's
+    // completed portion + a new Pending task for the remainder. 'Reports' refreshes the
+    // Switch Report and Task Performance Report.
+    switchTask: builder.mutation({
+      query: ({ id, assignedTo, fromAssignedTo, completedQty, remainingQty }) => ({
+        url: `/tasks/${id}/switch`,
+        method: 'patch',
+        data: { assignedTo, completedQty, remainingQty, ...(fromAssignedTo ? { fromAssignedTo } : {}) },
+      }),
+      invalidatesTags: ['Tasks', 'Reports'],
     }),
     // "Task to Assignee" tasks (New Task → Task for = Task to Assignee) — own collection, so
     // these never touch the 'Tasks' cache. Status changes also refresh ActiveAlerts so the
@@ -1477,6 +1493,16 @@ export const apiSlice = createApi({
     deleteParty: builder.mutation({
       query: (id) => ({ url: `/parties/${id}`, method: 'delete' }),
       invalidatesTags: ['Parties', 'DeletedRecords'],
+    }),
+    // Super Admin / Admin "Switch Category" (Parties tab eye-view): preview how many Lead/Quotation/
+    // Negotiation/Order copies a switch would rewrite, then apply it. The switch rewrites the
+    // category on every linked record, so every list that shows or filters by it is refreshed.
+    getPartyCategoryImpact: builder.query({
+      query: ({ id, category }) => ({ url: `/parties/${id}/category-impact`, params: { category } }),
+    }),
+    switchPartyCategory: builder.mutation({
+      query: ({ id, ...data }) => ({ url: `/parties/${id}/category`, method: 'patch', data }),
+      invalidatesTags: ['Parties', 'Leads', 'Quotations', 'Negotiations', 'Orders', 'Operations', 'HotelDesigns', 'Reports'],
     }),
     getCustomersLedger: builder.query({
       query: () => ({ url: '/parties/customers-ledger' }),
@@ -1981,6 +2007,7 @@ export const {
   useCreateTaskMutation,
   useUpdateTaskStatusMutation,
   useReassignTaskMutation,
+  useSwitchTaskMutation,
   useApproveEmergencyMutation,
   useDispatchTaskOrderMutation,
   useRequestEmergencyDispatchMutation,
@@ -2044,6 +2071,8 @@ export const {
   useGetPartyOrdersQuery,
   useCreatePartyMutation,
   useDeletePartyMutation,
+  useGetPartyCategoryImpactQuery,
+  useSwitchPartyCategoryMutation,
   useGetCustomersLedgerQuery,
   useGetVendorsLedgerQuery,
   useGetConsumptionForecastQuery,

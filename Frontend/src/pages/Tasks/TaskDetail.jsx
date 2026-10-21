@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Radio, Rate, Row, Space, Statistic, Steps, Table, Tag, Timeline, Typography,
+  Alert, Avatar, Button, Card, Col, Descriptions, Divider, Input, Modal, Progress, Radio, Rate, Row, Space, Statistic, Steps, Table, Tag, Timeline, Tooltip, Typography,
 } from 'antd';
 import {
   AlertFilled, ArrowLeftOutlined, BellOutlined, CheckCircleOutlined, ClockCircleOutlined,
-  ExclamationCircleOutlined, ExperimentOutlined, FieldTimeOutlined, PauseCircleOutlined, PlayCircleOutlined, UserOutlined,
+  ExclamationCircleOutlined, ExperimentOutlined, FieldTimeOutlined, PauseCircleOutlined, PlayCircleOutlined, SwapOutlined, UserOutlined,
 } from '@ant-design/icons';
 import { enqueueSnackbar } from 'notistack';
 import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
+import LogoThumb from '../../components/common/LogoThumb';
 import { secToHuman, ratingFromDurations, ratingColor, ratingLabel } from '../../utils/taskTime';
+import { buildActiveTaskMap, findStartBlocker, startBlockerMessage, taskAssigneeIds } from '../../utils/activeTaskLock';
 import {
   useGetTaskQuery,
   useGetTasksQuery,
@@ -24,8 +26,8 @@ const { Text, Title } = Typography;
 const typeColor = { Production: '#B11E6A', 'Sticker Work': '#8a1652', Packing: '#C94F8A', Procurement: '#D85C9E', Internal: '#6b1240' };
 const priorityColor = { Urgent: '#6b1240', High: '#B11E6A', Medium: '#C94F8A', Normal: '#D85C9E' };
 const statusColor = { 'In Progress': '#B11E6A', Pending: '#C94F8A', Paused: '#fa8c16', Completed: '#6b1240', Done: '#6b1240' };
-const timelineIcon = { Start: <PlayCircleOutlined />, Resume: <PlayCircleOutlined />, Pause: <PauseCircleOutlined />, Completion: <CheckCircleOutlined /> };
-const timelineColor = { Start: 'blue', Resume: 'blue', Pause: 'orange', Completion: 'green' };
+const timelineIcon = { Start: <PlayCircleOutlined />, Resume: <PlayCircleOutlined />, Pause: <PauseCircleOutlined />, Completion: <CheckCircleOutlined />, Switch: <SwapOutlined /> };
+const timelineColor = { Start: 'blue', Resume: 'blue', Pause: 'orange', Completion: 'green', Switch: 'purple' };
 const paymentColor = { Paid: 'success', Pending: 'warning', Partial: 'orange' };
 
 const labelStyle = {
@@ -36,6 +38,7 @@ export default function TaskDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
   const isDark = useSelector((s) => s.theme.isDark);
+  const currentUser = useSelector((s) => s.auth.user);
 
   const { data: taskData, isLoading } = useGetTaskQuery(id);
   const { data: allTasksData } = useGetTasksQuery({ limit: 1000 });
@@ -122,6 +125,18 @@ export default function TaskDetail() {
     return t.actualDurationSec || 0;
   }, [t, nowTick]);
 
+  // One In Progress task per person (backend updateTaskStatus enforces it) — tooltip
+  // message when Start/Resume is blocked by another task this assignee already has running.
+  const startBlockMsg = useMemo(() => {
+    if (!t) return '';
+    const blocker = findStartBlocker(
+      { taskId: t._id, status: t.status, assigneeIds: taskAssigneeIds(t) },
+      buildActiveTaskMap(allTasksData?.data || []),
+      currentUser?._id || currentUser?.id,
+    );
+    return blocker ? startBlockerMessage(blocker) : '';
+  }, [t, allTasksData, currentUser]);
+
   const handleStatus = async (status) => {
     try {
       await updateTaskStatus({ id, status }).unwrap();
@@ -162,6 +177,9 @@ export default function TaskDetail() {
   }
 
   const cardStyle = { borderRadius: 12, marginBottom: 0 };
+  // Latest mid-task switch on this task (backend switchInProgressTask) — present only on
+  // the outgoing assignee's finished portion (t.switchedOut).
+  const midSwitch = (t.switchHistory || []).filter((h) => h.stage === 'In Progress').slice(-1)[0] || null;
 
   return (
     <div className="page-container fade-in">
@@ -189,11 +207,13 @@ export default function TaskDetail() {
           {/* Action buttons */}
           <Space wrap>
             {t.status === 'Pending' && (
-              <Button type="primary" icon={<PlayCircleOutlined />}
-                style={{ background: '#1890ff', border: 'none' }}
-                onClick={() => handleStatus('In Progress')}>
-                Start Task
-              </Button>
+              <Tooltip title={startBlockMsg || undefined}>
+                <Button type="primary" icon={<PlayCircleOutlined />} disabled={!!startBlockMsg}
+                  style={startBlockMsg ? undefined : { background: '#1890ff', border: 'none' }}
+                  onClick={() => handleStatus('In Progress')}>
+                  Start Task
+                </Button>
+              </Tooltip>
             )}
             {t.status === 'In Progress' && (
               <Button icon={<PauseCircleOutlined />}
@@ -210,13 +230,15 @@ export default function TaskDetail() {
               </Button>
             )}
             {t.status === 'Paused' && (
-              <Button type="primary" icon={<PlayCircleOutlined />}
-                style={{ background: '#1890ff', border: 'none' }}
-                onClick={() => handleStatus('In Progress')}>
-                Resume Task
-              </Button>
+              <Tooltip title={startBlockMsg || undefined}>
+                <Button type="primary" icon={<PlayCircleOutlined />} disabled={!!startBlockMsg}
+                  style={startBlockMsg ? undefined : { background: '#1890ff', border: 'none' }}
+                  onClick={() => handleStatus('In Progress')}>
+                  Resume Task
+                </Button>
+              </Tooltip>
             )}
-            {(t.status === 'Pending' || t.status === 'In Progress' || t.status === 'Paused' || (t.status === 'Done' && t.paymentStatus !== 'Paid')) && !isSample && (
+            {(t.status === 'Pending' || t.status === 'In Progress' || t.status === 'Paused' || (t.status === 'Done' && t.paymentStatus !== 'Paid')) && !isSample && !t.switchedOut && (
               <Button danger icon={<ExclamationCircleOutlined />}
                 onClick={() => { setEmergencyReason(''); setEmergencyScope('task'); setEmergencyModalOpen(true); }}>
                 {t.emergencyRequested ? 'View Emergency Status' : 'Emergency Dispatch'}
@@ -275,6 +297,47 @@ export default function TaskDetail() {
                 <Descriptions.Item label="Description" span={2}>{t.description}</Descriptions.Item>
               )}
             </Descriptions>
+            {t.switchedOut && (
+              <Alert
+                type="info"
+                showIcon
+                icon={<SwapOutlined />}
+                style={{ marginTop: 12, borderRadius: 8 }}
+                message="Switched mid-way"
+                description={(
+                  <Space direction="vertical" size={4}>
+                    <Text style={{ fontSize: 12 }}>
+                      {midSwitch?.fromName || 'Previous assignee'} completed {t.qty} of {t.originalQty ?? midSwitch?.totalQty ?? '—'} units
+                      {midSwitch?.at ? ` · switched ${new Date(midSwitch.at).toLocaleString('en-IN', { dateStyle: 'medium', timeStyle: 'short' })}` : ''}
+                      {midSwitch?.byName ? ` by ${midSwitch.byName}` : ''}.
+                      {' '}Remaining {midSwitch?.remainingQty ?? '—'} moved to {midSwitch?.toName || 'another assignee'}.
+                    </Text>
+                    {t.switchedToTask && (
+                      <Button size="small" icon={<SwapOutlined />} onClick={() => navigate(`/tasks/${t.switchedToTask}`)}>
+                        Open {t.switchedToTaskCode || 'continuation task'}
+                      </Button>
+                    )}
+                  </Space>
+                )}
+              />
+            )}
+            {t.switchedFromTask && (
+              <Alert
+                type="info"
+                showIcon
+                icon={<SwapOutlined />}
+                style={{ marginTop: 12, borderRadius: 8 }}
+                message={`Continued from ${t.switchedFromTaskCode || 'an earlier task'}`}
+                description={(
+                  <Space direction="vertical" size={4}>
+                    <Text style={{ fontSize: 12 }}>This task holds the remaining units after a mid-task switch — its time and rating are tracked separately from the earlier portion.</Text>
+                    <Button size="small" icon={<SwapOutlined />} onClick={() => navigate(`/tasks/${t.switchedFromTask}`)}>
+                      Open {t.switchedFromTaskCode || 'earlier task'}
+                    </Button>
+                  </Space>
+                )}
+              />
+            )}
           </Card>
 
           {/* Time & Performance */}
@@ -450,11 +513,19 @@ export default function TaskDetail() {
                 <Descriptions.Item label="Hotel / Client">
                   <Text strong>{t.orderId.clientName || t.clientName || '—'}</Text>
                 </Descriptions.Item>
+                <Descriptions.Item label="Logo">
+                  {(t.orderId.logoUrl || t.orderId.leadId?.hotelLogoUrl)
+                    ? <LogoThumb url={t.orderId.logoUrl || t.orderId.leadId.hotelLogoUrl} size={48} radius={8} />
+                    : <Text type="secondary">—</Text>}
+                </Descriptions.Item>
                 <Descriptions.Item label="This Task's Product">
                   {t.product || '—'}
                 </Descriptions.Item>
                 <Descriptions.Item label="Quantity">
                   {(t.qty ?? 0).toLocaleString()} units
+                  {t.switchedOut && t.originalQty != null && (
+                    <Text type="secondary" style={{ fontSize: 12 }}> (of {Number(t.originalQty).toLocaleString()} — rest switched)</Text>
+                  )}
                 </Descriptions.Item>
                 {t.orderId.expectedDeliveryDate && (
                   <Descriptions.Item label="Expected Delivery">
@@ -554,14 +625,14 @@ export default function TaskDetail() {
           {/* Alerts */}
           <div style={{ marginTop: t.orderId ? 16 : 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
             {t.orderId?.orderCategory !== 'SAMPLE' && t.orderId?.leadId?.leadType !== 'SAMPLE'
-              && t.status === 'Done' && (t.paymentStatus || 'Pending') !== 'Paid' && (
+              && t.status === 'Done' && !t.switchedOut && (t.paymentStatus || 'Pending') !== 'Paid' && (
               <Alert type="warning" showIcon icon={<BellOutlined />}
                 message="Sales Follow-up Required"
                 description={`${t.assignedTo?.fullName || t.assigneeName || 'Sales person'} should contact ${t.orderId?.clientName || t.clientName || 'client'} regarding payment.`}
                 style={{ borderRadius: 8 }}
               />
             )}
-            {displayStatus === 'Completed' && !isSample && t.paymentStatus && t.paymentStatus !== 'Paid' && (
+            {displayStatus === 'Completed' && !isSample && !t.switchedOut && t.paymentStatus && t.paymentStatus !== 'Paid' && (
               <Alert type="error" showIcon icon={<ExclamationCircleOutlined />}
                 message="Dispatch Blocked — Payment Pending"
                 description={`Payment status: "${t.paymentStatus}". Dispatch requires full payment or Emergency Dispatch approval.`}

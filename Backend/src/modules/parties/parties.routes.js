@@ -12,6 +12,8 @@ router.get('/vendors-ledger', ctrl.getVendorsLedger);
 router.get('/pending-due', ctrl.getHotelPendingDue);
 router.get('/consumption-forecast', ctrl.getConsumptionForecast);
 router.delete('/:id', ctrl.deleteParty);
+router.get('/:id/category-impact', ctrl.getPartyCategoryImpact);
+router.patch('/:id/category', ctrl.switchPartyCategory);
 router.get('/:id/orders', ctrl.getPartyOrders);
 router.get('/:id/ledger', ctrl.getPartyLedger);
 router.get('/:id/ledger/download', ctrl.downloadLedgerCsv);

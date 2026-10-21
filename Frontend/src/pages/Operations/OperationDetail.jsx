@@ -73,6 +73,7 @@ import {
   useGetSuggestedTasksQuery,
 } from '../../store/api/apiSlice';
 import { estimateSecFor, secToHuman, perUnitLabel } from '../../utils/taskTime';
+import { kitPackingProgress, kitsReadyForNextStep, kitsLeftUnderCap } from '../../utils/kitPackingProgress';
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import { downloadFile } from '../../utils/fileDownload';
 import LogoThumb from '../../components/common/LogoThumb';
@@ -1085,14 +1086,12 @@ export default function OperationDetail() {
   // Separate Kit / Kit Assembly group in this order (e.g. both Dental Kit AND Shaving Kit
   // when an order packs more than one Separate Kit into the same Personalized Kit) needs its
   // own task(s) assigned and ALL of them Done, not just whichever kit happened to get a task
-  // first. "Add Another Task" can also create more than one task per kit group (partial-qty
-  // batches), so every task for every group must reach Done.
-  const separateKitPackingAllDone = useMemo(() => {
-    if (separateKitGroups.length === 0) return true;
-    return separateKitGroups.every((kg) => {
-      const tasks = separateKitTasksFor(kg);
-      return tasks.length > 0 && tasks.every((t) => t.status === 'Done');
-    });
+  // first. It unlocks batch by batch: as many kits as EVERY group has finished so far (e.g.
+  // 500 of 1000 separate kits Done → 500 personalized kits can be packed now) — see
+  // kitsReadyForNextStep. Infinity = no separate/assembly step to wait on.
+  const separateReadyKits = useMemo(() => {
+    if (separateKitGroups.length === 0) return Infinity;
+    return Math.min(...separateKitGroups.map((kg) => kitsReadyForNextStep(separateKitTasksFor(kg), kg.overallQty)));
   }, [orderTasksData, separateKitGroups]);
 
   // Personalized kit groups — the FINAL packing step. Either direct items with
@@ -1285,6 +1284,20 @@ export default function OperationDetail() {
 
     const product = kitCfg?.kitName || (isPersonalized ? (order?.kitDisplayUnit || 'Personalized Kit') : (isKitAssembly ? 'Kit Assembly' : 'Separate Kit'));
     const kitReqQty = kitCfg?.overallQty || 0;
+
+    // Partial unlock (see readyCap in the modal): no task name may go past the kits whose
+    // assembly / separate kit packing is Done so far, counting what's already assigned.
+    if (isPersonalized && kitCfg?.readyCap != null) {
+      const capTasks = personalizedKitTasksFor(kitCfg);
+      const totals = new Map();
+      filledKitSubTasks.forEach((t) => totals.set(normTaskName(t.description), (totals.get(normTaskName(t.description)) || 0) + (Number(t.qty) || 0)));
+      const over = [...totals.entries()].find(([name, qty]) => qty > kitsLeftUnderCap(capTasks, name, kitCfg.readyCap));
+      if (over) {
+        const label = filledKitSubTasks.find((t) => normTaskName(t.description) === over[0])?.description || over[0];
+        enqueueSnackbar(`Only ${kitsLeftUnderCap(capTasks, over[0], kitCfg.readyCap)} more kit(s) are ready for "${label}" — kit assembly / separate kit packing is Done for ${kitCfg.readyCap} kits so far.`, { variant: 'warning' });
+        return;
+      }
+    }
 
     // Each row with a different Task Name + assignee becomes its OWN task in Task
     // Management (not one task with an embedded breakdown).
@@ -3691,7 +3704,8 @@ export default function OperationDetail() {
                         const printGate = kitPrintGate(kg, effectiveOrderForKitGate, suggestedList);
                         const kgTasks = separateKitTasksFor(kg);
                         const kgTask = kgTasks[0] || null;
-                        const kgAllDone = kgTasks.length > 0 && kgTasks.every((t) => t.status === 'Done');
+                        const kgProgress = kitPackingProgress(kgTasks, kg.overallQty);
+                        const kgAllDone = kgProgress.complete;
                         return (
                         <div
                           key={kg.key}
@@ -3728,7 +3742,9 @@ export default function OperationDetail() {
                                 <Tag color={kgAllDone ? 'green' : 'orange'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
                                   {kgAllDone
                                     ? (isAssembly ? 'Kit Assembly Done' : 'Separate Kit Packing Done')
-                                    : (isAssembly ? 'Kit Assembly Task Assigned — Pending' : 'Separate Kit Task Assigned — Pending')}
+                                    : kgProgress.short
+                                      ? `Assigned ${kgProgress.assignedKits} / ${kg.overallQty} kits — add task for the rest`
+                                      : (isAssembly ? 'Kit Assembly Task Assigned — Pending' : 'Separate Kit Task Assigned — Pending')}
                                 </Tag>
                                 <Text type="secondary" style={{ fontSize: 12 }}>{kgTask.taskName}</Text>
                               </Space>
@@ -3749,7 +3765,11 @@ export default function OperationDetail() {
 
                       {/* Personalized Kit group(s) — gated until separate kit tasks are assigned */}
                       {personalizedKitGroups.map((kg) => {
-                        const separateDone = separateKitPackingAllDone;
+                        // Kits ready for personalized packing right now — capped by the
+                        // separate kits finished so far (see separateReadyKits).
+                        const readyCap = Math.min(separateReadyKits, kg.overallQty > 0 ? kg.overallQty : Infinity);
+                        const separateDone = readyCap > 0;
+                        const partlyUnlocked = separateDone && Number.isFinite(readyCap) && kg.overallQty > 0 && readyCap < kg.overallQty;
                         const printGate = kitPrintGate(kg, effectiveOrderForKitGate, suggestedList);
                         const kgTasks = personalizedKitTasksFor(kg);
                         const kgTask = kgTasks[0] || null;
@@ -3781,6 +3801,14 @@ export default function OperationDetail() {
                                   type="warning"
                                   showIcon
                                   message="Mark the kit assembly / separate kit packing task(s) above as Done before assigning personalized kit tasks."
+                                  style={{ borderRadius: 8, fontSize: 12 }}
+                                />
+                              )}
+                              {partlyUnlocked && (
+                                <Alert
+                                  type="info"
+                                  showIcon
+                                  message={`Kit assembly / separate kit packing is Done for ${readyCap} of ${kg.overallQty} kits — Personalized Kit Packing can be assigned for up to ${readyCap} kits now. The rest unlocks as more are Done.`}
                                   style={{ borderRadius: 8, fontSize: 12 }}
                                 />
                               )}
@@ -3847,20 +3875,27 @@ export default function OperationDetail() {
 
                               {renderKitProductSpecs(kg.kitItems, 'magenta', kg.overallQty)}
 
-                              {kgTask && (
-                                <Space style={{ marginTop: 4 }} wrap>
-                                  <Tag color="green" icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
-                                    Personalized Kit Task Assigned
-                                  </Tag>
-                                  <Text type="secondary" style={{ fontSize: 12 }}>{kgTask.taskName}</Text>
-                                </Space>
-                              )}
+                              {kgTask && (() => {
+                                const pkProgress = kitPackingProgress(kgTasks, kg.overallQty);
+                                return (
+                                  <Space style={{ marginTop: 4 }} wrap>
+                                    <Tag color={pkProgress.short ? 'orange' : 'green'} icon={<CheckCircleOutlined />} style={{ borderRadius: 8 }}>
+                                      {pkProgress.short
+                                        ? `Assigned ${pkProgress.assignedKits} / ${kg.overallQty} kits — add task for the rest`
+                                        : 'Personalized Kit Task Assigned'}
+                                    </Tag>
+                                    <Text type="secondary" style={{ fontSize: 12 }}>{kgTask.taskName}</Text>
+                                  </Space>
+                                );
+                              })()}
                               <Button
                                 type="primary"
                                 disabled={!separateDone || printGate.blocked}
                                 icon={<TeamOutlined />}
                                 style={separateDone && !printGate.blocked ? { background: 'linear-gradient(135deg,#B11E6A,#D85C9E)', border: 'none', borderRadius: 8, marginTop: 4 } : { borderRadius: 8, marginTop: 4 }}
-                                onClick={() => separateDone && !printGate.blocked && openKitPackingModal(kg, 'personalized')}
+                                onClick={() => separateDone && !printGate.blocked && openKitPackingModal(
+                                  { ...kg, readyCap: Number.isFinite(readyCap) ? readyCap : undefined }, 'personalized',
+                                )}
                               >
                                 {kgTask ? 'Add Another Task' : 'Assign Personalized Kit Task'}
                               </Button>
@@ -3959,7 +3994,7 @@ export default function OperationDetail() {
                   {
                     title: 'Logo', key: 'logo', width: 70,
                     render: (_, r) => r.logoUrl
-                      ? <a href={r.logoUrl} target="_blank" rel="noreferrer"><img src={r.logoUrl} alt="logo" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 4, border: '1px solid #eee' }} /></a>
+                      ? <LogoThumb url={r.logoUrl} size={32} radius={4} />
                       : r.logoRequired ? <Tag color="orange" style={{ fontSize: 10 }}>Logo Req.</Tag> : <Text type="secondary">—</Text>,
                   },
                   { title: 'Product', dataIndex: 'product' },
@@ -3986,7 +4021,7 @@ export default function OperationDetail() {
                   {
                     title: 'Logo', key: 'logo', width: 70,
                     render: (_, r) => r.logoUrl
-                      ? <a href={r.logoUrl} target="_blank" rel="noreferrer"><img src={r.logoUrl} alt="logo" style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 4, border: '1px solid #eee' }} /></a>
+                      ? <LogoThumb url={r.logoUrl} size={32} radius={4} />
                       : r.logoRequired ? <Tag color="orange" style={{ fontSize: 10 }}>Logo Req.</Tag> : <Text type="secondary">—</Text>,
                   },
                   { title: 'Product', dataIndex: 'product' },
@@ -4244,11 +4279,24 @@ export default function OperationDetail() {
               here is merged/summed across tasks; "units remaining" is just a qty guide. */}
           {(() => {
             const kitReqQty = kitPackingModalKitCfg?.overallQty || 0;
+            // Personalized Kit Packing opened while only part of the separate kits / assembly
+            // is Done — each task name may cover at most that many kits in total (existing
+            // tasks included).
+            const readyCap = kitPackingModalCategory === 'personalized' ? kitPackingModalKitCfg?.readyCap : undefined;
+            const capTasks = readyCap != null ? personalizedKitTasksFor(kitPackingModalKitCfg) : [];
             return (
               <>
                 <Divider orientation="left" style={{ fontSize: 13, color: '#B11E6A', borderColor: '#B11E6A30' }}>
                   Task Breakdown by Quantity
                 </Divider>
+                {readyCap != null && (
+                  <Alert
+                    type="info"
+                    showIcon
+                    message={`Ready now: ${readyCap} of ${kitReqQty || readyCap} kits (kit assembly / separate kit packing Done). Each task name can cover up to ${readyCap} kits in total until more are Done.`}
+                    style={{ borderRadius: 8, marginBottom: 10, fontSize: 12 }}
+                  />
+                )}
                 <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
                 <Space direction="vertical" style={{ width: '100%', minWidth: 460 }} size={8}>
                   {kitSubTasks.map((task, idx) => {
@@ -4258,7 +4306,12 @@ export default function OperationDetail() {
                       : [];
                     const groupTotal = sameNameRows.reduce((sum, t) => sum + (Number(t.qty) || 0), 0);
                     const otherSameNameTotal = groupTotal - (Number(task.qty) || 0);
-                    const groupMax = kitReqQty > 0 ? Math.max(0, kitReqQty - otherSameNameTotal) : undefined;
+                    const capLeft = readyCap != null && task.description ? kitsLeftUnderCap(capTasks, task.description, readyCap) : undefined;
+                    const maxCandidates = [
+                      kitReqQty > 0 ? kitReqQty - otherSameNameTotal : undefined,
+                      capLeft !== undefined ? capLeft - otherSameNameTotal : undefined,
+                    ].filter((v) => v !== undefined);
+                    const groupMax = maxCandidates.length ? Math.max(0, Math.min(...maxCandidates)) : undefined;
                     const groupMet = kitReqQty > 0 && groupTotal >= kitReqQty;
                     return (
                     <div
@@ -4326,6 +4379,11 @@ export default function OperationDetail() {
                         {task.description && kitReqQty > 0 && (
                           <Tag color={groupMet ? 'success' : 'default'} style={{ fontSize: 10, margin: 0 }}>
                             {task.description}: {groupTotal.toLocaleString()} / {kitReqQty.toLocaleString()} units
+                          </Tag>
+                        )}
+                        {capLeft !== undefined && (
+                          <Tag color={groupTotal > capLeft ? 'error' : 'magenta'} style={{ fontSize: 10, margin: 0 }}>
+                            Ready now: {capLeft.toLocaleString()} kits left for {task.description}
                           </Tag>
                         )}
                       </Space>

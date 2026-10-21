@@ -36,6 +36,7 @@ router.patch('/order/:orderId/request-emergency', ctrl.requestEmergencyDispatchF
 router.patch('/:id/approve-emergency/sales', ctrl.approveEmergencySales);
 router.patch('/:id/approve-emergency/ops', ctrl.approveEmergencyOps);
 router.patch('/:id/reassign', ctrl.reassignTask);
+router.patch('/:id/switch', ctrl.switchInProgressTask);
 router.delete('/:id', ctrl.deleteTask);
 
 module.exports = router;

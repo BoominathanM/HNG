@@ -89,9 +89,9 @@ export default function TaskPerformanceReport() {
     : 0;
 
   const exportExcel = () => {
-    const headers = ['Rank', 'Name', 'Role', 'Assigned', 'Completed', 'Pending', 'Completion Rate %', 'On-Time %', 'Avg Rating', 'Avg Efficiency %', 'Score'];
+    const headers = ['Rank', 'Name', 'Role', 'Assigned', 'Completed', 'Pending', 'Switched Out', 'Switched In', 'Completion Rate %', 'On-Time %', 'Avg Rating', 'Avg Efficiency %', 'Score'];
     const rows = [...leaderboard].sort((a, b) => b.score - a.score).map((p) => [
-      p.rank, p.name, p.role, p.totalAssigned, p.completed, p.pending, p.completionRate, p.onTimeRate, p.avgRating, p.avgEfficiencyPct, p.score,
+      p.rank, p.name, p.role, p.totalAssigned, p.completed, p.pending, p.switchedOut || 0, p.switchedIn || 0, p.completionRate, p.onTimeRate, p.avgRating, p.avgEfficiencyPct, p.score,
     ]);
     exportToExcel(headers, rows, 'Task_Management_Performance_Report.csv');
   };
@@ -179,6 +179,13 @@ export default function TaskPerformanceReport() {
                     },
                     { title: 'Name', dataIndex: 'name', key: 'name', render: (v, r) => <div><Text style={{ fontSize: 12, fontWeight: 700 }}>{v}</Text><br /><Text style={{ fontSize: 10, color: '#aaa' }}>{r.role}</Text></div> },
                     { title: 'Completed', dataIndex: 'completed', key: 'completed', align: 'center', width: 75, render: (v, r) => <Text style={{ fontSize: 12, fontWeight: 600 }}>{v} / {r.totalAssigned}</Text> },
+                    // Mid-task switches: Out = finished portion handed over (counted in Completed,
+                    // rated on just those units); In = continuation tasks taken over from someone.
+                    {
+                      title: 'Switched Out / In',
+                      key: 'switched', align: 'center', width: 90,
+                      render: (_, r) => <Text style={{ fontSize: 12 }}>{r.switchedOut || 0} / {r.switchedIn || 0}</Text>,
+                    },
                     { title: 'Compl. Rate', dataIndex: 'completionRate', key: 'completionRate', align: 'center', width: 80, render: (v) => <Tag style={{ ...pctTag(v), borderRadius: 20, fontSize: 10, fontWeight: 700 }}>{v}%</Tag> },
                     { title: 'On-Time', dataIndex: 'onTimeRate', key: 'onTimeRate', align: 'center', width: 75, render: (v) => <Tag style={{ ...pctTag(v), borderRadius: 20, fontSize: 10, fontWeight: 700 }}>{v}%</Tag> },
                     { title: 'Rating', dataIndex: 'avgRating', key: 'avgRating', width: 100, render: (v) => <Rate disabled allowHalf value={v || 0} style={{ fontSize: 11 }} /> },
