@@ -86,7 +86,7 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     const label = oldRow.itemName || oldRow.name || `Product ${i + 1}`;
     if (!Number.isFinite(newRate) || newRate < 0) throw new AppError(`Invalid price for "${label}"`, 400);
     if (!Number.isFinite(newGst) || newGst < 0) throw new AppError(`Invalid GST% for "${label}"`, 400);
-    if (newRate < oldRate) throw new AppError(`Price for "${label}" cannot be reduced below ₹${oldRate}`, 400);
+    if (newRate < oldRate) throw new AppError(`Price for "${label}" cannot be reduced below ₹${r2(oldRate)}`, 400);
     if (newGst < oldGst) throw new AppError(`GST% for "${label}" cannot be reduced below ${oldGst}%`, 400);
 
     // Quantity is optional per row (existing price-only callers never send it). It may be
@@ -146,7 +146,7 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     const newKitGst = newKit.gst !== undefined ? Number(newKit.gst) : oldKitGst;
     const label = oldKit.kitName || oldKit.kitType || newKit.kitId;
     if (!Number.isFinite(newKitPrice) || newKitPrice < 0) throw new AppError(`Invalid price for kit "${label}"`, 400);
-    if (newKitPrice < oldKitPrice) throw new AppError(`Price for kit "${label}" cannot be reduced below ₹${oldKitPrice}`, 400);
+    if (newKitPrice < oldKitPrice) throw new AppError(`Price for kit "${label}" cannot be reduced below ₹${r2(oldKitPrice)}`, 400);
     if (!Number.isFinite(newKitGst) || newKitGst < 0) throw new AppError(`Invalid GST% for kit "${label}"`, 400);
     if (newKitGst < oldKitGst) throw new AppError(`GST% for kit "${label}" cannot be reduced below ${oldKitGst}%`, 400);
 
@@ -193,7 +193,7 @@ async function applyOrderPriceEdit(order, { products: reqProducts, kitOrders: re
     const oldKitPackagePrice = Number(existingPlain.kitPrice) || 0;
     const newKitPackagePrice = Number(kitPackagePrice);
     if (!Number.isFinite(newKitPackagePrice) || newKitPackagePrice < 0) throw new AppError('Invalid personalized package price', 400);
-    if (newKitPackagePrice < oldKitPackagePrice) throw new AppError(`Personalized package price cannot be reduced below ₹${oldKitPackagePrice}`, 400);
+    if (newKitPackagePrice < oldKitPackagePrice) throw new AppError(`Personalized package price cannot be reduced below ₹${r2(oldKitPackagePrice)}`, 400);
     if (newKitPackagePrice !== oldKitPackagePrice) {
       priceChanged = true;
       itemChanges.push({ name: 'Personalized Package Fee', oldRate: oldKitPackagePrice, newRate: newKitPackagePrice, oldQty: null, newQty: null, oldGst: null, newGst: null });
@@ -298,7 +298,7 @@ function applyOrphanItemsPriceEdit(items, reqProducts, label404 = 'record') {
     const label = oldRow.itemName || `Product ${i + 1}`;
     if (!Number.isFinite(newRate) || newRate < 0) throw new AppError(`Invalid price for "${label}"`, 400);
     if (!Number.isFinite(newGst) || newGst < 0) throw new AppError(`Invalid GST% for "${label}"`, 400);
-    if (newRate < oldRate) throw new AppError(`Price for "${label}" cannot be reduced below ₹${oldRate}`, 400);
+    if (newRate < oldRate) throw new AppError(`Price for "${label}" cannot be reduced below ₹${r2(oldRate)}`, 400);
     if (newGst < oldGst) throw new AppError(`GST% for "${label}" cannot be reduced below ${oldGst}%`, 400);
     items[i].price = newRate;
     items[i].gst = newGst;

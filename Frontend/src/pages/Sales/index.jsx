@@ -95,7 +95,7 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import SelectWithAdd from '../../components/common/SelectWithAdd';
 import PhoneInput from '../../components/common/PhoneInput';
 import { emailRules, phoneValidator } from '../../utils/validation';
-import { formatQty } from '../../utils/numberFormat';
+import { formatQty, formatRate } from '../../utils/numberFormat';
 import BankAccountSelect from '../../components/common/BankAccountSelect';
 import useBankAccounts from '../../hooks/useBankAccounts';
 import { entryBankLabel, isBankAccountMode, withBankAccountName } from '../../utils/bankAccounts';
@@ -1167,7 +1167,7 @@ function CategoryTotalsBreakdown({ rec, isDark, kitsData = [] }) {
 }
 
 function generateWhatsAppText(data) {
-  const lines = (data.products || []).filter(Boolean).map(p => `${p.name} - ${p.qty}(${p.rate})`).join('\n');
+  const lines = (data.products || []).filter(Boolean).map(p => `${p.name} - ${p.qty}(${formatRate(p.rate)})`).join('\n');
   const hotelTypeLine = data.hotelType === 'OLD' ? 'OLD HOTEL' : 'NEW HOTEL';
   const billLine = data.billType === 'GST' ? 'GST BILL' : 'NON GST BILL';
   const fwdLine = data.forwardingCharge ? `FORWARDING CHARGE: ₹${(data.forwardingChargeAmount || 0).toLocaleString()}` : 'NO FORWARDING CHARGE';
@@ -1184,7 +1184,7 @@ function generateWhatsAppText(data) {
   }
   let specSection = '';
   if (data.logoNeeded) specSection += `Logo Needed\n${data.logoProducts || ''}\n`;
-  if (data.specifications?.length) specSection += data.specifications.filter(Boolean).map(s => typeof s === 'string' ? s : `${s.product || ''} - ${s.spec || ''} (₹${s.rate || 0})`).join('\n');
+  if (data.specifications?.length) specSection += data.specifications.filter(Boolean).map(s => typeof s === 'string' ? s : `${s.product || ''} - ${s.spec || ''} (₹${formatRate(s.rate || 0)})`).join('\n');
 
   return `Hotel Name ${data.billingName || data.hotelName}
 Location ${data.location}
@@ -1462,6 +1462,10 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
     },
     [inventoryItemId, isKit, kitType, selectedName, inventoryItemsData],
   );
+  // Purchase cost is stored GST-exclusive — backed out of inclusive bill prices — so it can carry a
+  // long fraction (e.g. 4.256988…). Round the floor once so the error text, tooltip and InputNumber
+  // min clamp all agree on a 2-decimal rupee value.
+  const minRate = invItem?.purchasePrice > 0 ? r2((Number(invItem.purchasePrice) || 0) + (Number(invItem.marginAmount) || 0)) : 0;
 
   // An inventory item stores its allowed packing materials / material categories / brands
   // as comma-separated strings (e.g. "Paper Box, Plastic Box"). Split them into option lists
@@ -1894,12 +1898,11 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                     {...rest}
                     name={[name, 'rate']}
                     style={{ marginBottom: 0 }}
-                    tooltip={invItem?.purchasePrice > 0 ? `Min ₹${(Number(invItem.purchasePrice) || 0) + (Number(invItem.marginAmount) || 0)} (₹${invItem.purchasePrice} purchase + ₹${invItem.marginAmount || 0} margin)${invItem?.sellingPrice > 0 ? ` · Selling Price: ₹${invItem.sellingPrice}` : ''}` : undefined}
+                    tooltip={minRate > 0 ? `Min ₹${minRate} (₹${r2(invItem.purchasePrice)} purchase + ₹${r2(invItem.marginAmount)} margin)${invItem?.sellingPrice > 0 ? ` · Selling Price: ₹${r2(invItem.sellingPrice)}` : ''}` : undefined}
                     rules={[
                       { required: true, message: '!' },
                       {
                         validator: (_, val) => {
-                          const minRate = invItem?.purchasePrice > 0 ? (Number(invItem.purchasePrice) || 0) + (Number(invItem.marginAmount) || 0) : 0;
                           if (minRate > 0 && (Number(val) || 0) < minRate) {
                             return Promise.reject(new Error(`Min ₹${minRate}`));
                           }
@@ -1908,7 +1911,7 @@ function ProductItem({ field, index, remove, disabled, fieldName, showSpecs, isD
                       },
                     ]}
                   >
-                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={invItem?.purchasePrice > 0 ? (Number(invItem.purchasePrice) || 0) + (Number(invItem.marginAmount) || 0) : 0} step={0.01} disabled={isItemDisabled} size="small" />
+                    <InputNumber placeholder="Rate ₹" style={{ width: '100%' }} min={minRate} step={0.01} disabled={isItemDisabled} size="small" />
                   </Form.Item>
                 </Col>
                 <Col span={8}>
@@ -3989,8 +3992,10 @@ export default function Sales() {
   // Sum of the GST-inclusive subtotals of all kit-flagged product rows currently in the lead form.
   const computeKitPriceSum = () => {
     const prods = leadForm.getFieldValue('products') || [];
-    return prods.filter(p => p && (p.isKit || p.kitType))
-      .reduce((s, p) => s + productLineSubtotal(p), 0);
+    // r2 the sum too — adding already-rounded subtotals still leaves float noise (0.1 + 0.2 =
+    // 0.30000000000000004) that the Kit Price input would otherwise display verbatim.
+    return r2(prods.filter(p => p && (p.isKit || p.kitType))
+      .reduce((s, p) => s + productLineSubtotal(p), 0));
   };
 
   // Sum of the GST-inclusive subtotals of the product rows belonging to one specific kit card.
@@ -3998,8 +4003,8 @@ export default function Sales() {
     const prods = leadForm.getFieldValue('products') || [];
     const selKitsNow = leadForm.getFieldValue('selectedKits') || [];
     const isSingleKit = selKitsNow.length <= 1;
-    return prods.filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (isSingleKit && !p.kitId && kitIndex === 0)))
-      .reduce((s, p) => s + productLineSubtotal(p), 0);
+    return r2(prods.filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (isSingleKit && !p.kitId && kitIndex === 0)))
+      .reduce((s, p) => s + productLineSubtotal(p), 0));
   };
 
   // Seed the shared top-level kitPrice from the sum of all kit product subtotals — but ONLY
@@ -7670,7 +7675,7 @@ export default function Sales() {
               </Space>
               <div style={{ textAlign: 'right' }}>
                 <Text strong style={{ display: 'block', fontSize: 18, color: '#B11E6A', lineHeight: 1.2 }}>₹{lineTotal.toLocaleString()}</Text>
-                <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} {unitLabel || 'pcs'} × ₹{p.rate}{gstVal > 0 ? ` + ${gstVal}% GST` : ''}</Text>
+                <Text type="secondary" style={{ fontSize: 12 }}>{p.qty} {unitLabel || 'pcs'} × ₹{formatRate(p.rate)}{gstVal > 0 ? ` + ${gstVal}% GST` : ''}</Text>
               </div>
             </div>
             {/* ── Specs section ── */}
@@ -8181,7 +8186,7 @@ export default function Sales() {
                               </div>
                               <div style={{ textAlign: 'right' }}>
                                 <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{r2((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
-                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{formatRate(kp.rate)}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
                               </div>
                             </div>
                           ))}
@@ -8800,7 +8805,7 @@ export default function Sales() {
                               </div>
                               <div style={{ textAlign: 'right' }}>
                                 <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{r2((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
-                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{formatRate(kp.rate)}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
                               </div>
                             </div>
                           ))}
@@ -9852,7 +9857,7 @@ export default function Sales() {
                               </div>
                               <div style={{ textAlign: 'right' }}>
                                 <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{r2((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
-                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                                <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{formatRate(kp.rate)}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
                               </div>
                             </div>
                           ))}
@@ -10522,11 +10527,11 @@ export default function Sales() {
                               const duType = getFieldValue('kitDisplayUnitType');
                               const duCfg = configDisplayUnitOptions.find(c => c.value === du);
                               const st = (duCfg?.subtypes || []).find(s => s.value === duType);
-                              const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
+                              const minPrice = st ? r2((Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0)) : 0;
                               return (
                                 <Form.Item label="Packing Material Price (₹)" name="kitPrice" style={{ marginBottom: 0 }}
                                   rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice}`) : Promise.resolve() }] : []}>
-                                  <InputNumber min={minPrice || 0} style={{ width: '100%' }} placeholder={st?.sellingPrice > 0 ? `Selling: ₹${st.sellingPrice}` : 'Single kit price'} formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
+                                  <InputNumber min={minPrice || 0} style={{ width: '100%' }} placeholder={st?.sellingPrice > 0 ? `Selling: ₹${formatRate(st.sellingPrice)}` : 'Single kit price'} formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''} parser={(v) => (v || '').replace(/[₹,\s]/g, '')} />
                                 </Form.Item>
                               );
                             }}
@@ -10880,7 +10885,7 @@ export default function Sales() {
                                           </div>
                                           <div style={{ textAlign: 'right' }}>
                                             {lineTotal > 0 && <Text strong style={{ color: '#722ed1', fontSize: 13 }}>₹{lineTotal.toLocaleString()}</Text>}
-                                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{pQty} pcs × ₹{pRate}{pGst > 0 ? ` +${pGst}% GST` : ''}</Text>
+                                            <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{pQty} pcs × ₹{formatRate(pRate)}{pGst > 0 ? ` +${pGst}% GST` : ''}</Text>
                                           </div>
                                         </div>
                                         {(specEntries.length > 0 || prodAttrEntries.length > 0) && (
@@ -13817,7 +13822,7 @@ export default function Sales() {
                                   </div>
                                   <div style={{ textAlign: 'right' }}>
                                     <Text strong style={{ color: '#722ed1', fontSize: 14 }}>₹{((kp.qty || 0) * (kp.rate || 0)).toLocaleString()}</Text>
-                                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{kp.rate}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
+                                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>{kp.qty} × ₹{formatRate(kp.rate)}{kp.gstPercent ? ` (+${kp.gstPercent}% GST)` : ''}</Text>
                                   </div>
                                 </div>
                               ))}
@@ -14009,24 +14014,24 @@ export default function Sales() {
                                 const duType = getFieldValue('kitDisplayUnitType');
                                 const duCfg = configDisplayUnitOptions.find(c => c.value === du);
                                 const st = (duCfg?.subtypes || []).find(s => s.value === duType);
-                                const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
+                                const minPrice = st ? r2((Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0)) : 0;
                                 return (
                                   <>
                                     <Form.Item label="Packing Material Price (₹) (Included with GST)" name="kitPrice" style={{ marginBottom: 0 }}
                                       tooltip="Auto-filled from packing config selling price. Cannot go below purchase + margin cost. Price is inclusive of GST."
-                                      rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice} (₹${st.purchasePrice||0} purchase + ₹${st.marginAmount||0} margin)`) : Promise.resolve() }] : []}
+                                      rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice} (₹${r2(st.purchasePrice)} purchase + ₹${r2(st.marginAmount)} margin)`) : Promise.resolve() }] : []}
                                     >
                                       <InputNumber
                                         min={minPrice || 0}
                                         style={{ width: '100%' }}
-                                        placeholder={st?.sellingPrice > 0 ? `Selling: ₹${st.sellingPrice}` : 'Single kit price'}
+                                        placeholder={st?.sellingPrice > 0 ? `Selling: ₹${formatRate(st.sellingPrice)}` : 'Single kit price'}
                                         formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                                         parser={(v) => (v || '').replace(/[₹,\s]/g, '')}
                                       />
                                     </Form.Item>
                                     {st && minPrice > 0 && (
                                       <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-                                        Min: ₹{minPrice} (₹{st.purchasePrice||0} purchase + ₹{st.marginAmount||0} margin) | Sell: ₹{st.sellingPrice||0} (Included with GST)
+                                        Min: ₹{minPrice} (₹{r2(st.purchasePrice)} purchase + ₹{r2(st.marginAmount)} margin) | Sell: ₹{r2(st.sellingPrice)} (Included with GST)
                                       </Text>
                                     )}
                                     {(() => {
@@ -14581,7 +14586,7 @@ export default function Sales() {
                                     ₹{r2((p.qty || 0) * (p.rate || 0) * (1 + (Number(p.gst) || 0) / 100)).toLocaleString()}
                                   </Text>
                                   <Text type="secondary" style={{ fontSize: 12 }}>
-                                    {p.qty || 0} pcs × ₹{p.rate || 0}{(Number(p.gst) || 0) > 0 ? ` +${p.gst}% GST` : ''}
+                                    {p.qty || 0} pcs × ₹{formatRate(p.rate || 0)}{(Number(p.gst) || 0) > 0 ? ` +${p.gst}% GST` : ''}
                                   </Text>
                                 </div>
                               </div>
@@ -14954,24 +14959,24 @@ export default function Sales() {
                                   const duType = getFieldValue(['kitOrders', kitIndex, 'displayUnitType']);
                                   const duCfg = configDisplayUnitOptions.find(c => c.value === du);
                                   const st = (duCfg?.subtypes || []).find(s => s.value === duType);
-                                  const minPrice = st ? (Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0) : 0;
+                                  const minPrice = st ? r2((Number(st.purchasePrice) || 0) + (Number(st.marginAmount) || 0)) : 0;
                                   return (
                                     <>
                                       <Form.Item label="Packing Material Price (₹) (Included with GST)" name={['kitOrders', kitIndex, 'kitPrice']} style={{ marginBottom: 0 }}
                                         tooltip="Auto-filled from packing config selling price. Cannot go below purchase + margin cost. Price is inclusive of GST."
-                                        rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice} (₹${st.purchasePrice||0} purchase + ₹${st.marginAmount||0} margin)`) : Promise.resolve() }] : []}
+                                        rules={minPrice > 0 ? [{ validator: (_, val) => (val != null && Number(val) < minPrice) ? Promise.reject(`Min ₹${minPrice} (₹${r2(st.purchasePrice)} purchase + ₹${r2(st.marginAmount)} margin)`) : Promise.resolve() }] : []}
                                       >
                                         <InputNumber
                                           min={minPrice || 0}
                                           style={{ width: '100%' }}
-                                          placeholder={st?.sellingPrice > 0 ? `Selling: ₹${st.sellingPrice}` : 'Auto-summed — editable'}
+                                          placeholder={st?.sellingPrice > 0 ? `Selling: ₹${formatRate(st.sellingPrice)}` : 'Auto-summed — editable'}
                                           formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                                           parser={(v) => (v || '').replace(/[₹,\s]/g, '')}
                                         />
                                       </Form.Item>
                                       {st && minPrice > 0 && (
                                         <Text type="secondary" style={{ fontSize: 11, display: 'block', marginTop: 2 }}>
-                                          Min: ₹{minPrice} (₹{st.purchasePrice||0} purchase + ₹{st.marginAmount||0} margin) | Sell: ₹{st.sellingPrice||0} (Included with GST)
+                                          Min: ₹{minPrice} (₹{r2(st.purchasePrice)} purchase + ₹{r2(st.marginAmount)} margin) | Sell: ₹{r2(st.sellingPrice)} (Included with GST)
                                         </Text>
                                       )}
                                       {(() => {

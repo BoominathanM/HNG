@@ -28,6 +28,7 @@ import usePageAccess from '../../hooks/usePageAccess';
 import useDebouncedValue from '../../hooks/useDebouncedValue';
 import useBankAccounts from '../../hooks/useBankAccounts';
 import BankAccountSelect from '../../components/common/BankAccountSelect';
+import { formatRate } from '../../utils/numberFormat';
 import { BILLING_PAYMENT_MODES, bankAccountLabel, entryBankLabel, isBankAccountMode } from '../../utils/bankAccounts';
 import {
   useGetInvoicesQuery,
@@ -226,7 +227,7 @@ const ItemChangesTable = ({ itemChanges }) => (
       {
         title: 'Rate', width: 160,
         render: (_, r) => r.oldRate !== r.newRate
-          ? <Text style={{ fontSize: 12 }}><Text type="secondary" delete>₹{r.oldRate}</Text> → <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{r.newRate}</Text></Text>
+          ? <Text style={{ fontSize: 12 }}><Text type="secondary" delete>₹{formatRate(r.oldRate)}</Text> → <Text style={{ color: '#52c41a', fontWeight: 600 }}>₹{formatRate(r.newRate)}</Text></Text>
           : <Text type="secondary" style={{ fontSize: 12 }}>—</Text>,
       },
       {

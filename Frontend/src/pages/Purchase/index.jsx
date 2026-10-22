@@ -58,7 +58,7 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import PhoneInput from '../../components/common/PhoneInput';
 import VendorBankFields from '../../components/common/VendorBankFields';
 import { emailRules, phoneValidator } from '../../utils/validation';
-import { formatQty } from '../../utils/numberFormat';
+import { formatQty, formatRate } from '../../utils/numberFormat';
 import { viewFile, downloadFile } from '../../utils/fileDownload';
 import dayjs from 'dayjs';
 
@@ -237,7 +237,7 @@ export default function Purchase() {
     key: i._id, code: i.itemCode, name: i.itemName,
     category: i.category, unit: i.unit, unitValue: i.unitValue || 0, current: i.currentStock,
     min: i.minStock, max: i.minStock * 10,
-    price: `₹${i.purchasePrice}/${i.unit}`,
+    price: `₹${formatRate(i.purchasePrice)}/${i.unit}`,
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
     sellerName: i.vendorId?.name || null,
     itemType: i.itemType || 'standard',
@@ -4268,7 +4268,7 @@ export default function Purchase() {
                                       </div>
                                       {bestEntry && (
                                         <Tag color="#B11E6A" style={{ borderRadius: 10 }}>
-                                          Best: {bestEntry.name} · ₹{(bestEntry.unitPrice || 0).toLocaleString()}/unit
+                                          Best: {bestEntry.name} · ₹{formatRate(Number(bestEntry.unitPrice) || 0).toLocaleString()}/unit
                                         </Tag>
                                       )}
                                     </div>
@@ -4284,7 +4284,7 @@ export default function Purchase() {
                                         { title: 'Qty', dataIndex: 'qty', width: 90, render: (v) => v ? Number(v).toLocaleString() : '—' },
                                         {
                                           title: 'Unit Price', dataIndex: 'unitPrice', width: 110,
-                                          render: (v, r) => <Text strong style={{ color: r.fileIndex === p.bestFileIndex ? '#52c41a' : (isDark ? '#e0e0e0' : '#333') }}>{v ? `₹${Number(v).toLocaleString()}` : '—'}</Text>,
+                                          render: (v, r) => <Text strong style={{ color: r.fileIndex === p.bestFileIndex ? '#52c41a' : (isDark ? '#e0e0e0' : '#333') }}>{v ? `₹${formatRate(Number(v)).toLocaleString()}` : '—'}</Text>,
                                         },
                                         { title: 'Total', dataIndex: 'totalPrice', width: 110, render: (v) => v ? `₹${Number(v).toLocaleString()}` : '—' },
                                       ]}
@@ -7056,7 +7056,7 @@ export default function Purchase() {
                     },
                     { title: 'Product (from invoice)', dataIndex: 'itemName', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
                     { title: 'Qty', dataIndex: 'qty', width: 70, render: (v, r) => <Text>{v} {r.unit}</Text> },
-                    { title: 'Price', dataIndex: 'price', width: 80, render: v => <Text>₹{v || 0}</Text> },
+                    { title: 'Price', dataIndex: 'price', width: 80, render: v => <Text>₹{formatRate(v || 0)}</Text> },
                     {
                       title: 'Item Code (optional — merges into existing item)', key: 'itemCode', width: 260,
                       render: (_, r) => {

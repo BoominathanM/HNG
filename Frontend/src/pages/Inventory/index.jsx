@@ -65,7 +65,7 @@ import PhoneInput from '../../components/common/PhoneInput';
 import VendorBankFields from '../../components/common/VendorBankFields';
 import { emailRules, phoneValidator } from '../../utils/validation';
 import { downloadFile } from '../../utils/fileDownload';
-import { formatQty } from '../../utils/numberFormat';
+import { formatQty, formatRate } from '../../utils/numberFormat';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -330,7 +330,7 @@ export default function Inventory() {
     current: i.currentStock,
     min: i.minStock,
     max: i.minStock * 10,
-    price: `₹${i.purchasePrice}/${i.unit}`,
+    price: `₹${formatRate(i.purchasePrice)}/${i.unit}`,
     status: i.currentStock === 0 ? 'Out' : i.currentStock < i.minStock ? 'Low' : 'OK',
     hsnCode: i.hsnCode,
     gstPercent: i.gstPercent || 0,
@@ -2163,7 +2163,7 @@ export default function Inventory() {
                                   },
                                   { title: 'Product Name', dataIndex: 'productName', render: v => <Text strong style={{ color: textColor }}>{v}</Text> },
                                   { title: 'Qty', dataIndex: 'qty', width: 80, render: v => <Text strong style={{ color: '#B11E6A' }}>{v}</Text> },
-                                  { title: 'Rate (₹)', key: 'rate', width: 100, render: (_, p) => { const v = p.purchasePrice ?? p.rate; return v != null && v !== 0 ? `₹${Number(v).toLocaleString()}` : '—'; } },
+                                  { title: 'Rate (₹)', key: 'rate', width: 100, render: (_, p) => { const v = p.purchasePrice ?? p.rate; return v != null && v !== 0 ? `₹${formatRate(Number(v)).toLocaleString()}` : '—'; } },
                                   { title: 'Unit', dataIndex: 'unit', width: 80, render: v => v || '—' },
                                   { title: 'Product Spec', key: 'spec', render: (_, p) => renderAttrTags(p.productAttributes && Object.keys(p.productAttributes).length ? p.productAttributes : invAttrsByName[p.productName], 220) },
                                 ]}
@@ -2356,7 +2356,7 @@ export default function Inventory() {
                                     {s.lamination && <Tag color={s.lamination === 'YES' ? 'blue' : 'default'} style={{ fontSize: 10, borderRadius: 10, margin: 0 }}>Lamination: {s.lamination}</Tag>}
                                   </div>
                                   <div style={{ marginTop: 4, fontSize: 11, color: '#555' }}>
-                                    Purchase: <b>₹{s.purchasePrice || 0}</b> &nbsp;|&nbsp; Margin: <b>₹{s.marginAmount || 0}</b> &nbsp;|&nbsp; Selling: <b style={{ color: '#722ed1' }}>₹{s.sellingPrice || 0}</b>
+                                    Purchase: <b>₹{formatRate(s.purchasePrice || 0)}</b> &nbsp;|&nbsp; Margin: <b>₹{formatRate(s.marginAmount || 0)}</b> &nbsp;|&nbsp; Selling: <b style={{ color: '#722ed1' }}>₹{formatRate(s.sellingPrice || 0)}</b>
                                   </div>
                                 </div>
                               ))}
@@ -2847,7 +2847,7 @@ export default function Inventory() {
                 <Descriptions.Item label="Category">{detailItem.category || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Unit">{detailItem.unit || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Purchase Price">{detailItem.price || '—'}</Descriptions.Item>
-                <Descriptions.Item label="Selling Price">{detailItem.sellingPrice != null ? `₹${Number(detailItem.sellingPrice).toLocaleString()}` : '—'}</Descriptions.Item>
+                <Descriptions.Item label="Selling Price">{detailItem.sellingPrice != null ? `₹${formatRate(Number(detailItem.sellingPrice)).toLocaleString()}` : '—'}</Descriptions.Item>
                 <Descriptions.Item label="Default Size">{detailItem.defaultSize || '—'}</Descriptions.Item>
                 <Descriptions.Item label="HSN Code">{detailItem.hsnCode || '—'}</Descriptions.Item>
                 <Descriptions.Item label="GST %">{detailItem.gstPercent > 0 ? `${detailItem.gstPercent}%` : '—'}</Descriptions.Item>
@@ -3306,7 +3306,9 @@ export default function Inventory() {
                     const pp = Number(String(addItemForm.getFieldValue('purchase_price') ?? '').replace(/[^0-9.]/g, '')) || 0;
                     const mm = Number(String(addItemForm.getFieldValue('margin_amount') ?? '').replace(/[^0-9.]/g, '')) || 0;
                     const sp = Number(String(val ?? '').replace(/[^0-9.]/g, '')) || 0;
-                    const floor = pp + mm;
+                    // Purchase Price prefills with the stored GST-exclusive cost, which can carry a
+                    // long fraction — round the floor so the check and the message agree on 2 decimals.
+                    const floor = formatRate(pp + mm);
                     if (sp < floor) return Promise.reject(new Error(`Cannot be below ₹${floor} (Purchase + Limitations)`));
                     return Promise.resolve();
                   },
