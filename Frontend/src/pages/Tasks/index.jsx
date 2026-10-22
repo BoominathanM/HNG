@@ -2126,8 +2126,12 @@ export default function Tasks() {
                   <Tag color="orange">After Emergency Items</Tag>
                 </Tooltip>
               )}
+              {/* Fully reserved line (stock taken at task assignment) — live stock no longer applies
+                  to it, so show that instead of a leftover count that reads like a shortfall. */}
               <Tag color={s.stockReady ? 'green' : 'red'}>
-                {s.stockReady ? `Stock: ${s.inventoryStock ?? '—'}` : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
+                {s.stockReady
+                  ? (s.stockDeducted ? 'Stock Reserved' : `Stock: ${s.inventoryStock ?? '—'}`)
+                  : `Stock Not Available${s.inventoryStock != null ? ` (${s.inventoryStock})` : ''}`}
               </Tag>
             </Space>
             {/* Scrollable middle — keeps the card's overall height fixed (see

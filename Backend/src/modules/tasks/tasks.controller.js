@@ -759,8 +759,14 @@ async function computeSuggestedTasks() {
       // above, which would have let that brush task through — this checklist was simply
       // more restrictive than reality for no reason tied to how stock actually gets
       // deducted now (per task, per line, not per whole kit).
+      // Only the part of this line NOT yet reserved needs live stock — same cap the gate
+      // applies (requiredQty minus deductedQty). Assigning a task already pulls its qty out
+      // of currentStock, so comparing the full requiredQty against what's left re-counted the
+      // reserved units as missing (ORD-260047: 200 needed, 220 on hand → Fully Available;
+      // after assigning, 20 left < 200 → wrongly flipped to Partial Available).
       const stock = stockByName[(it.itemName || '').toLowerCase()] ?? 0;
-      const stockReady = stock >= requiredQty;
+      const stillNeededStock = Math.max(0, requiredQty - (Number(it.deductedQty) || 0));
+      const stockReady = stock >= stillNeededStock;
 
       // ── Design (Sticker / Box / Frosted Ziplock / Butter Paper) readiness ──
       const rawDesignType = resolveDesignType(it, o);
@@ -840,8 +846,11 @@ async function computeSuggestedTasks() {
       const materialStockMatch = (reservedForLine.length || isKitLine || !String(effPackSize || '').trim())
         ? null
         : resolveMaterialStock(it, materialStocks, effPackSize);
+      // Same "only what's not yet reserved" cap as stillNeededStock above, against the packing
+      // material this line's assigned tasks already deducted (materialDeductedQty).
+      const stillNeededMaterial = Math.max(0, requiredQty - (Number(it.materialDeductedQty) || 0));
       const materialStockReady = !!it.packingFromExistingStock
-        || (!reservedForLine.length && (!materialStockMatch || (materialStockMatch.stockCount || 0) >= requiredQty));
+        || (!reservedForLine.length && (!materialStockMatch || (materialStockMatch.stockCount || 0) >= stillNeededMaterial));
       const materialShortfall = materialStockReady
         ? null
         : reservedForLine.length
@@ -856,7 +865,7 @@ async function computeSuggestedTasks() {
             material: materialStockMatch.packingMaterial,
             size: materialStockMatch.size,
             available: materialStockMatch.stockCount || 0,
-            needed: requiredQty,
+            needed: stillNeededMaterial,
           };
 
       // Printing completion is a hard blocker — there is no physical task to assign until

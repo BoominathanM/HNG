@@ -947,6 +947,10 @@ export default function Inventory() {
   const [checkSubmitOpen, setCheckSubmitOpen] = useState(false);
   const [checkNotes, setCheckNotes] = useState('');
   const [checkSubmitted, setCheckSubmitted] = useState(false);
+  // Physical Count Entry table paging — display only; counts, the summary footer and Submit
+  // always cover the whole checkSession, not just the visible page.
+  const [checkPage, setCheckPage] = useState(1);
+  const [checkPageSize, setCheckPageSize] = useState(10);
 
   // Populate checkSession once inventory data loads from RTK Query (useState runs before data arrives).
   // On subsequent loads (e.g. after an approval), refresh systemCount while preserving the user's
@@ -1890,7 +1894,10 @@ export default function Inventory() {
                     </Space>
                     <Button
                       size="small"
-                      onClick={() => setCheckSession(inventoryList.map(i => ({ key: i.key, code: i.code, name: i.name, unit: i.unit, systemCount: i.current, physicalCount: i.current, missingType: null, missingReason: '' })))}
+                      onClick={() => {
+                        setCheckSession(inventoryList.map(i => ({ key: i.key, code: i.code, name: i.name, unit: i.unit, systemCount: i.current, physicalCount: i.current, missingType: null, missingReason: '' })));
+                        setCheckPage(1);
+                      }}
                       style={{ borderColor: '#B11E6A44', color: '#B11E6A' }}
                     >
                       Reset All
@@ -1900,7 +1907,22 @@ export default function Inventory() {
                   <Table
                     dataSource={checkSession}
                     size="small"
-                    pagination={false}
+                    pagination={{
+                      current: checkPage,
+                      pageSize: checkPageSize,
+                      showSizeChanger: true,
+                      pageSizeOptions: ['10', '20', '50', '100'],
+                      size: 'small',
+                      showTotal: (t, [from, to]) => `${from}–${to} of ${t}`,
+                      onChange: (p, size) => {
+                        if (size !== checkPageSize) {
+                          setCheckPageSize(size);
+                          setCheckPage(1);
+                        } else {
+                          setCheckPage(p);
+                        }
+                      },
+                    }}
                     scroll={{ x: 'max-content' }}
                     columns={[
                       {

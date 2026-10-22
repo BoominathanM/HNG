@@ -354,6 +354,18 @@ const isStickerOnlyOuterPacking = (item) => !!item?.isPersonalizedPacking
 
 const isStickerOnlyItem = (item) => isStickerOnlyKit(item) || isStickerOnlyOuterPacking(item);
 
+// A synthesized "personalized packing" copy of a bundled STANDALONE product (not a kit) whose own
+// Sticker=Yes and Printing≠Yes — e.g. ORD-260044's Comb (Butter paper, Sticker YES, Printing NO)
+// packed inside a personalized Box. The product's own packing material (a plain butter paper wrap)
+// is not printed; its only design job is the sticker, which its own Sticker-tab row already covers.
+// So, exactly like the standalone product itself (getItemPackagingType's 'sticker' rule), its
+// individual-packing step belongs in no Box/Ziplock/Butter/Other tab. Its outer-unit packing row
+// (routed by the personalized display unit) is unaffected.
+const isStickerOnlyBundledProduct = (item) => !!item?.isPersonalizedPacking
+  && !item.underlyingIsKit
+  && itemNeedsSticker(item)
+  && !itemNeedsPrinting(item);
+
 // Determine an item's ultimate packaging destination (after sticker step completes).
 const getItemPackagingType = (item, order) => {
   const isKitItem = !!(item.isKit || item.kitType);
@@ -683,9 +695,12 @@ export const buildProductionQueues = (orders = [], stickerRequests = [], queueSt
   // The personalized individual-packing step (an item's own packing material differs from its
   // display-unit tab — see the Box/Ziplock/Butter/Other queues) is skipped for an item re-routed to
   // the Sticker tab: "Sticker tab only" means it appears in no packaging tab, unless work already
-  // started in that tab.
+  // started in that tab. Also skipped for a sticker-only bundled standalone product
+  // (isStickerOnlyBundledProduct) — no grandfathering there, since its own row never left the
+  // Sticker tab and the packaging-tab row was the leak itself.
   const innerPackingAllowed = (item, order, packType) =>
-    !routedToSticker(item, order) || startedInTab(order, item, packType);
+    !isStickerOnlyBundledProduct(item)
+    && (!routedToSticker(item, order) || startedInTab(order, item, packType));
 
   return {
     // Sticker queue: all items that need sticker printing (logoType=Sticker or sticker=YES),
