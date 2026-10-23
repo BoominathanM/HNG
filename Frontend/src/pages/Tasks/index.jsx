@@ -25,6 +25,7 @@ import AssigneeTasksTab from './AssigneeTasksTab';
 import { estimateSecFor, secToHuman, perUnitLabel, unitToSec, secToUnit, ratingColor, ratingLabel, ratingFromDurations } from '../../utils/taskTime';
 import { kitPackingProgress, isKitPackingComplete, kitsReadyForNextStep, kitsLeftUnderCap } from '../../utils/kitPackingProgress';
 import { buildActiveTaskMap, findStartBlocker, startBlockerMessage } from '../../utils/activeTaskLock';
+import { isCreditTerms, creditPayLabel } from '../../utils/creditPayment';
 import {
   useGetTasksQuery,
   useGetSuggestedTasksQuery,
@@ -643,6 +644,9 @@ export default function Tasks() {
     emergencyOpsApproved: t.emergencyOpsApproved || false,
     emergencyApproved: t.emergencyApproved || false,
     isSample: t.orderId?.orderCategory === 'SAMPLE' || t.orderId?.leadId?.leadType === 'SAMPLE',
+    // Credit payment terms — dispatched before payment, so (like samples) Send to Dispatch
+    // doesn't wait for Paid or an Emergency Dispatch approval (see backend dispatchOrder).
+    isCredit: isCreditTerms(t.orderId?.paymentTerms, t.orderId?.leadId?.paymentTerms),
     payment: t.paymentStatus || 'Pending',
     paymentStatus: t.paymentStatus || 'Pending',
     salesPerson: t.assignedTo?.fullName || t.assigneeName || '—',
@@ -1830,7 +1834,7 @@ export default function Tasks() {
       title: 'Payment', dataIndex: 'paymentStatus', responsive: ['lg'],
       render: (v, r) => r.isSample
         ? <Tag color="blue" style={{ fontSize: 11 }}>Sample</Tag>
-        : v ? <Tag color={paymentColor[v] || 'default'}>{v}</Tag> : <Text style={{ color: '#999', fontSize: 11 }}>N/A</Text>,
+        : v ? <Tag color={paymentColor[v] || 'default'}>{creditPayLabel(v, r.isCredit)}</Tag> : <Text style={{ color: '#999', fontSize: 11 }}>N/A</Text>,
     },
     {
       title: 'Time / Rating', key: 'timeRating', responsive: ['lg'], width: 150,
@@ -1919,14 +1923,14 @@ export default function Tasks() {
               Sent to Dispatch
             </Button>
           )}
-          {(r.status === 'Completed' || r.emergencyApproved) && !isAlreadySentToDispatch(r.orderStatus) && (r.isSample || r.paymentStatus === 'Paid' || r.emergencyApproved) && !r.dispatchStatus && (
+          {(r.status === 'Completed' || r.emergencyApproved) && !isAlreadySentToDispatch(r.orderStatus) && (r.isSample || r.isCredit || r.paymentStatus === 'Paid' || r.emergencyApproved) && !r.dispatchStatus && (
             <Button size="small" type="primary" icon={<ShoppingOutlined />}
               style={{ background: '#52c41a', border: 'none' }}
               onClick={(e) => { e.stopPropagation(); handleDispatchClick(r); }}>
               Dispatch
             </Button>
           )}
-          {r.status === 'Completed' && !r.isSample && !r.emergencyApproved && !isAlreadySentToDispatch(r.orderStatus) && r.paymentStatus && r.paymentStatus !== 'Paid' && !r.dispatchStatus && (
+          {r.status === 'Completed' && !r.isSample && !r.isCredit && !r.emergencyApproved && !isAlreadySentToDispatch(r.orderStatus) && r.paymentStatus && r.paymentStatus !== 'Paid' && !r.dispatchStatus && (
             <Space direction="vertical" size={2}>
               <Tag color="warning" style={{ fontSize: 10 }}>Awaiting Payment</Tag>
               <Button size="small" danger icon={<ExclamationCircleOutlined />}
@@ -3119,7 +3123,7 @@ export default function Tasks() {
                                 </div>
                                 {task.isSample
                                   ? <Tag color="blue" style={{ fontSize: 10, marginBottom: 6 }}>Sample</Tag>
-                                  : task.paymentStatus && <Tag color={paymentColor[task.paymentStatus] || 'default'} style={{ fontSize: 10, marginBottom: 6 }}>{task.paymentStatus}</Tag>
+                                  : task.paymentStatus && <Tag color={paymentColor[task.paymentStatus] || 'default'} style={{ fontSize: 10, marginBottom: 6 }}>{creditPayLabel(task.paymentStatus, task.isCredit)}</Tag>
                                 }
                                 <Space direction="vertical" size={2} style={{ width: '100%', marginTop: 8 }}>
                                   {task.status === 'Pending' && (
@@ -3163,11 +3167,11 @@ export default function Tasks() {
                                       Sent to Dispatch
                                     </Button>
                                   )}
-                                  {!task.switchedOut && (task.status === 'Completed' || task.emergencyApproved) && !isAlreadySentToDispatch(task.orderStatus) && (task.isSample || task.paymentStatus === 'Paid' || task.emergencyApproved) && !task.dispatchStatus && (
+                                  {!task.switchedOut && (task.status === 'Completed' || task.emergencyApproved) && !isAlreadySentToDispatch(task.orderStatus) && (task.isSample || task.isCredit || task.paymentStatus === 'Paid' || task.emergencyApproved) && !task.dispatchStatus && (
                                     <Button size="small" type="primary" icon={<ShoppingOutlined />} style={{ background: '#52c41a', border: 'none', width: '100%' }}
                                       onClick={(e) => { e.stopPropagation(); handleDispatchClick(task); }}>Dispatch</Button>
                                   )}
-                                  {!task.switchedOut && task.status === 'Completed' && !task.isSample && !task.emergencyApproved && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
+                                  {!task.switchedOut && task.status === 'Completed' && !task.isSample && !task.isCredit && !task.emergencyApproved && task.paymentStatus && task.paymentStatus !== 'Paid' && !task.dispatchStatus && (
                                     <Button size="small" danger icon={<ExclamationCircleOutlined />} onClick={(e) => { e.stopPropagation(); openEmergency(task); }} style={{ width: '100%' }}>
                                       {task.emergencyRequested ? 'View Emergency' : 'Emergency Dispatch'}
                                     </Button>
@@ -4292,7 +4296,7 @@ export default function Tasks() {
                     <Descriptions.Item label="Sales Person">{selectedTask.salesPerson}</Descriptions.Item>
                     <Descriptions.Item label="Payment">
                       {selectedTask.paymentStatus
-                        ? <Tag color={paymentColor[selectedTask.paymentStatus]}>{selectedTask.paymentStatus}</Tag>
+                        ? <Tag color={paymentColor[selectedTask.paymentStatus]}>{creditPayLabel(selectedTask.paymentStatus, selectedTask.isCredit)}</Tag>
                         : 'N/A'}
                     </Descriptions.Item>
                     {selectedTask.dispatchStatus && (
@@ -4377,7 +4381,7 @@ export default function Tasks() {
               {/* Dispatch blocked notice — skipped for sample orders, and once Sales+Ops have
                   emergency-approved this order (either this task directly, or a sibling task
                   which already forwarded the whole order to Dispatch) */}
-              {selectedTask.status === 'Completed' && !selectedTask.isSample && !selectedTask.emergencyApproved
+              {selectedTask.status === 'Completed' && !selectedTask.isSample && !selectedTask.isCredit && !selectedTask.emergencyApproved
                 && !isAlreadySentToDispatch(selectedTask.orderStatus)
                 && selectedTask.paymentStatus && selectedTask.paymentStatus !== 'Paid' && !selectedTask.dispatchStatus && (
                 <Alert type="error" showIcon icon={<ExclamationCircleOutlined />}
@@ -4386,12 +4390,20 @@ export default function Tasks() {
                   style={{ borderRadius: 8 }}
                 />
               )}
-              {selectedTask.status === 'Completed' && !selectedTask.isSample
+              {selectedTask.status === 'Completed' && !selectedTask.isSample && !selectedTask.isCredit
                 && (selectedTask.emergencyApproved || isAlreadySentToDispatch(selectedTask.orderStatus))
                 && selectedTask.paymentStatus && selectedTask.paymentStatus !== 'Paid' && (
                 <Alert type="warning" showIcon icon={<AlertFilled />}
                   message="Emergency-Approved — Dispatch Allowed With Payment Pending"
                   description="Sales Head and Ops Head both approved this emergency dispatch. Payment is not yet fully collected — follow up separately."
+                  style={{ borderRadius: 8 }}
+                />
+              )}
+              {selectedTask.status === 'Completed' && !selectedTask.isSample && selectedTask.isCredit
+                && selectedTask.paymentStatus && selectedTask.paymentStatus !== 'Paid' && (
+                <Alert type="info" showIcon
+                  message="Credit Payment — Dispatch Allowed"
+                  description={`Payment status: "${creditPayLabel(selectedTask.paymentStatus, true)}". Credit terms — dispatch doesn't wait for payment or Emergency Dispatch approval. Collect payment by the credit due date.`}
                   style={{ borderRadius: 8 }}
                 />
               )}
@@ -4410,9 +4422,9 @@ export default function Tasks() {
           const t = dispatchVerifyData?.task;
           // Task completion/assignment is informational only here — it does not block
           // forwarding to Dispatch (see backend dispatchOrder). The only real gate left
-          // is payment (bypassed for sample orders / approved Emergency Dispatch).
+          // is payment (bypassed for sample orders / credit terms / approved Emergency Dispatch).
           const ready = dispatchVerifyData
-            && (t?.isSample || t?.paymentStatus === 'Paid' || t?.emergencyApproved)
+            && (t?.isSample || t?.isCredit || t?.paymentStatus === 'Paid' || t?.emergencyApproved)
             && !isAlreadySentToDispatch(t?.orderStatus);
           return [
             <Button key="close" onClick={() => setDispatchVerifyOpen(false)}>Close</Button>,
@@ -4441,8 +4453,9 @@ export default function Tasks() {
           const checkingMissing = missingProducts === null;
           const isPaid = task.paymentStatus === 'Paid';
           const isSample = task.isSample;
+          const isCredit = task.isCredit;
           const isEmergencyApproved = task.emergencyApproved;
-          const readyToDispatch = isPaid || isSample || isEmergencyApproved;
+          const readyToDispatch = isPaid || isSample || isCredit || isEmergencyApproved;
 
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 8 }}>
@@ -4480,7 +4493,7 @@ export default function Tasks() {
                   message="Ready for Dispatch"
                   description={isEmergencyApproved
                     ? 'This task is covered by an approved Emergency Dispatch. You may proceed with dispatch.'
-                    : `${isSample ? 'This is a sample order.' : 'Payment is confirmed.'} You may proceed with dispatch. Task completion below is for reference — per-product packing assignment is verified on the Dispatch page.`}
+                    : `${isSample ? 'This is a sample order.' : (isCredit && !isPaid) ? 'Credit payment terms — payment is collected after delivery.' : 'Payment is confirmed.'} You may proceed with dispatch. Task completion below is for reference — per-product packing assignment is verified on the Dispatch page.`}
                   style={{ borderRadius: 8 }}
                 />
               ) : (
@@ -4504,7 +4517,7 @@ export default function Tasks() {
                 <Descriptions.Item label="Product">{task.product || '—'}</Descriptions.Item>
                 <Descriptions.Item label="Qty">{(task.qty ?? 0).toLocaleString()} units</Descriptions.Item>
                 <Descriptions.Item label="Payment Status">
-                  <Tag color={paymentColor[task.paymentStatus] || 'default'}>{task.paymentStatus || 'N/A'}</Tag>
+                  <Tag color={paymentColor[task.paymentStatus] || 'default'}>{creditPayLabel(task.paymentStatus, isCredit) || 'N/A'}</Tag>
                 </Descriptions.Item>
                 <Descriptions.Item label="Order Type">
                   {isSample ? <Tag color="purple">Sample</Tag> : <Tag color="default">Regular</Tag>}
@@ -4606,7 +4619,7 @@ export default function Tasks() {
               <Descriptions.Item label="Client">{emergencyTask.client}</Descriptions.Item>
               <Descriptions.Item label="Product">{emergencyTask.product}</Descriptions.Item>
               <Descriptions.Item label="Qty">{(emergencyTask.qty ?? 0).toLocaleString()} units</Descriptions.Item>
-              <Descriptions.Item label="Payment Status"><Tag color="warning">{emergencyTask.paymentStatus}</Tag></Descriptions.Item>
+              <Descriptions.Item label="Payment Status"><Tag color="warning">{creditPayLabel(emergencyTask.paymentStatus, emergencyTask.isCredit)}</Tag></Descriptions.Item>
               <Descriptions.Item label="Assigned To">{emergencyTask.salesPerson}</Descriptions.Item>
             </Descriptions>
 

@@ -29,6 +29,7 @@ import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import { isImageUrl } from '../../utils/logoFile';
 import LogoThumb from '../../components/common/LogoThumb';
 import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
+import { isCreditTerms, creditPayLabel } from '../../utils/creditPayment';
 import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import useDebouncedValue from '../../hooks/useDebouncedValue';
@@ -542,6 +543,15 @@ const LEAD_SECTION_FIELDS = {
   products: ['products', 'selectedKit', 'selectedKits', 'kitDisplayUnit', 'kitDisplayUnitType', 'kitSize', 'kitSticker', 'kitLogo', 'kitPrinting', 'kitLamination', 'kitPrice', 'kitOverallQty', 'kitOrders', 'productType', 'packagingIncludes', 'packagingIncludesQty', 'displayUnitTab', 'displayUnit'],
 };
 
+// Calendar day (YYYY-MM-DD) of a stored date, read in the viewer's timezone. A DatePicker value
+// is saved as local midnight (23 Oct IST → 2026-10-22T18:30:00Z), so slicing the ISO string's
+// UTC part showed — and an order edit re-saved — the day before.
+const toLocalYMD = (v) => {
+  if (!v) return null;
+  const d = dayjs(v);
+  return d.isValid() ? d.format('YYYY-MM-DD') : null;
+};
+
 function prepareFormValues(data) {
   if (!data) return data;
   const processed = { ...data };
@@ -624,7 +634,9 @@ function prepareFormValues(data) {
         logo: pickVal(ko.logo, processed.kitLogo) ?? '',
         printing: pickVal(ko.printing, processed.kitPrinting) ?? '',
         overallQty: pickVal(ko.overallQty, processed.kitOverallQty),
-        kitPrice: pickVal(ko.kitPrice, processed.kitPrice),
+        // A kit saved as Separate Kit never inherits the top-level price (the hidden products-sum
+        // seed / personalized outer packing) — its own Packing Material Price stays as saved.
+        kitPrice: ko.category === ORDER_CATEGORIES.SEPARATE_KIT ? pickVal(ko.kitPrice) : pickVal(ko.kitPrice, processed.kitPrice),
         kitIncludes,
         kitIncludesQty,
         attachments: attachmentsToFileList(ko.attachments),
@@ -2830,25 +2842,27 @@ export default function Sales() {
   const openOrderEditModal = (order) => {
     if (!requireAccess('edit')) return;
     setOrderEditTarget(order);
-    const { pick: pickKit } = resolveOrderKitSource(order);
-    // Resolve expected delivery date: use the order's own value first, then fall back to the
-    // tentative date on the linked lead / quotation / negotiation (covers orders that predate
-    // the expectedDeliveryDate field or were created without it being explicitly set).
-    let resolvedDelivery = order.expectedDelivery || null;
-    if (!resolvedDelivery) {
-      const leadIdStr = String(order.leadId?._id || order.leadId || '');
-      const linkedLead = leadIdStr ? leadsData.find(l => String(l._id || l.key) === leadIdStr) : null;
-      const negIdStr = String(order.negotiationId?._id || order.negotiationId || '');
-      const linkedNeg = negIdStr ? negotiationsData.find(n => String(n._id || n.key) === negIdStr) : null;
-      const linkedQuot = findLinkedQuotation({ quotationId: order.quotationId, quotationCode: order.quotationCode });
-      const raw = (linkedLead?.orderDeliveryDate) || (linkedNeg?.orderDeliveryDate) || (linkedQuot?.orderDeliveryDate) || null;
-      resolvedDelivery = raw ? String(raw).slice(0, 10) : null;
-    }
+    const { pick: pickKit, lead: linkedLead, neg: linkedNeg, quot: linkedQuot } = resolveOrderKitSource(order);
+    // Expected delivery + payment reminder / credit due date: the order's own value first, then the
+    // linked lead / negotiation / quotation. The lead is read from the populated order.leadId too —
+    // leadsData (and the quotation/negotiation lists) drop a record once it's Converted, so on a
+    // converted order those lookups found nothing and both pickers opened blank.
+    const populatedLead = (order.leadId && typeof order.leadId === 'object') ? order.leadId : null;
+    const resolvedDelivery = toLocalYMD(order.expectedDelivery || order.expectedDeliveryDate)
+      || toLocalYMD(populatedLead?.orderDeliveryDate || linkedLead?.orderDeliveryDate)
+      || toLocalYMD(linkedNeg?.orderDeliveryDate)
+      || toLocalYMD(linkedQuot?.orderDeliveryDate);
+    // A linked record's reminder date is only meaningful under the same payment terms (a 50/50
+    // balance date isn't a credit due date).
+    const reminderFrom = (src) => (src && (!src.paymentTerms || !order.paymentTerms || src.paymentTerms === order.paymentTerms)
+      ? (src.paymentReminderDate || src.creditDueDate) : null);
+    const resolvedReminder = order.paymentReminderDate || order.creditDueDate
+      || reminderFrom(linkedNeg) || reminderFrom(linkedQuot) || reminderFrom(populatedLead) || reminderFrom(linkedLead) || null;
     orderEditForm.setFieldsValue({
       expectedDelivery: resolvedDelivery ? dayjs(resolvedDelivery) : null,
       advance: order.advance || 0,
       paymentTerms: order.paymentTerms,
-      paymentReminderDate: (order.paymentReminderDate || order.creditDueDate) ? dayjs(order.paymentReminderDate || order.creditDueDate) : null,
+      paymentReminderDate: resolvedReminder ? dayjs(resolvedReminder) : null,
       // Deliberately NOT pre-filled with order.paymentCollection — this Form.List is for
       // NEW entries only (mirrors the Lead/Quotation/Negotiation forms). Pre-filling it used to
       // round-trip existing entries through fields with no Form.Item binding for recordedAt/proof,
@@ -3945,26 +3959,31 @@ export default function Sales() {
     });
 
     // Per-kit order configs — keep any existing user edits (overallQty, kitPrice override),
-    // otherwise seed kitPrice with the computed sum of the kit's product prices.
+    // otherwise seed kitPrice with the computed sum of the kit's product prices. A Separate Kit
+    // is NOT seeded: its value is (kitPrice + products) × qty, so the products sum there counted
+    // the products twice — its Packing Material Price fills from the Display Unit Type instead.
     const newKitOrders = kitIds.map(kitId => {
       const kit = kits.find(k => k._id === kitId);
       const existing = existingKitOrders.find(o => o.kitId === kitId);
       const computedPrice = r2(kitPriceById[kitId] || 0);
       if (existing) {
+        const existingCat = existing.category || defaultKitCategory(productType);
         return {
           ...existing,
-          category: existing.category || defaultKitCategory(productType),
-          kitPrice: existing.kitPrice != null ? existing.kitPrice : computedPrice,
+          category: existingCat,
+          kitPrice: existing.kitPrice != null ? existing.kitPrice
+            : (existingCat === ORDER_CATEGORIES.SEPARATE_KIT ? undefined : computedPrice),
         };
       }
+      const newCat = defaultKitCategory(productType);
       return {
         kitId,
-        category: defaultKitCategory(productType),
+        category: newCat,
         displayUnit: kit?.displayUnit || '',
         size: kit?.size || '',
         overallQty: undefined,
         printing: undefined,
-        kitPrice: computedPrice,
+        kitPrice: newCat === ORDER_CATEGORIES.SEPARATE_KIT ? undefined : computedPrice,
       };
     });
 
@@ -4005,6 +4024,42 @@ export default function Sales() {
     const isSingleKit = selKitsNow.length <= 1;
     return r2(prods.filter(p => p && (p.isKit || p.kitType) && (p.kitId === kitId || (isSingleKit && !p.kitId && kitIndex === 0)))
       .reduce((s, p) => s + productLineSubtotal(p), 0));
+  };
+
+  // Packing-config selling price of the Display Unit Type currently picked for one kit card.
+  const kitDisplayUnitTypePrice = (kitIndex) => {
+    const ko = (leadForm.getFieldValue('kitOrders') || [])[kitIndex] || {};
+    const duCfg = configDisplayUnitOptions.find(c => c.value === ko.displayUnit);
+    const st = (duCfg?.subtypes || []).find(s => s.value === ko.displayUnitType);
+    return st?.sellingPrice != null ? st.sellingPrice : undefined;
+  };
+
+  // Kit Category flip: a Separate Kit drops the products-sum seed (its value already adds the
+  // products) and takes the Display Unit Type's selling price, or stays empty until one is
+  // picked. Back to Personalized, an empty price gets that seed again. Typed prices are kept.
+  const handleKitCategoryChange = (kitId, kitIndex, cat) => {
+    const path = ['kitOrders', kitIndex, 'kitPrice'];
+    const cur = leadForm.getFieldValue(path);
+    const isEmpty = cur == null || cur === '';
+    const prodSum = computeKitPriceForKit(kitId, kitIndex);
+    if (cat === ORDER_CATEGORIES.SEPARATE_KIT) {
+      if (!isEmpty && r2(cur) === prodSum) leadForm.setFieldValue(path, kitDisplayUnitTypePrice(kitIndex));
+    } else if (isEmpty) {
+      leadForm.setFieldValue(path, kitDisplayUnitTypePrice(kitIndex) ?? prodSum);
+    }
+  };
+
+  // Display Unit change clears the kit's Type; for a Separate Kit also drop a price that was
+  // auto-filled from the old Type so it never shows the previous packaging's price.
+  const handleKitDisplayUnitChange = (kitIndex) => {
+    const ko = (leadForm.getFieldValue('kitOrders') || [])[kitIndex] || {};
+    const oldType = ko.displayUnitType;
+    leadForm.setFieldValue(['kitOrders', kitIndex, 'displayUnitType'], undefined);
+    const cat = ko.category || defaultKitCategory(leadForm.getFieldValue('productType'));
+    if (cat !== ORDER_CATEGORIES.SEPARATE_KIT || !oldType || ko.kitPrice == null || ko.kitPrice === '') return;
+    const wasTypePrice = configDisplayUnitOptions.some(c => (c.subtypes || []).some(s =>
+      s.value === oldType && s.sellingPrice != null && r2(s.sellingPrice) === r2(ko.kitPrice)));
+    if (wasTypePrice) leadForm.setFieldValue(['kitOrders', kitIndex, 'kitPrice'], undefined);
   };
 
   // Seed the shared top-level kitPrice from the sum of all kit product subtotals — but ONLY
@@ -4424,7 +4479,7 @@ export default function Sales() {
         paidAmount: paidTotal,
         balance: total - paidTotal,
         date: o.createdAt?.slice(0, 10),
-        expectedDelivery: o.expectedDeliveryDate ? o.expectedDeliveryDate.slice(0, 10) : o.expectedDelivery,
+        expectedDelivery: o.expectedDeliveryDate ? toLocalYMD(o.expectedDeliveryDate) : o.expectedDelivery,
         advance,
         billType: o.billType || (o.type === 'GST' ? 'GST' : o.type === 'Non-GST' ? 'NON_GST' : o.type),
         products: normalizedProducts,
@@ -5039,7 +5094,9 @@ export default function Sales() {
     const toStr = (v) => (v && v.format ? v.format('YYYY-MM-DD') : v);
     const fieldsBySection = LEAD_SECTION_FIELDS;
     try {
-      await leadForm.validateFields(fieldsBySection[section]);
+      // The Order Details card's rules (product / qty / rate minimums, kit price floor) sit under
+      // products[i] / kitOrders[i] — check them too, as Update Record does.
+      await leadForm.validateFields(fieldsBySection[section], section === 'products' ? { recursive: true } : undefined);
     } catch (validationErr) {
       if (validationErr?.errorFields?.length) {
         enqueueSnackbar(`Please fix invalid fields: ${validationErr.errorFields.map(f => f.name?.join?.(' → ') || f.name).slice(0, 3).join(', ')}`, { variant: 'warning' });
@@ -5175,10 +5232,11 @@ export default function Sales() {
   // Cancel on a lead detail card: put that card's fields back to the saved record. The
   // "Products adding" and "Order Details — Products" cards share products/kitOrders/selectedKits/
   // productType in one form store, so a cancelled change in one card otherwise showed up in —
-  // and got saved by — the other. Skipped in the full Edit Lead form, where the always-open
-  // products card holds unsaved edits that must survive a card cancel.
+  // and got saved by — the other. Skipped for the other cards in the full Edit Lead form, which keep
+  // their edits on Cancel. The Order Details card there opens read-only like on the Lead page, so its
+  // Cancel must undo too — a cancelled change otherwise stayed hidden and Update Record saved it.
   const cancelSectionEdit = (section) => {
-    if (!editingLead && selectedRecord && LEAD_SECTION_FIELDS[section]) {
+    if ((!editingLead || section === 'products') && selectedRecord && LEAD_SECTION_FIELDS[section]) {
       const saved = prepareFormValues(selectedRecord);
       leadForm.setFields(LEAD_SECTION_FIELDS[section].map((f) => ({ name: f, value: saved[f] })));
     }
@@ -5586,6 +5644,12 @@ export default function Sales() {
           transportationBy: values.transportationBy || src.transportationBy,
           transportName: values.transportName || src.transportName,
           paymentTerms: values.paymentTerms || src.paymentTerms,
+          // Credit Due Date / Payment Reminder Date entered with the payment terms — not carried
+          // before, so a quotation → order conversion left the order's date blank. The lead's
+          // date is only reused under the same terms.
+          paymentReminderDate: toLocalYMD(values.paymentReminderDate)
+            || ((values.paymentTerms || src.paymentTerms) === src.paymentTerms ? (src.paymentReminderDate || src.creditDueDate) : undefined)
+            || undefined,
           // Kit fields carried from the form (user's edits) with fallback to the lead
           productType: pickKitField('productType'),
           selectedKit: pickKitField('selectedKit'),
@@ -5903,7 +5967,14 @@ export default function Sales() {
       type: q.billType === 'GST' ? 'GST' : 'Non-GST',
       billType: q.billType,
       paymentTerms: q.paymentTerms,
-      paymentReminderDate: q.paymentReminderDate || q.creditDueDate || undefined,
+      // Quotations created before they carried the reminder / credit due date fall back to the
+      // originating lead's (populated leadId, or leadsData) — same payment terms only.
+      paymentReminderDate: q.paymentReminderDate || q.creditDueDate
+        || [q.leadId, qLead]
+          .filter(l => l && typeof l === 'object' && (!l.paymentTerms || !q.paymentTerms || l.paymentTerms === q.paymentTerms))
+          .map(l => l.paymentReminderDate || l.creditDueDate)
+          .find(Boolean)
+        || undefined,
       status,
       items: (q.products || []).map(p => mapOrderItem(p, q.kitDisplayUnit || q.displayUnit || '')),
       products: q.products || [],
@@ -5963,7 +6034,7 @@ export default function Sales() {
       transportationBy: q.transportationBy,
       transportName: q.transportName || qLead?.transportName,
       // Carry the tentative delivery date through so the order detail can show it
-      expectedDeliveryDate: q.orderDeliveryDate || q.expectedDeliveryDate || undefined,
+      expectedDeliveryDate: q.orderDeliveryDate || q.expectedDeliveryDate || qLead?.orderDeliveryDate || q.leadId?.orderDeliveryDate || undefined,
       orderCategory: qLead?.leadType === 'SAMPLE' ? 'SAMPLE' : (q.orderCategory || 'ORDER'),
       // Emergency / partial delivery data from the originating lead
       splitDates,
@@ -6958,7 +7029,7 @@ export default function Sales() {
         const color = payStatus === 'Paid' ? 'success' : payStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
-            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{payStatus}</Tag>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{creditPayLabel(payStatus, isCreditTerms(r.paymentTerms, linkedOrder?.paymentTerms))}</Tag>
             {paidAmt > 0 && (
               <Text type="secondary" style={{ fontSize: 11 }}>₹{paidAmt.toLocaleString()} / ₹{(totalAmt || 0).toLocaleString()}</Text>
             )}
@@ -7078,7 +7149,7 @@ export default function Sales() {
         const color = effectiveStatus === 'Paid' ? 'success' : effectiveStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
-            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{effectiveStatus}</Tag>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{creditPayLabel(effectiveStatus, isCreditTerms(r.paymentTerms, linkedOrder?.paymentTerms))}</Tag>
             {effectivePaid > 0 && (
               <Text type="secondary" style={{ fontSize: 11 }}>₹{effectivePaid.toLocaleString()} / ₹{effectiveTotal.toLocaleString()}</Text>
             )}
@@ -7163,7 +7234,7 @@ export default function Sales() {
         const color = effectiveStatus === 'Paid' ? 'success' : effectiveStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
-            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{effectiveStatus}</Tag>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{creditPayLabel(effectiveStatus, isCreditTerms(r.paymentTerms, linkedOrder?.paymentTerms))}</Tag>
             {effectivePaid > 0 && (
               <Text type="secondary" style={{ fontSize: 11 }}>
                 ₹{effectivePaid.toLocaleString()} / ₹{effectiveTotal.toLocaleString()}
@@ -7326,7 +7397,7 @@ export default function Sales() {
         const color = effectiveStatus === 'Paid' ? 'success' : effectiveStatus === 'Partially Paid' ? 'warning' : 'error';
         return (
           <Space direction="vertical" size={2}>
-            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{effectiveStatus}</Tag>
+            <Tag color={color} style={{ borderRadius: 20, fontSize: 12, fontWeight: 600, margin: 0 }}>{creditPayLabel(effectiveStatus, isCreditTerms(r.paymentTerms))}</Tag>
             {effectivePaid > 0 && (
               <Text type="secondary" style={{ fontSize: 11 }}>₹{effectivePaid.toLocaleString()} / ₹{effectiveTotal.toLocaleString()}</Text>
             )}
@@ -7877,8 +7948,16 @@ export default function Sales() {
       );
     };
 
-    const DetailDeliveryPayment = ({ rec, grandTotal, showPaymentSummary = true }) => {
+    const DetailDeliveryPayment = ({ rec, grandTotal, showPaymentSummary = true, showCreditDueDate = false }) => {
       const isSample = rec.orderCategory === 'SAMPLE' || rec.leadType === 'SAMPLE';
+      // Credit Due Date (Order card only): the record's own date, else the populated lead's under the
+      // same payment terms — same resolution as the Edit Order form.
+      const creditLead = (rec.leadId && typeof rec.leadId === 'object') ? rec.leadId : null;
+      const creditDueDate = showCreditDueDate && rec.paymentTerms === 'CREDIT_10_30'
+        ? (rec.paymentReminderDate || rec.creditDueDate
+          || ((creditLead && (!creditLead.paymentTerms || creditLead.paymentTerms === rec.paymentTerms))
+            ? (creditLead.paymentReminderDate || creditLead.creditDueDate) : null))
+        : null;
       const recTotal = r2(Number(grandTotal) || computeCompositionGrandTotal(rec, kits) || computeRecordGrandTotal(rec)) || Number(rec.totalAmount) || 0;
       const recCollected = (rec.paymentCollection || []).reduce((s, e) => s + Number(e.paidAmount || 0), 0);
       const recPaid = Math.max(recCollected, Number(rec.paidAmount) || Number(rec.advancePaid) || 0);
@@ -7914,6 +7993,12 @@ export default function Sales() {
                   <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
                     <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>BALANCE DUE DATE</Text>
                     <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{rec.paymentReminderDate ? (rec.paymentReminderDate.format ? rec.paymentReminderDate.format('DD MMM YYYY') : dayjs(rec.paymentReminderDate).format('DD MMM YYYY')) : '—'}</Text>
+                  </div>
+                )}
+                {creditDueDate && dayjs(creditDueDate).isValid() && (
+                  <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(177,30,106,0.08)', borderRadius: 8 }}>
+                    <Text type="secondary" style={{ fontSize: 11, display: 'block' }}>CREDIT DUE DATE</Text>
+                    <Text strong style={{ color: '#B11E6A', fontSize: 13 }}>{dayjs(creditDueDate).format('DD MMM YYYY')}</Text>
                   </div>
                 )}
               </div>
@@ -9128,9 +9213,9 @@ export default function Sales() {
         // Expected delivery: prefer the order's own date, else fall back to the tentative
         // delivery date carried from the originating quotation/lead.
         expectedDelivery: base.expectedDelivery
-          || (full.expectedDeliveryDate ? String(full.expectedDeliveryDate).slice(0, 10) : null)
-          || (full.orderDeliveryDate ? String(full.orderDeliveryDate).slice(0, 10) : null)
-          || (lead.orderDeliveryDate ? String(lead.orderDeliveryDate).slice(0, 10) : null),
+          || toLocalYMD(full.expectedDeliveryDate)
+          || toLocalYMD(full.orderDeliveryDate)
+          || toLocalYMD(lead.orderDeliveryDate),
         // Readable linked codes from populated references
         leadCode: full.leadId?.leadCode || base.leadCode,
         leadName: full.leadId?.hotelName || base.leadName || base.hotelName,
@@ -9296,8 +9381,8 @@ export default function Sales() {
       const toCollect = Math.max(0, oTotal - totalCollected);
       // Final tentative-delivery fallbacks once the linked records are resolved
       const detailExpectedDelivery = o.expectedDelivery
-        || (linkedNegForDetail?.orderDeliveryDate ? String(linkedNegForDetail.orderDeliveryDate).slice(0, 10) : null)
-        || (linkedQuotForDetail?.orderDeliveryDate ? String(linkedQuotForDetail.orderDeliveryDate).slice(0, 10) : null)
+        || toLocalYMD(linkedNegForDetail?.orderDeliveryDate)
+        || toLocalYMD(linkedQuotForDetail?.orderDeliveryDate)
         || null;
       return (
         <>
@@ -9975,7 +10060,7 @@ export default function Sales() {
               {/* Delivery & Payment */}
               <Card style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                 title={<Space><div style={{ width: 4, height: 20, background: '#fa8c16', borderRadius: 2, display: 'inline-block' }} /><CarOutlined style={{ color: '#fa8c16' }} /><span>{o.orderCategory !== 'SAMPLE' ? 'Delivery & Payment' : 'Delivery Details'}</span></Space>}>
-                <DetailDeliveryPayment rec={o} showPaymentSummary={false} />
+                <DetailDeliveryPayment rec={o} showPaymentSummary={false} showCreditDueDate />
               </Card>
 
               {/* Payment summary — matches Lead detail layout (CategoryTotalsBreakdown + collected + balance) */}
@@ -11165,7 +11250,7 @@ export default function Sales() {
                         <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, marginTop: 12 }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                             <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
-                            <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
+                            <Text strong style={{ color, fontSize: 13 }}>{creditPayLabel(status, isCreditTerms(getFieldValue('paymentTerms')))}</Text>
                           </div>
                           <div style={{ marginTop: 8 }}><CategoryTotalsBreakdown rec={editRec} isDark={isDark} kitsData={kits} /></div>
                           {effectivePaid > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 4 }}><Text type="secondary" style={{ fontSize: 12 }}>Collected</Text><Text strong style={{ fontSize: 13, color: '#52c41a' }}>₹{effectivePaid.toLocaleString()}</Text></div>}
@@ -11654,7 +11739,7 @@ export default function Sales() {
                       <div style={{ padding: '10px 14px', background: bg, borderRadius: 8, border: `1px solid ${color}44`, marginTop: 12 }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Text type="secondary" style={{ fontSize: 12 }}>Payment Status</Text>
-                          <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
+                          <Text strong style={{ color, fontSize: 13 }}>{creditPayLabel(status, isCreditTerms(getFieldValue('paymentTerms')))}</Text>
                         </div>
                         <div style={{ marginTop: 8 }}>
                           <CategoryTotalsBreakdown rec={editRec2} isDark={isDark} kitsData={kits} />
@@ -12630,7 +12715,7 @@ export default function Sales() {
                                 ₹{collTotal.toLocaleString()} / ₹{orderTotal.toLocaleString()}
                               </Text>
                             )}
-                            <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
+                            <Text strong style={{ color, fontSize: 13 }}>{creditPayLabel(status, isCreditTerms(getFieldValue('paymentTerms')))}</Text>
                           </Space>
                         </div>
                       );
@@ -12660,6 +12745,9 @@ export default function Sales() {
     const record = selectedRecord ? { ...selectedRecord, products: normalizeProducts(selectedRecord.products || []) } : {};
     // Show per-card edit buttons in both detail view AND when editing an existing record
     const usePerCardEdit = isDetail || !!editingLead;
+    // The Lead view (detail) is read-only: its per-card Edit buttons are hidden. Editing goes through
+    // the top Edit button / the list's edit icon, which open Edit Lead where the card buttons remain.
+    const showCardEditBtns = !isDetail;
     // Once an Old Hotel/Hospital match has been auto-filled, a Sales Executive can no longer
     // hand-edit those looked-up fields (name/type/branch/logo stay editable so they can still
     // search a different existing record) — only Admin/other roles may override them.
@@ -12964,7 +13052,7 @@ export default function Sales() {
                     <span>Hotel / Company Information</span>
                   </Space>
                 }
-                extra={usePerCardEdit && !lockCoreLeadFields && (
+                extra={usePerCardEdit && showCardEditBtns && !lockCoreLeadFields && (
                   editingSection === 'hotel' ? (
                     <Space size="small">
                       <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('hotel')} style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -13251,7 +13339,7 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#52c41a', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#52c41a' }} /><span>Billing & Address</span></Space>}
-                    extra={usePerCardEdit && !lockCoreLeadFields && (
+                    extra={usePerCardEdit && showCardEditBtns && !lockCoreLeadFields && (
                       editingSection === 'billing' ? (
                         <Space size="small">
                           <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('billing')} style={{ background: '#52c41a', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -13424,7 +13512,7 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#1677ff', borderRadius: 2, display: 'inline-block' }} /><EnvironmentOutlined style={{ color: '#1677ff' }} /><span>Shipping Address</span></Space>}
-                    extra={usePerCardEdit && !lockCoreLeadFields && (
+                    extra={usePerCardEdit && showCardEditBtns && !lockCoreLeadFields && (
                       editingSection === 'shipping' ? (
                         <Space size="small">
                           <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('shipping')} style={{ background: '#1677ff', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -13477,7 +13565,7 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#B11E6A', borderRadius: 2, display: 'inline-block' }} /><StarOutlined style={{ color: '#B11E6A' }} /><span>{isAddCustomer ? 'Customer Settings' : 'Lead Status'}</span></Space>}
-                    extra={usePerCardEdit && (
+                    extra={usePerCardEdit && showCardEditBtns && (
                       editingSection === 'leadStatus' ? (
                         <Space size="small">
                           <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('leadStatus')} style={{ background: '#B11E6A', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -13595,7 +13683,7 @@ export default function Sales() {
                   <Card
                     style={{ borderRadius: 14, height: '100%', border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
                     title={<Space><div style={{ width: 4, height: 20, background: '#722ed1', borderRadius: 2, display: 'inline-block' }} /><CalendarOutlined style={{ color: '#722ed1' }} /><span>Lead Journey</span></Space>}
-                    extra={usePerCardEdit && (
+                    extra={usePerCardEdit && showCardEditBtns && (
                       editingSection === 'leadJourney' ? (
                         <Space size="small">
                           <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('leadJourney')} style={{ background: '#722ed1', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -13710,7 +13798,7 @@ export default function Sales() {
                       <span>Products adding</span>
                     </Space>
                   }
-                  extra={usePerCardEdit && (
+                  extra={usePerCardEdit && showCardEditBtns && (
                     editingSection === 'personalization' ? (
                       <Space size="small">
                         <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('personalization', { paymentStatus: leadLiveStatus })} style={{ background: '#722ed1', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -13890,13 +13978,15 @@ export default function Sales() {
                                         { value: ORDER_CATEGORIES.PERSONALIZED, label: 'Personalized' },
                                         { value: ORDER_CATEGORIES.SEPARATE_KIT, label: 'Separate Kit' },
                                       ]}
+                                      onChange={(cat) => handleKitCategoryChange(kitId, kIdx, cat)}
                                     />
                                   </Form.Item>
                                 </Col>
                                 <Col xs={12} sm={8}>
                                   <Form.Item label="Display Unit" name={['kitOrders', kIdx, 'displayUnit']} style={{ marginBottom: 0 }}
                                     tooltip="This kit's own packaging — drives which Operations design tab (Box / Ziplock / Butter Paper) it routes to.">
-                                    <Select allowClear showSearch optionFilterProp="label" placeholder="Display unit" options={configDisplayUnitOptions} />
+                                    <Select allowClear showSearch optionFilterProp="label" placeholder="Display unit" options={configDisplayUnitOptions}
+                                      onChange={() => handleKitDisplayUnitChange(kIdx)} />
                                   </Form.Item>
                                 </Col>
                               </Row>
@@ -14211,7 +14301,7 @@ export default function Sales() {
 
               {/* ── Order Details Products ────────────────────────────── */}
               {showProductsCard && (() => {
-                const latestCustomerOrder = (isDetail && record.customerId)
+                const latestCustomerOrder = (usePerCardEdit && record.customerId)
                   ? ordersData.filter(o => o.hotelName === record.hotelName).slice(-1)[0]
                   : null;
 
@@ -14221,38 +14311,43 @@ export default function Sales() {
                 const hasKit = ptHasKitUI(effectiveProductType);
                 const hasSeparate = ptHasSeparateUI(effectiveProductType);
 
-                if (isDetail) {
+                const productsCardTitle = (
+                  <Space>
+                    <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
+                    <ShoppingCartOutlined style={{ color: '#1890ff' }} />
+                    {(record.customerId) ? (
+                      <>
+                        <span>Latest Order Details</span>
+                        {latestCustomerOrder && (
+                          <Tag style={{ background: '#1890ff18', color: '#1890ff', border: '1px solid #1890ff44', borderRadius: 20, fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
+                            {latestCustomerOrder.oid}
+                          </Tag>
+                        )}
+                      </>
+                    ) : (
+                      <span>Order Details — Products</span>
+                    )}
+                  </Space>
+                );
+                const productsCardExtra = showCardEditBtns && (
+                  editingSection === 'products' ? (
+                    <Space size="small">
+                      <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('products', { paymentStatus: leadLiveStatus })} style={{ background: '#1890ff', border: 'none', borderRadius: 6 }}>Save</Button>
+                      <Button size="small" onClick={() => cancelSectionEdit('products')} style={{ borderRadius: 6 }}>Cancel</Button>
+                    </Space>
+                  ) : (
+                    <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('products'); }} style={{ borderRadius: 6 }}>Edit</Button>
+                  )
+                );
+
+                // Edit Lead shows the same read-only card as the Lead view (plus its Edit button, like
+                // the other cards) until that Edit is clicked; the edit cards below then open in it.
+                if (isDetail || (usePerCardEdit && editingSection !== 'products')) {
                   return (
                     <Card
                       style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
-                      title={
-                        <Space>
-                          <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
-                          <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                          {(record.customerId) ? (
-                            <>
-                              <span>Latest Order Details</span>
-                              {latestCustomerOrder && (
-                                <Tag style={{ background: '#1890ff18', color: '#1890ff', border: '1px solid #1890ff44', borderRadius: 20, fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>
-                                  {latestCustomerOrder.oid}
-                                </Tag>
-                              )}
-                            </>
-                          ) : (
-                            <span>Order Details — Products</span>
-                          )}
-                        </Space>
-                      }
-                      extra={
-                        editingSection === 'products' ? (
-                          <Space size="small">
-                            <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('products', { paymentStatus: leadLiveStatus })} style={{ background: '#1890ff', border: 'none', borderRadius: 6 }}>Save</Button>
-                            <Button size="small" onClick={() => cancelSectionEdit('products')} style={{ borderRadius: 6 }}>Cancel</Button>
-                          </Space>
-                        ) : (
-                          <Button size="small" icon={<EditOutlined />} onClick={() => { if (!requireAccess('edit')) return; setEditingSection('products'); }} style={{ borderRadius: 6 }}>Edit</Button>
-                        )
-                      }
+                      title={productsCardTitle}
+                      extra={productsCardExtra}
                     >
                       {editingSection === 'products' ? (
                         <>
@@ -14303,6 +14398,7 @@ export default function Sales() {
                                           { value: ORDER_CATEGORIES.PERSONALIZED, label: 'Personalized' },
                                           { value: ORDER_CATEGORIES.SEPARATE_KIT, label: 'Separate Kit' },
                                         ]}
+                                        onChange={(cat) => handleKitCategoryChange(kitId, kitIndex, cat)}
                                       />
                                     </Form.Item>
                                   </div>
@@ -14313,7 +14409,7 @@ export default function Sales() {
                                         <Select
                                           allowClear showSearch optionFilterProp="label" placeholder="Display unit"
                                           options={configDisplayUnitOptions}
-                                          onChange={() => leadForm.setFieldValue(['kitOrders', kitIndex, 'displayUnitType'], undefined)}
+                                          onChange={() => handleKitDisplayUnitChange(kitIndex)}
                                         />
                                       </Form.Item>
                                     </Col>
@@ -14824,14 +14920,27 @@ export default function Sales() {
                 // Per-kit fields (kitOrders[i].displayUnit/size/overallQty) and the shared
                 // fallback fields (kitDisplayUnit/kitSize) all live OUTSIDE Form.List "products"
                 // so they bind to top-level form paths, not products.* paths.
-                const effectiveKitIds = watchedSelectedKits.length > 0
+                // In Edit Lead the "Products adding" card stays read-only until its own Edit is
+                // clicked, so its selectedKits / productType / kitOrders[i].category inputs aren't
+                // mounted and Form.useWatch returns nothing for them — every Order Details card
+                // below then disappeared. Read them from the form store instead: it is loaded from
+                // the lead on open and is exactly what those inputs hold once mounted.
+                const formSelectedKits = watchedSelectedKits.length > 0
                   ? watchedSelectedKits
+                  : (leadForm.getFieldValue('selectedKits') || []);
+                const formProductType = watchedProductType ?? leadForm.getFieldValue('productType') ?? record.productType;
+                const formHasSeparate = ptHasSeparateUI(formProductType);
+                const effectiveKitIds = formSelectedKits.length > 0
+                  ? formSelectedKits
                   : (watchedSingleKit ? [watchedSingleKit] : []);
                 const hasAnyKit = hasKit || effectiveKitIds.length > 0;
                 // Per-kit cards render once kits are selected; hide the fallback until then.
                 const showFallbackKitCard = false;
-                const showSeparateCard = hasSeparate;
-                return (
+                // A saved lead can hold separate (non-kit) products without "Separate Product" in its
+                // Product Selection — keep their card on screen in Edit Lead so they stay visible.
+                const recordHasSeparateRows = !!editingLead && (record.products || []).some(p => p && !(p.isKit || p.kitType));
+                const showSeparateCard = formHasSeparate || recordHasSeparateRows;
+                const editCards = (
                   <>
                     {/* One Order Details card per selected kit */}
                     {effectiveKitIds.map((kitId, kitIndex) => {
@@ -14839,7 +14948,9 @@ export default function Sales() {
                       const kitCardName = kit?.kitName || 'Personalized Kit';
                       // A Separate Kit is bought as-is → hide the customization specs (display unit,
                       // size, sticker, logo, printing). Personalized kits show them all.
-                      const koCat = watchedKitOrders[kitIndex]?.category || defaultKitCategory(watchedProductType);
+                      const koCat = watchedKitOrders[kitIndex]?.category
+                        || leadForm.getFieldValue(['kitOrders', kitIndex, 'category'])
+                        || defaultKitCategory(formProductType);
                       const showKitCustom = koCat === ORDER_CATEGORIES.PERSONALIZED;
                       return (
                         <Card
@@ -14862,7 +14973,7 @@ export default function Sales() {
                                 <Select
                                   allowClear showSearch optionFilterProp="label" placeholder="Select display unit"
                                   options={configDisplayUnitOptions}
-                                  onChange={() => leadForm.setFieldValue(['kitOrders', kitIndex, 'displayUnitType'], undefined)}
+                                  onChange={() => handleKitDisplayUnitChange(kitIndex)}
                                 />
                               </Form.Item>
                             </Col>
@@ -14969,7 +15080,7 @@ export default function Sales() {
                                         <InputNumber
                                           min={minPrice || 0}
                                           style={{ width: '100%' }}
-                                          placeholder={st?.sellingPrice > 0 ? `Selling: ₹${formatRate(st.sellingPrice)}` : 'Auto-summed — editable'}
+                                          placeholder={st?.sellingPrice > 0 ? `Selling: ₹${formatRate(st.sellingPrice)}` : (koCat === ORDER_CATEGORIES.SEPARATE_KIT ? 'Select Display Unit & Type' : 'Auto-summed — editable')}
                                           formatter={(v) => v != null && v !== '' ? `₹ ${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : ''}
                                           parser={(v) => (v || '').replace(/[₹,\s]/g, '')}
                                         />
@@ -14995,6 +15106,8 @@ export default function Sales() {
                             </Col>
                             <Col xs={24} sm={10}>
                               {(() => {
+                                // Separate Kit: no Total Kit Value card (display only — totals unchanged).
+                                if (koCat === ORDER_CATEGORIES.SEPARATE_KIT) return null;
                                 const ko = watchedKitOrders[kitIndex] || {};
                                 const single = Number(ko.kitPrice) || 0;
                                 const qty = Number(ko.overallQty) || 1;
@@ -15217,7 +15330,7 @@ export default function Sales() {
                           <Space>
                             <div style={{ width: 4, height: 20, background: '#1890ff', borderRadius: 2, display: 'inline-block' }} />
                             <ShoppingCartOutlined style={{ color: '#1890ff' }} />
-                            <span>{hasSeparate ? 'Separate Product — Order Details' : 'Order Details — Products'}</span>
+                            <span>{formHasSeparate ? 'Separate Product — Order Details' : 'Order Details — Products'}</span>
                           </Space>
                         }
                       >
@@ -15260,6 +15373,18 @@ export default function Sales() {
                       </Card>
                     )}
                   </>
+                );
+                // Edit Lead: opened from the Order Details card's Edit, so the cards sit inside that
+                // card, which carries the Save / Cancel. A new lead keeps them as plain cards.
+                if (!usePerCardEdit) return editCards;
+                return (
+                  <Card
+                    style={{ borderRadius: 14, marginBottom: 16, border: 'none', boxShadow: '0 2px 12px rgba(0,0,0,0.06)', background: cardBg }}
+                    title={productsCardTitle}
+                    extra={productsCardExtra}
+                  >
+                    {editCards}
+                  </Card>
                 );
               })()}
 
@@ -15409,7 +15534,7 @@ export default function Sales() {
                       <span>{(record.leadType || watchedLeadType) === 'SAMPLE' ? 'Delivery Details' : 'Delivery & Payment Details'}</span>
                     </Space>
                   }
-                  extra={usePerCardEdit && (
+                  extra={usePerCardEdit && showCardEditBtns && (
                     editingSection === 'delivery' ? (
                       <Space size="small">
                         <Button size="small" type="primary" icon={<SaveOutlined />} onClick={() => saveSectionEdit('delivery')} style={{ background: '#fa8c16', border: 'none', borderRadius: 6 }}>Save</Button>
@@ -15462,7 +15587,7 @@ export default function Sales() {
                             return (
                               <div style={{ marginTop: 8, padding: '6px 10px', background: psBg, borderRadius: 8, border: `1px solid ${psBorder}`, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                                 <Text type="secondary" style={{ fontSize: 11 }}>PAYMENT STATUS:</Text>
-                                <Text strong style={{ color: psColor, fontSize: 12 }}>{ps}</Text>
+                                <Text strong style={{ color: psColor, fontSize: 12 }}>{creditPayLabel(ps, isCreditTerms(record.paymentTerms))}</Text>
                               </div>
                             );
                           })()}
@@ -15706,7 +15831,7 @@ export default function Sales() {
                   </Divider>
                   {watchedLeadPaymentTerms === 'CREDIT_10_30' && (
                     <div style={{ padding: '8px 12px', background: 'rgba(24,144,255,0.06)', borderRadius: 8, border: '1px solid rgba(24,144,255,0.2)', marginBottom: 10 }}>
-                      <Text style={{ fontSize: 12, color: '#1890ff' }}>Credit terms selected — no advance required. You can still record any upfront payment below.</Text>
+                      <Text style={{ fontSize: 12, color: '#1890ff' }}>Credit terms selected — no advance required, and the order can be sent to Dispatch without waiting for payment or Emergency Dispatch approval. Payment status shows as "Unpaid (Credit Payment)" until collected. You can still record any upfront payment below.</Text>
                     </div>
                   )}
 
@@ -15942,7 +16067,7 @@ export default function Sales() {
                           {balance > 0 && recordTotal > 0 && (
                             <Text style={{ fontSize: 12, color: '#fa8c16', fontWeight: 600 }}>₹{balance.toLocaleString()} due</Text>
                           )}
-                          <Text strong style={{ color, fontSize: 13 }}>{status}</Text>
+                          <Text strong style={{ color, fontSize: 13 }}>{creditPayLabel(status, isCreditTerms(watchedLeadPaymentTerms))}</Text>
                         </Space>
                       </div>
                     );
@@ -17163,7 +17288,7 @@ export default function Sales() {
                 <Descriptions.Item label="Order ID"><span style={{ color: '#B11E6A', fontWeight: 700 }}>{liveOrder.oid}</span></Descriptions.Item>
                 <Descriptions.Item label="Client">{liveOrder.hotelName}</Descriptions.Item>
                 <Descriptions.Item label="Total Amount">₹{(liveOrder.totalAmount || 0).toLocaleString()}</Descriptions.Item>
-                <Descriptions.Item label="Payment Status"><Tag color="error">{liveOrder.paymentStatus || 'Unpaid'}</Tag></Descriptions.Item>
+                <Descriptions.Item label="Payment Status"><Tag color="error">{creditPayLabel(liveOrder.paymentStatus || 'Unpaid', isCreditTerms(liveOrder.paymentTerms))}</Tag></Descriptions.Item>
                 <Descriptions.Item label="Sales Person" span={2}>{liveOrder.salesPerson || '—'}</Descriptions.Item>
               </Descriptions>
               {pending.length === 0 ? (

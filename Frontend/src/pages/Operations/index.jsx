@@ -57,6 +57,7 @@ import { useSelector } from 'react-redux';
 import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import LogoThumb from '../../components/common/LogoThumb';
 import DesignApprovalReport from '../../components/reports/DesignApprovalReport';
+import { isCreditTerms, creditPayLabel } from '../../utils/creditPayment';
 import {
   useGetOperationOrdersQuery,
   useGetStickerRequestsQuery,
@@ -916,7 +917,7 @@ export default function Operations() {
       dataIndex: 'paymentStatus',
       render: (value, record) => record.orderCategory === 'SAMPLE'
         ? <Text type="secondary">—</Text>
-        : <Tag color={paymentStatusColor[value] || 'default'}>{value || 'Pending'}</Tag>,
+        : <Tag color={paymentStatusColor[value] || 'default'}>{creditPayLabel(value || 'Pending', isCreditTerms(record.paymentTerms))}</Tag>,
       responsive: ['md'],
     },
     {

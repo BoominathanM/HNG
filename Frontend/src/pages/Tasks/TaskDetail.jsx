@@ -13,6 +13,7 @@ import PageBreadcrumb from '../../components/common/PageBreadcrumb';
 import LogoThumb from '../../components/common/LogoThumb';
 import { secToHuman, ratingFromDurations, ratingColor, ratingLabel } from '../../utils/taskTime';
 import { buildActiveTaskMap, findStartBlocker, startBlockerMessage, taskAssigneeIds } from '../../utils/activeTaskLock';
+import { isCreditTerms, creditPayLabel } from '../../utils/creditPayment';
 import {
   useGetTaskQuery,
   useGetTasksQuery,
@@ -68,6 +69,8 @@ export default function TaskDetail() {
 
   const orderId = t?.orderId?._id?.toString() || (typeof t?.orderId === 'string' ? t.orderId : null);
   const isSample = t?.orderId?.orderCategory === 'SAMPLE' || t?.orderId?.leadId?.leadType === 'SAMPLE';
+  // Credit payment terms — dispatch doesn't wait for payment (see backend dispatchOrder).
+  const isCredit = isCreditTerms(t?.orderId?.paymentTerms, t?.orderId?.leadId?.paymentTerms);
   const displayStatus = t?.status === 'Done' ? 'Completed' : t?.status;
 
   const siblingTasks = useMemo(() => {
@@ -238,7 +241,7 @@ export default function TaskDetail() {
                 </Button>
               </Tooltip>
             )}
-            {(t.status === 'Pending' || t.status === 'In Progress' || t.status === 'Paused' || (t.status === 'Done' && t.paymentStatus !== 'Paid')) && !isSample && !t.switchedOut && (
+            {(t.status === 'Pending' || t.status === 'In Progress' || t.status === 'Paused' || (t.status === 'Done' && t.paymentStatus !== 'Paid' && !isCredit)) && !isSample && !t.switchedOut && (
               <Button danger icon={<ExclamationCircleOutlined />}
                 onClick={() => { setEmergencyReason(''); setEmergencyScope('task'); setEmergencyModalOpen(true); }}>
                 {t.emergencyRequested ? 'View Emergency Status' : 'Emergency Dispatch'}
@@ -539,7 +542,7 @@ export default function TaskDetail() {
                 )}
                 <Descriptions.Item label="Payment">
                   {t.paymentStatus
-                    ? <Tag color={paymentColor[t.paymentStatus]}>{t.paymentStatus}</Tag>
+                    ? <Tag color={paymentColor[t.paymentStatus]}>{creditPayLabel(t.paymentStatus, isCredit)}</Tag>
                     : 'N/A'}
                 </Descriptions.Item>
               </Descriptions>
@@ -632,10 +635,17 @@ export default function TaskDetail() {
                 style={{ borderRadius: 8 }}
               />
             )}
-            {displayStatus === 'Completed' && !isSample && !t.switchedOut && t.paymentStatus && t.paymentStatus !== 'Paid' && (
+            {displayStatus === 'Completed' && !isSample && !isCredit && !t.switchedOut && t.paymentStatus && t.paymentStatus !== 'Paid' && (
               <Alert type="error" showIcon icon={<ExclamationCircleOutlined />}
                 message="Dispatch Blocked — Payment Pending"
                 description={`Payment status: "${t.paymentStatus}". Dispatch requires full payment or Emergency Dispatch approval.`}
+                style={{ borderRadius: 8 }}
+              />
+            )}
+            {displayStatus === 'Completed' && !isSample && isCredit && !t.switchedOut && t.paymentStatus && t.paymentStatus !== 'Paid' && (
+              <Alert type="info" showIcon
+                message="Credit Payment — Dispatch Allowed"
+                description={`Payment status: "${creditPayLabel(t.paymentStatus, true)}". Credit terms — dispatch doesn't wait for payment or Emergency Dispatch approval. Collect payment by the credit due date.`}
                 style={{ borderRadius: 8 }}
               />
             )}
@@ -727,7 +737,7 @@ export default function TaskDetail() {
             <Descriptions.Item label="Order">{t.orderId?.orderCode || '—'}</Descriptions.Item>
             <Descriptions.Item label="Client">{t.orderId?.clientName || t.clientName || '—'}</Descriptions.Item>
             <Descriptions.Item label="Product">{t.product || '—'}</Descriptions.Item>
-            <Descriptions.Item label="Payment Status"><Tag color="warning">{t.paymentStatus || 'Pending'}</Tag></Descriptions.Item>
+            <Descriptions.Item label="Payment Status"><Tag color="warning">{creditPayLabel(t.paymentStatus || 'Pending', isCredit)}</Tag></Descriptions.Item>
             <Descriptions.Item label="Task Status"><Tag color="processing">{displayStatus}</Tag></Descriptions.Item>
           </Descriptions>
 

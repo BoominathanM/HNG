@@ -813,6 +813,108 @@ export default function Purchase() {
     }
   };
 
+  /* ── Received Order — extra invoice lines that are really an ordered product ── */
+  // An "extra" invoice line (on the invoice but not name-matched to any PO line, e.g. printed as
+  // "Amul Creamer 3gm 120's Pack" for the ordered "Amul milk powder") can be given an Item Code
+  // that is the very Inventory item one of this PO's lines ordered. That line then IS the ordered
+  // product's delivery: it counts toward that PO line's invoice/received qty (instead of leaving
+  // the line short and the goods as a separate extra), and on confirm it's folded into that line
+  // rather than posted as an extra. Returns the PO row key it resolves to, or null.
+  const extraPoTargetKey = (e, code, included, products = invoiceProducts) => {
+    if (!included || !code) return null;
+    const itemId = code === e.matchedItemCode && e.matchedItemId
+      ? e.matchedItemId
+      : inventoryItems.find((i) => i.code === code)?.key;
+    if (!itemId) return null;
+    const target = products.find((p) => p.itemId && String(p.itemId) === String(itemId));
+    return target ? target.key : null;
+  };
+
+  // The scan scopes Amount/GST/Total to this PO's own lines when the invoice also lists extra
+  // products (scopedToOrder). Linking an extra line to an ordered product moves its amount into
+  // that scope (sign 1); unlinking takes it back out (sign -1) — same per-line math as the scan.
+  const shiftScopedInvoiceFigures = (details, e, sign) => {
+    if (!details?.scopedToOrder) return details;
+    const taxable = sign * (Number(e.amount) || (Number(e.qty) || 0) * (Number(e.price) || 0));
+    const gst = taxable * ((Number(e.gstPercent) || 0) / 100);
+    const add = (v, d) => Math.round(((Number(v) || 0) + d) * 100) / 100;
+    const igstOnly = Number(details.igstAmount) > 0 && !(Number(details.cgstAmount) > 0) && !(Number(details.sgstAmount) > 0);
+    return {
+      ...details,
+      amount: add(details.amount, taxable),
+      gstAmount: add(details.gstAmount, gst),
+      totalAmount: add(details.totalAmount, taxable + gst),
+      ...(igstOnly
+        ? { igstAmount: add(details.igstAmount, gst) }
+        : { cgstAmount: add(details.cgstAmount, gst / 2), sgstAmount: add(details.sgstAmount, gst / 2) }),
+    };
+  };
+
+  // Item Code / Add-to-Stock change on an extra invoice line — moves its qty (and price/amount)
+  // onto or off the PO line it now resolves to (see extraPoTargetKey).
+  const relinkExtraInvoiceLine = (e, nextCode, nextIncluded) => {
+    const prevTarget = extraPoTargetKey(e, extraProductCodes[e.key] || '', !!extraProductIncluded[e.key]);
+    const nextTarget = extraPoTargetKey(e, nextCode, nextIncluded);
+    setExtraProductCodes((prev) => ({ ...prev, [e.key]: nextCode }));
+    setExtraProductIncluded((prev) => ({ ...prev, [e.key]: nextIncluded }));
+    if (prevTarget === nextTarget) return;
+    const qty = Number(e.qty) || 0;
+    const price = Number(e.price) || 0;
+    setProductQtys((prev) => {
+      const next = { ...prev };
+      if (prevTarget != null) next[prevTarget] = Math.max(0, (Number(next[prevTarget]) || 0) - qty);
+      if (nextTarget != null) next[nextTarget] = (Number(next[nextTarget]) || 0) + qty;
+      return next;
+    });
+    setProductPrices((prev) => {
+      const next = { ...prev };
+      if (prevTarget != null && next[prevTarget] === price) {
+        next[prevTarget] = invoiceProducts.find((p) => p.key === prevTarget)?.scannedPrice || 0;
+      }
+      if (nextTarget != null && !next[nextTarget]) next[nextTarget] = price;
+      return next;
+    });
+    if ((prevTarget == null) !== (nextTarget == null)) {
+      setScannedInvoiceDetails((prev) => shiftScopedInvoiceFigures(prev, e, nextTarget != null ? 1 : -1));
+    }
+  };
+
+  // PO row key → extra invoice lines currently linked to it (see extraPoTargetKey).
+  const linkedExtrasByProduct = {};
+  const linkedExtraKeys = new Set();
+  extraInvoiceProducts.forEach((e) => {
+    const target = extraPoTargetKey(e, extraProductCodes[e.key] || '', !!extraProductIncluded[e.key]);
+    if (target == null) return;
+    (linkedExtrasByProduct[target] = linkedExtrasByProduct[target] || []).push(e);
+    linkedExtraKeys.add(e.key);
+  });
+  // PO rows as shown and posted — a linked extra line's invoice qty / HSN / GST count on its row.
+  const effectiveInvoiceProducts = invoiceProducts.map((p) => {
+    const linked = linkedExtrasByProduct[p.key];
+    if (!linked) return p;
+    return {
+      ...p,
+      invoiceQty: (Number(p.invoiceQty) || 0) + linked.reduce((s, e) => s + (Number(e.qty) || 0), 0),
+      matched: true,
+      hsn: p.hsn && p.hsn !== '-' ? p.hsn : (linked[0].hsn || '-'),
+      gst: p.gst && p.gst !== '-' ? p.gst : (linked[0].gst || '-'),
+      gstPercent: p.gstPercent || Number(linked[0].gstPercent) || 0,
+      linkedExtras: linked,
+    };
+  });
+  // The scan's ordered-vs-invoice check, re-derived once a linked extra line adds to a PO row.
+  const effectiveQtyVerification = scannedInvoiceDetails?.qtyVerification && linkedExtraKeys.size
+    ? (() => {
+      const short = effectiveInvoiceProducts.filter((p) => (p.invoiceQty || 0) < p.originalQty);
+      return {
+        ...scannedInvoiceDetails.qtyVerification,
+        totalInvoiceQty: effectiveInvoiceProducts.reduce((s, p) => s + (p.invoiceQty || 0), 0),
+        missingItemsCount: short.length,
+        missingQtyTotal: short.reduce((s, p) => s + (p.originalQty - (p.invoiceQty || 0)), 0),
+      };
+    })()
+    : scannedInvoiceDetails?.qtyVerification;
+
   const openReceivedModal = (record) => {
     setReceivedTarget(record);
     setInvoiceScanned(false);
@@ -854,6 +956,9 @@ export default function Purchase() {
         invoiceQty: it.invoiceQty ?? it.receivedQty,
         matched: !!it.matched,
         unit: it.unit || receivedTarget.unit,
+        // Price the scan read for this PO line itself — restored if a linked extra line that
+        // filled in a missing price is unlinked again (see relinkExtraInvoiceLine).
+        scannedPrice: Number(it.price) || 0,
       }));
       setInvoiceProducts(products);
       const qtys = {};
@@ -862,8 +967,6 @@ export default function Purchase() {
         qtys[products[idx].key] = it.receivedQty;
         prices[products[idx].key] = Number(it.price) || 0;
       });
-      setProductQtys(qtys);
-      setProductPrices(prices);
       // Extra items on the invoice with no corresponding PO line — default to included (the
       // vendor actually delivered them), pre-filled with the matched Inventory item's code
       // when the AI's exact-name lookup found one so it merges automatically without the
@@ -872,10 +975,20 @@ export default function Purchase() {
       setExtraInvoiceProducts(extras);
       const extraCodes = {};
       const extraIncluded = {};
+      const linkedAtScan = [];
       extras.forEach((e) => {
         extraCodes[e.key] = e.matchedItemCode || '';
         extraIncluded[e.key] = true;
+        // Pre-filled code is already one of this PO's ordered items — count it on that line
+        // from the start, same as picking it by hand (see extraPoTargetKey).
+        const target = extraPoTargetKey(e, extraCodes[e.key], true, products);
+        if (target == null) return;
+        qtys[target] = (Number(qtys[target]) || 0) + (Number(e.qty) || 0);
+        if (!prices[target]) prices[target] = Number(e.price) || 0;
+        linkedAtScan.push(e);
       });
+      setProductQtys(qtys);
+      setProductPrices(prices);
       setExtraProductCodes(extraCodes);
       setExtraProductIncluded(extraIncluded);
       setInvoiceScanned(true);
@@ -884,7 +997,7 @@ export default function Purchase() {
       // Purchase can check them against the PO before confirming, instead of only seeing the
       // pre-filled ordered qtys. qtyVerification compares ordered vs the invoice's own printed
       // qty (immutable), independent of any later manual edits to the received-qty steppers.
-      setScannedInvoiceDetails({
+      setScannedInvoiceDetails(linkedAtScan.reduce((details, e) => shiftScopedInvoiceFigures(details, e, 1), {
         invoiceNo: res?.data?.invoiceNo || '',
         vendorName: res?.data?.vendorName || '',
         vendorPhone: res?.data?.vendorPhone || '',
@@ -901,7 +1014,7 @@ export default function Purchase() {
         vendorMismatch: !!res?.data?.vendorMismatch,
         poVendorName: res?.data?.poVendorName,
         qtyVerification: res?.data?.qtyVerification || null,
-      });
+      }));
       enqueueSnackbar('Invoice scanned — products fetched successfully!', { variant: 'success' });
     } catch (err) {
       enqueueSnackbar(err?.data?.message || err?.data || 'AI scan failed', { variant: 'error' });
@@ -910,7 +1023,7 @@ export default function Purchase() {
     }
   };
 
-  const getMissingItems = () => invoiceProducts.filter(p => (productQtys[p.key] || 0) < p.originalQty)
+  const getMissingItems = () => effectiveInvoiceProducts.filter(p => (productQtys[p.key] || 0) < p.originalQty)
     .map(p => ({ ...p, receivedQty: productQtys[p.key] || 0, missingQty: p.originalQty - (productQtys[p.key] || 0) }));
 
   const handleConfirmReceived = async () => {
@@ -928,7 +1041,7 @@ export default function Purchase() {
     setReceivedConfirmLoading(true);
     try {
       const fd = new FormData();
-      fd.append('items', JSON.stringify(invoiceProducts.map(p => ({
+      fd.append('items', JSON.stringify(effectiveInvoiceProducts.map(p => ({
         itemId: p.itemId,
         itemName: p.name,
         orderedQty: p.originalQty,
@@ -940,7 +1053,9 @@ export default function Purchase() {
         gstPercent: p.gstPercent || 0,
         priceType: receivePriceType,
       }))));
-      const includedExtras = extraInvoiceProducts.filter((e) => extraProductIncluded[e.key]);
+      // Extra lines linked to an ordered product are already counted in that PO line's
+      // receivedQty above — posting them again would credit the same stock twice.
+      const includedExtras = extraInvoiceProducts.filter((e) => extraProductIncluded[e.key] && !linkedExtraKeys.has(e.key));
       if (includedExtras.length) {
         fd.append('extraItems', JSON.stringify(includedExtras.map((e) => ({
           itemName: e.itemName,
@@ -6861,7 +6976,7 @@ export default function Purchase() {
                     </Col>
                   ))}
                 </Row>
-                {scannedInvoiceDetails.scopedToOrder && (
+                {scannedInvoiceDetails.scopedToOrder && extraInvoiceProducts.some((e) => !linkedExtraKeys.has(e.key)) && (
                   <div style={{ marginTop: 10, padding: '8px 12px', borderRadius: 8, background: isDark ? '#1a1500' : '#fffbe6', border: '1px solid #fa8c1644' }}>
                     <Space>
                       <ExclamationCircleOutlined style={{ color: '#fa8c16' }} />
@@ -6871,20 +6986,20 @@ export default function Purchase() {
                     </Space>
                   </div>
                 )}
-                {scannedInvoiceDetails.qtyVerification && (
+                {effectiveQtyVerification && (
                   <div style={{
                     marginTop: 10, padding: '8px 12px', borderRadius: 8,
-                    background: scannedInvoiceDetails.qtyVerification.missingItemsCount > 0 ? (isDark ? '#1a1500' : '#fffbe6') : (isDark ? '#0f1a0f' : '#f6fff8'),
-                    border: `1px solid ${scannedInvoiceDetails.qtyVerification.missingItemsCount > 0 ? '#fa8c1644' : '#52c41a33'}`,
+                    background: effectiveQtyVerification.missingItemsCount > 0 ? (isDark ? '#1a1500' : '#fffbe6') : (isDark ? '#0f1a0f' : '#f6fff8'),
+                    border: `1px solid ${effectiveQtyVerification.missingItemsCount > 0 ? '#fa8c1644' : '#52c41a33'}`,
                   }}>
                     <Text style={{ fontSize: 12, fontWeight: 700, display: 'block', marginBottom: 4 }}>Ordered vs Invoice Qty — by Product Name</Text>
                     <Space size={16} wrap>
-                      <Text style={{ fontSize: 12 }}>Ordered Qty (Total): <Text strong>{scannedInvoiceDetails.qtyVerification.totalOrderedQty}</Text></Text>
-                      <Text style={{ fontSize: 12 }}>Invoice Qty (Total): <Text strong>{scannedInvoiceDetails.qtyVerification.totalInvoiceQty}</Text></Text>
-                      <Text style={{ fontSize: 12 }}>Missing Qty (Total): <Text strong style={{ color: scannedInvoiceDetails.qtyVerification.missingQtyTotal > 0 ? '#fa541c' : '#52c41a' }}>{scannedInvoiceDetails.qtyVerification.missingQtyTotal}</Text></Text>
-                      <Text style={{ fontSize: 12, color: scannedInvoiceDetails.qtyVerification.missingItemsCount > 0 ? '#d46b08' : '#52c41a' }}>
-                        {scannedInvoiceDetails.qtyVerification.missingItemsCount > 0
-                          ? `${scannedInvoiceDetails.qtyVerification.missingItemsCount} item(s) short vs invoice (out of ${invoiceProducts.length})`
+                      <Text style={{ fontSize: 12 }}>Ordered Qty (Total): <Text strong>{effectiveQtyVerification.totalOrderedQty}</Text></Text>
+                      <Text style={{ fontSize: 12 }}>Invoice Qty (Total): <Text strong>{effectiveQtyVerification.totalInvoiceQty}</Text></Text>
+                      <Text style={{ fontSize: 12 }}>Missing Qty (Total): <Text strong style={{ color: effectiveQtyVerification.missingQtyTotal > 0 ? '#fa541c' : '#52c41a' }}>{effectiveQtyVerification.missingQtyTotal}</Text></Text>
+                      <Text style={{ fontSize: 12, color: effectiveQtyVerification.missingItemsCount > 0 ? '#d46b08' : '#52c41a' }}>
+                        {effectiveQtyVerification.missingItemsCount > 0
+                          ? `${effectiveQtyVerification.missingItemsCount} item(s) short vs invoice (out of ${invoiceProducts.length})`
                           : 'All item quantities match the invoice'}
                       </Text>
                     </Space>
@@ -6914,7 +7029,7 @@ export default function Purchase() {
                 </div>
                 <Table
                   size="small"
-                  dataSource={invoiceProducts}
+                  dataSource={effectiveInvoiceProducts}
                   rowKey="key"
                   pagination={false}
                   columns={[
@@ -6952,18 +7067,25 @@ export default function Purchase() {
                         const invQty = r.invoiceQty ?? 0;
                         const diff = invQty - r.originalQty;
                         return (
-                          <Space size={4}>
-                            <Text>{invQty} {r.unit}</Text>
-                            {r.matched === false && (
-                              <Tag color="red" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Not on invoice</Tag>
+                          <>
+                            <Space size={4}>
+                              <Text>{invQty} {r.unit}</Text>
+                              {r.matched === false && (
+                                <Tag color="red" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Not on invoice</Tag>
+                              )}
+                              {r.matched !== false && diff < 0 && (
+                                <Tag color="warning" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Missing {-diff}</Tag>
+                              )}
+                              {r.matched !== false && diff > 0 && (
+                                <Tag color="blue" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Extra {diff}</Tag>
+                              )}
+                            </Space>
+                            {r.linkedExtras && (
+                              <Text style={{ fontSize: 10, color: '#52c41a', display: 'block', marginTop: 2 }}>
+                                Invoiced as {r.linkedExtras.map((e) => `"${e.itemName}"`).join(', ')}
+                              </Text>
                             )}
-                            {r.matched !== false && diff < 0 && (
-                              <Tag color="warning" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Missing {-diff}</Tag>
-                            )}
-                            {r.matched !== false && diff > 0 && (
-                              <Tag color="blue" style={{ fontSize: 9, padding: '0 4px', margin: 0 }}>Extra {diff}</Tag>
-                            )}
-                          </Space>
+                          </>
                         );
                       }
                     },
@@ -7051,7 +7173,7 @@ export default function Purchase() {
                     {
                       title: 'Add to Stock', key: 'included', width: 90,
                       render: (_, r) => (
-                        <Switch size="small" checked={!!extraProductIncluded[r.key]} onChange={(v) => setExtraProductIncluded(prev => ({ ...prev, [r.key]: v }))} />
+                        <Switch size="small" checked={!!extraProductIncluded[r.key]} onChange={(v) => relinkExtraInvoiceLine(r, extraProductCodes[r.key] || '', v)} />
                       )
                     },
                     { title: 'Product (from invoice)', dataIndex: 'itemName', render: v => <Text strong style={{ fontSize: 12 }}>{v}</Text> },
@@ -7073,9 +7195,13 @@ export default function Purchase() {
                               style={{ width: '100%' }}
                               options={inventoryItems.map((i) => ({ value: i.code, label: `${i.code} — ${i.name} (${formatQty(i.current)} ${i.unit})` }))}
                               filterOption={(input, option) => (option?.label || '').toLowerCase().includes(input.toLowerCase())}
-                              onChange={(v) => setExtraProductCodes(prev => ({ ...prev, [r.key]: v || '' }))}
+                              onChange={(v) => relinkExtraInvoiceLine(r, v || '', !!extraProductIncluded[r.key])}
                             />
-                            {r.matchedItemCode ? (
+                            {linkedExtraKeys.has(r.key) ? (
+                              <Text style={{ fontSize: 10, color: '#52c41a', display: 'block', marginTop: 2 }}>
+                                Same item as ordered "{effectiveInvoiceProducts.find((p) => p.linkedExtras?.includes(r))?.name}" — counted as received on that line above.
+                              </Text>
+                            ) : r.matchedItemCode ? (
                               <Text style={{ fontSize: 10, color: '#52c41a', display: 'block', marginTop: 2 }}>
                                 Matches existing item "{r.matchedItemName}" by name.
                               </Text>

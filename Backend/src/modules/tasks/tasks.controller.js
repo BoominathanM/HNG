@@ -93,6 +93,12 @@ async function dispatchPaymentCleared(order, task) {
   return payStatus === 'Paid';
 }
 
+// Lead/Order Payment Terms "Credit (10days to 1 month)" — payment falls due after delivery, so
+// the order is dispatched unpaid by design (see dispatchOrder). The order's own terms win; the
+// lead's are only a fallback for an order that never had them copied on. `order` needs leadId
+// populated with paymentTerms for that fallback. Mirrors Frontend/src/utils/creditPayment.js.
+const isCreditOrder = (order) => (order?.paymentTerms || order?.leadId?.paymentTerms) === 'CREDIT_10_30';
+
 // Forward an order to Dispatch: mark it Dispatch Ready and create its DispatchRecord
 // (idempotent). Used both when all sibling tasks finish normally, and when an emergency
 // dispatch is fully approved (Sales Head + Ops Head) — which intentionally bypasses the
@@ -168,8 +174,8 @@ exports.getTasks = asyncHandler(async (req, res) => {
     Task.find(filter)
       .populate({
         path: 'orderId',
-        select: 'orderCode clientName hotelName orderCategory leadId items status expectedDeliveryDate logoUrl',
-        populate: { path: 'leadId', select: 'leadType hotelLogoUrl' },
+        select: 'orderCode clientName hotelName orderCategory paymentTerms leadId items status expectedDeliveryDate logoUrl',
+        populate: { path: 'leadId', select: 'leadType paymentTerms hotelLogoUrl' },
       })
       .populate('assignedTo', 'fullName role')
       .populate('assignedToMany', 'fullName role')
@@ -1110,8 +1116,8 @@ exports.getTask = asyncHandler(async (req, res, next) => {
   const task = await Task.findById(req.params.id)
     .populate({
       path: 'orderId',
-      select: 'orderCode clientName hotelName orderCategory leadId items status expectedDeliveryDate logoUrl',
-      populate: { path: 'leadId', select: 'leadType hotelLogoUrl' },
+      select: 'orderCode clientName hotelName orderCategory paymentTerms leadId items status expectedDeliveryDate logoUrl',
+      populate: { path: 'leadId', select: 'leadType paymentTerms hotelLogoUrl' },
     })
     .populate('assignedTo', 'fullName role')
     .populate('assignedToMany', 'fullName role');
@@ -1351,7 +1357,7 @@ exports.updateTaskStatus = asyncHandler(async (req, res, next) => {
 
 // Forward the order linked to a task from Task Management into the Dispatch queue.
 // Task completion/assignment is NOT required here — only that the order is paid
-// (unless it's a sample order or an approved Emergency Dispatch). This only makes
+// (unless it's a sample order, a credit-terms order or an approved Emergency Dispatch). This only makes
 // the order Dispatch Ready and ensures its DispatchRecord exists — it does NOT mark
 // the order/lead as Dispatched.
 // The actual "Dispatched" status is only set from the Dispatch module itself
@@ -1362,7 +1368,7 @@ exports.dispatchOrder = asyncHandler(async (req, res, next) => {
   if (!task) return next(new AppError('Task not found', 404));
   if (!task.orderId) return next(new AppError('This task is not linked to an order', 400));
 
-  const order = await Order.findById(task.orderId).populate('leadId', 'leadType');
+  const order = await Order.findById(task.orderId).populate('leadId', 'leadType paymentTerms');
   if (!order) return next(new AppError('Order not found', 404));
   // A sibling task's emergency approval already flips this at the order level (see
   // approveEmergencyOps) — fall back to it so every task on the order, not just the one
@@ -1383,9 +1389,11 @@ exports.dispatchOrder = asyncHandler(async (req, res, next) => {
     return next(new AppError('This order has already been sent to Dispatch.', 400));
   }
 
-  // Payment gate — must be settled, unless this is a sample order or an approved Emergency Dispatch.
+  // Payment gate — must be settled, unless this is a sample order, a credit-terms order or an
+  // approved Emergency Dispatch. Credit only bypasses it here, on the explicit Send to Dispatch —
+  // the all-tasks-Done auto-forward (dispatchPaymentCleared) still waits for payment as before.
   const isSample = order.orderCategory === 'SAMPLE' || order.leadId?.leadType === 'SAMPLE';
-  if (!isSample && !emergencyApproved) {
+  if (!isSample && !isCreditOrder(order) && !emergencyApproved) {
     const payStatus = await resolveOrderPaymentStatus(order._id).catch(() => 'Pending');
     if (payStatus !== 'Paid') {
       return next(new AppError(`Payment is "${payStatus}". Dispatch requires full payment or an approved Emergency Dispatch.`, 400));

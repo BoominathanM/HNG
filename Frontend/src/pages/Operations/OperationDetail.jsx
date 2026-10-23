@@ -79,6 +79,7 @@ import { downloadFile } from '../../utils/fileDownload';
 import LogoThumb from '../../components/common/LogoThumb';
 import { urlExtension } from '../../utils/logoFile';
 import { formatQty } from '../../utils/numberFormat';
+import { isCreditTerms, creditPayLabel } from '../../utils/creditPayment';
 import {
   buildProductionQueues,
   canAssignTaskFromChecks,
@@ -3333,7 +3334,7 @@ export default function OperationDetail() {
                       {PAYMENT_LABELS[order.paymentTerms] || order.paymentTerms || '-'}
                     </Tag>
                     <Tag color={paymentStatusColor[order.paymentStatus] || 'default'} style={{ fontSize: 13, padding: '4px 14px', borderRadius: 20 }}>
-                      {order.paymentStatus || 'Pending'}
+                      {creditPayLabel(order.paymentStatus || 'Pending', isCreditTerms(order.paymentTerms))}
                     </Tag>
                     {order.paymentTerms === '50_ADVANCE_50_AFTER' && order.paymentReminderDate && (
                       <Tag color="orange" style={{ fontSize: 12 }}>

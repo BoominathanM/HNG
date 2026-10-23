@@ -339,7 +339,7 @@ exports.getQuotations = asyncHandler(async (req, res) => {
   const filter = { deletedAt: null };
   if (req.query.leadId) filter.leadId = req.query.leadId;
   if (req.query.status) filter.status = req.query.status;
-  const quotations = await Quotation.find(filter).populate('leadId', 'hotelName leadType paymentTerms paymentReminderDate creditDueDate createdAt hotelLogoUrl').sort('-createdAt');
+  const quotations = await Quotation.find(filter).populate('leadId', 'hotelName leadType paymentTerms paymentReminderDate creditDueDate orderDeliveryDate createdAt hotelLogoUrl').sort('-createdAt');
   const convertedQuotIds = await Order.distinct('quotationId', { deletedAt: null, quotationId: { $ne: null } });
   const convertedSet = new Set(convertedQuotIds.map(id => String(id)));
   const active = quotations.filter(q => !convertedSet.has(String(q._id)));

@@ -560,7 +560,8 @@ export const apiSlice = createApi({
       query: ({ id }) => ({ url: `/dispatch/${id}/box-photos/scan`, method: 'post', timeout: 260000 }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],
     }),
-    // Removes a photo the scan flagged as a duplicate (the backend refuses anything else).
+    // Removes a saved box photo — this round's photos or a flagged duplicate (the backend refuses photos
+    // from an already-confirmed round).
     removeDispatchPhoto: builder.mutation({
       query: ({ id, url }) => ({ url: `/dispatch/${id}/box-photos/remove`, method: 'post', data: { url } }),
       invalidatesTags: (result, error, { id }) => ['Dispatch', { type: 'Dispatch', id }],

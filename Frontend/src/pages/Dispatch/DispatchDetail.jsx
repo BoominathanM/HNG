@@ -47,6 +47,7 @@ import { buildDocComposition, computePersonalizedComposition } from '../../utils
 import { computeRecordGrandTotal } from '../../utils/orderCalc';
 import { fetchHotelPendingDue } from '../../utils/pendingDue';
 import { resolvePaymentTermDate } from '../../utils/paymentTermDate';
+import { isCreditTerms, creditPayLabel } from '../../utils/creditPayment';
 import { generatePrintHTML } from '../../components/templates/DocumentTemplate';
 import { buildDispatchGroupedProducts, summarizeDispatchVerification, getRowPendingQty, getRowDispatchableQty } from '../../utils/dispatchGrouping';
 import { fingerprintFile } from '../../utils/photoFingerprint';
@@ -345,16 +346,24 @@ export default function DispatchDetail() {
       setScanningPhotos(false);
     }
   };
-  const handleRemoveDuplicatePhoto = async (url) => {
-    try {
-      const res = await removeDispatchPhoto({ id, url }).unwrap();
-      setCloseBoxCount(res?.data?.closeBoxPhotos?.length || 0);
-      // The refetched record is the source of truth again — a removed photo mustn't keep blocking a re-upload.
-      sessionFingerprintsRef.current = [];
-      enqueueSnackbar('Duplicate photo removed', { variant: 'success' });
-    } catch (err) {
-      enqueueSnackbar(errorText(err, 'Could not remove the photo.'), { variant: 'error' });
-    }
+  // Removes a saved photo (a flagged duplicate, or any photo of the round being prepared so it can be
+  // replaced). Queued behind any uploads still in flight — both rewrite the same photo lists on the record,
+  // so running them side by side could bring a removed photo back.
+  const handleRemovePhoto = (url, { duplicate = false } = {}) => {
+    const task = async () => {
+      try {
+        const res = await removeDispatchPhoto({ id, url }).unwrap();
+        setCloseBoxCount(res?.data?.closeBoxPhotos?.length || 0);
+        // The refetched record is the source of truth again — a removed photo mustn't keep blocking a re-upload.
+        sessionFingerprintsRef.current = [];
+        enqueueSnackbar(duplicate ? 'Duplicate photo removed' : 'Photo removed', { variant: 'success' });
+      } catch (err) {
+        enqueueSnackbar(errorText(err, 'Could not remove the photo.'), { variant: 'error' });
+      }
+    };
+    const run = photoQueueRef.current.then(task, task);
+    photoQueueRef.current = run.catch(() => {});
+    return run;
   };
 
   // Shared by Print Invoice and the WhatsApp "Dispatch Notify" send — builds the same
@@ -722,8 +731,9 @@ export default function DispatchDetail() {
     const derivedQty = o.qty || lineItems.reduce((sum, it) => sum + (Number(it.qty || it.qtyOrdered) || 0), 0) || 0;
     // Sample orders bypass payment — no payment is expected for samples.
     const isSample = o.orderCategory === 'SAMPLE' || lead.leadType === 'SAMPLE';
-    // Credit orders are dispatched before payment — payment is due after delivery.
-    const isCredit = o.paymentTerms === 'CREDIT_10_30';
+    // Credit orders are dispatched before payment — payment is due after delivery. The order's
+    // own terms win; the lead's are a fallback for an order that never had them copied on.
+    const isCredit = isCreditTerms(o.paymentTerms, lead.paymentTerms);
     // orderPaymentStatus resolved live from invoices (mirrors Dispatch list logic).
     const livePayStatus = d.orderPaymentStatus || 'Pending';
     // Set once both Sales Head and Ops Head approve the Emergency Dispatch request
@@ -775,8 +785,9 @@ export default function DispatchDetail() {
       dispatchApprovalDecidedByName: o.dispatchApprovalDecidedByName || '',
       dispatchApprovalDecidedAt: o.dispatchApprovalDecidedAt || null,
       isCredit,
+      livePayStatus,
       creditDueDate: o.paymentReminderDate || o.creditDueDate || null,
-      payment: isCredit ? 'Credit' : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (emergencyApproved ? 'Emergency Approved' : (basePaymentConfirmed ? 'Confirmed' : 'Pending')))),
+      payment: isCredit ? (livePayStatus === 'Paid' ? 'Confirmed' : creditPayLabel(livePayStatus, true)) : (isSample ? 'N/A' : (livePayStatus === 'Paid' ? 'Confirmed' : livePayStatus === 'Partial' ? 'Partial' : (emergencyApproved ? 'Emergency Approved' : (basePaymentConfirmed ? 'Confirmed' : 'Pending')))),
       destination: o.destination || lead.destination || '',
       expectedDeliveryDate: o.expectedDeliveryDate || lead.expectedDeliveryDate || null,
       detailedAddress: o.detailedAddress || lead.detailedAddress || lead.address || '',
@@ -1842,11 +1853,20 @@ export default function DispatchDetail() {
   const lastRoundTime = (order.dispatchHistory || []).length
     ? new Date(order.dispatchHistory[order.dispatchHistory.length - 1].date).getTime()
     : null;
-  const closedPhotosThisRound = (order.closeBoxPhotos || []).filter((url) => {
+  const uploadedSinceLastRound = (url) => {
     if (!Number.isFinite(lastRoundTime)) return true; // no confirmed round yet → everything on file counts
     const at = photoMetaByUrl.get(url)?.uploadedAt;
     return !!at && new Date(at).getTime() > lastRoundTime;
-  });
+  };
+  const closedPhotosThisRound = (order.closeBoxPhotos || []).filter(uploadedSinceLastRound);
+  // A photo that is evidence for an already-confirmed round can't be removed (mirrors the backend's
+  // isPhotoFromConfirmedRound): per-row photos are snapshotted into that round's history entry; the
+  // order-level lists aren't, so those go by upload time.
+  const confirmedRowPhotoUrls = new Set((order.dispatchHistory || [])
+    .flatMap((r) => [...(r.kits || []), ...(r.products || [])])
+    .flatMap((x) => [...(x.openBoxPhotos || []), ...(x.closeBoxPhotos || [])]));
+  const isPhotoLocked = (url) => confirmedRowPhotoUrls.has(url)
+    || (((order.closeBoxPhotos || []).includes(url) || (order.openBoxPhotos || []).includes(url)) && !uploadedSinceLastRound(url));
   const uniqueClosedPhotos = closedPhotosThisRound.filter((url) => !dupFlags.has(url)).length;
   const declaredBoxes = Number(liveBoxes ?? order.storedBoxes ?? order.boxes ?? 0) || 0;
   const boxPhotoStatus = declaredBoxes <= 0 ? 'unset'
@@ -1912,10 +1932,12 @@ export default function DispatchDetail() {
     return `Duplicate of a photo in ${describeSavedPhoto(f.dupOf)}${f.dupReason ? ` — ${f.dupReason}` : ''}`;
   };
 
-  // A saved photo thumbnail. A photo flagged as a duplicate gets a red border + badge (and, until the
-  // dispatch is complete, a trash button to remove it); everything else renders as before.
+  // A saved photo thumbnail. A photo flagged as a duplicate gets a red border + badge. Until the dispatch is
+  // complete, a trash button removes it — on a flagged duplicate, or on any photo of the round being prepared
+  // (so a wrong photo can be replaced); photos from an already-confirmed round have none.
   const savedThumb = (url, i, size, color) => {
     const flagged = dupFlags.has(url);
+    const removable = !dispatched && (flagged || !isPhotoLocked(url));
     return (
       <Tooltip key={`${url}-${i}`} title={flagged ? dupTitle(url) : undefined}>
         <span style={{ position: 'relative', display: 'inline-flex', width: size, height: size }}>
@@ -1931,30 +1953,34 @@ export default function DispatchDetail() {
             preview={{ src: url }}
           />
           {flagged ? (
-            <>
-              <CloseCircleFilled
-                style={{ position: 'absolute', bottom: -4, right: -4, color: '#ff4d4f', background: '#fff', borderRadius: '50%', fontSize: size > 40 ? 16 : 12 }}
-              />
-              {!dispatched && (
-                <Popconfirm
-                  title="Remove this duplicate photo?"
-                  okText="Remove"
-                  okButtonProps={{ danger: true }}
-                  onConfirm={() => handleRemoveDuplicatePhoto(url)}
-                >
-                  <DeleteOutlined
-                    style={{
-                      position: 'absolute', top: -6, right: -6, color: '#fff', background: '#ff4d4f', borderRadius: '50%',
-                      fontSize: size > 40 ? 12 : 9, padding: size > 40 ? 4 : 3, cursor: 'pointer',
-                    }}
-                  />
-                </Popconfirm>
-              )}
-            </>
+            <CloseCircleFilled
+              style={{ position: 'absolute', bottom: -4, right: -4, color: '#ff4d4f', background: '#fff', borderRadius: '50%', fontSize: size > 40 ? 16 : 12 }}
+            />
           ) : (
             <CheckCircleFilled
               style={{ position: 'absolute', bottom: -4, right: -4, color, background: '#fff', borderRadius: '50%', fontSize: size > 40 ? 16 : 12 }}
             />
+          )}
+          {removable && (
+            <Popconfirm
+              title={flagged ? 'Remove this duplicate photo?' : 'Remove this photo?'}
+              description={flagged ? undefined : 'You can upload a replacement after removing it.'}
+              okText="Remove"
+              okButtonProps={{ danger: true }}
+              onConfirm={() => handleRemovePhoto(url, { duplicate: flagged })}
+            >
+              <DeleteOutlined
+                aria-label="Remove photo"
+                title={flagged ? undefined : 'Remove photo'}
+                style={{
+                  position: 'absolute', top: -6, right: -6, borderRadius: '50%', cursor: 'pointer',
+                  fontSize: size > 40 ? 12 : 9, padding: size > 40 ? 4 : 3,
+                  ...(flagged
+                    ? { color: '#fff', background: '#ff4d4f' }
+                    : { color: '#ff4d4f', background: '#fff', boxShadow: '0 0 0 1px #ff4d4f66' }),
+                }}
+              />
+            </Popconfirm>
           )}
         </span>
       </Tooltip>
@@ -2132,8 +2158,8 @@ export default function DispatchDetail() {
                 <Descriptions.Item label="Payment">
                   {order.isSample
                     ? <Tag color="default">N/A (Sample)</Tag>
-                    : order.isCredit
-                    ? <Tag color="blue">Credit{order.creditDueDate ? ` — Due ${new Date(order.creditDueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : ''}</Tag>
+                    : order.isCredit && order.livePayStatus !== 'Paid'
+                    ? <Tag color="blue">{creditPayLabel(order.livePayStatus, true)}{order.creditDueDate ? ` — Due ${new Date(order.creditDueDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : ''}</Tag>
                     : order.emergencyApproved && !order.reallyPaymentConfirmed
                     ? <Tag color="warning">Emergency Approved</Tag>
                     : <Tag color={paymentConfirmed ? 'success' : 'error'}>{paymentConfirmed ? 'Confirmed' : 'Pending'}</Tag>}
@@ -2432,8 +2458,9 @@ export default function DispatchDetail() {
                             // last one — each thumbnail opens its own preview on click.
                             // A photo the AI flagged as a duplicate shows with a red border instead
                             // (savedThumb) — see the Photo Verification card.
+                            // Gaps leave room for each thumbnail's corner trash/check badges.
                             const thumb = (photos, color) => photos.length > 0 && (
-                              <Space size={4} wrap>
+                              <Space size={[8, 10]} wrap>
                                 {photos.map((url, i) => savedThumb(url, i, 28, color))}
                               </Space>
                             );
@@ -2736,7 +2763,7 @@ export default function DispatchDetail() {
                       Upload Closed Box Photo ({closeBoxCount}/20)
                     </Button>
                   </Upload>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginTop: 10 }}>
                     {(order?.closeBoxPhotos || []).map((url, i) => savedThumb(url, i, 64, '#1677ff'))}
                     {closeBoxCount === 0 && (
                       <Text style={{ fontSize: 12, color: '#999' }}>No closed box photos uploaded yet.</Text>
@@ -2834,7 +2861,7 @@ export default function DispatchDetail() {
                         {` — ${dupTitle(url)}`}
                       </Text>
                       {!dispatched && (
-                        <Popconfirm title="Remove this duplicate photo?" okText="Remove" okButtonProps={{ danger: true }} onConfirm={() => handleRemoveDuplicatePhoto(url)}>
+                        <Popconfirm title="Remove this duplicate photo?" okText="Remove" okButtonProps={{ danger: true }} onConfirm={() => handleRemovePhoto(url, { duplicate: true })}>
                           <Button size="small" danger icon={<DeleteOutlined />}>Remove</Button>
                         </Popconfirm>
                       )}

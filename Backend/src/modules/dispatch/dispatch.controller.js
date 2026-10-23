@@ -182,7 +182,7 @@ exports.getDispatches = asyncHandler(async (req, res) => {
       path: 'orderId',
       select: 'orderCode clientName total orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo expectedDeliveryDate kitOrders items packagingIncludes splitDates kitOverallQty transportationBy',
       populate: [
-        { path: 'leadId', select: 'leadType' },
+        { path: 'leadId', select: 'leadType paymentTerms' },
         { path: 'assignedTo', select: 'fullName' },
       ],
     })
@@ -245,7 +245,7 @@ exports.getTodaysDispatches = asyncHandler(async (req, res) => {
       path: 'orderId',
       select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes splitDates kitOverallQty transportationBy',
       populate: [
-        { path: 'leadId', select: 'leadType' },
+        { path: 'leadId', select: 'leadType paymentTerms' },
         { path: 'assignedTo', select: 'fullName' },
       ],
     })
@@ -291,7 +291,7 @@ exports.getPendingDispatches = asyncHandler(async (req, res) => {
       path: 'orderId',
       select: 'orderCode clientName expectedDeliveryDate orderCategory isEmergency emergencyApproved paymentTerms destination product contactPerson clientPhone email detailedAddress city state pincode shippingAddress shippingCity shippingState shippingPincode leadId assignedTo kitOrders items packagingIncludes splitDates kitOverallQty transportationBy',
       populate: [
-        { path: 'leadId', select: 'leadType' },
+        { path: 'leadId', select: 'leadType paymentTerms' },
         { path: 'assignedTo', select: 'fullName' },
       ],
     })
@@ -363,7 +363,7 @@ exports.getDispatchStats = asyncHandler(async (req, res) => {
       path: 'orderId',
       select: 'orderCode clientName orderCategory isEmergency emergencyApproved emergencyApprovedAt emergencyApprovedBy emergencyReason paymentTerms destination contactPerson clientPhone city state shippingCity shippingState leadId assignedTo salesPerson expectedDeliveryDate splitDates items.kitId items.kitName items.kitType deletedAt',
       populate: [
-        { path: 'leadId', select: 'leadType splitDates' },
+        { path: 'leadId', select: 'leadType splitDates paymentTerms' },
         { path: 'assignedTo', select: 'fullName' },
         { path: 'emergencyApprovedBy', select: 'fullName' },
       ],
@@ -406,7 +406,7 @@ exports.getDispatchStats = asyncHandler(async (req, res) => {
       emergencyApprovedBy: o.emergencyApprovedBy?.fullName || null,
       emergencyReason: o.emergencyReason || '',
       expectedDeliveryDate: o.expectedDeliveryDate || null,
-      paymentTerms: o.paymentTerms || '',
+      paymentTerms: o.paymentTerms || o.leadId?.paymentTerms || '',
       payment: isSample ? 'N/A' : pay.status,
       orderTotal: pay.total,
       paidAmount: pay.paid,
@@ -1478,8 +1478,25 @@ exports.scanBoxPhotos = asyncHandler(async (req, res, next) => {
   });
 });
 
-// Removes a photo that has been flagged as a duplicate (the only photos this endpoint will touch — it is not a
-// general "delete evidence" tool). Its URL is stripped from whichever list holds it. The Cloudinary asset is
+// A photo that is evidence for a round already confirmed — not removable. Per-row (product/kit) photos are
+// snapshotted into that round's dispatchHistory entry, so the snapshot is the exact answer for them. The
+// order-level lists aren't snapshotted, so there it goes by upload time (a photo with no upload time predates
+// round tracking → belongs to an earlier round), same rule the Dispatch page uses for "this round" photos.
+function isPhotoFromConfirmedRound(dispatch, url, entry) {
+  const history = dispatch.dispatchHistory || [];
+  if (!history.length) return false;
+  const inSnapshot = history.some((r) => [...(r.kits || []), ...(r.products || [])]
+    .some((x) => (x.openBoxPhotos || []).includes(url) || (x.closeBoxPhotos || []).includes(url)));
+  if (inSnapshot) return true;
+  const orderLevel = (dispatch.openBoxPhotos || []).includes(url) || (dispatch.closeBoxPhotos || []).includes(url);
+  if (!orderLevel) return false;
+  const lastRoundTime = new Date(history[history.length - 1].date).getTime();
+  return !entry?.uploadedAt || new Date(entry.uploadedAt).getTime() <= lastRoundTime;
+}
+
+// Removes a saved box photo so the dispatcher can replace a wrong one: any photo uploaded for the round still
+// being prepared, plus any photo flagged as a duplicate. Photos from an already-confirmed round stay put — they
+// are that shipment's evidence. Its URL is stripped from whichever list holds it. The Cloudinary asset is
 // deliberately left alone: a confirmed round's history snapshot may still reference the same URL.
 exports.removeBoxPhoto = asyncHandler(async (req, res, next) => {
   const { url } = req.body;
@@ -1489,7 +1506,9 @@ exports.removeBoxPhoto = asyncHandler(async (req, res, next) => {
   if (dispatch.dispatchedAt) return next(new AppError('This dispatch is already complete — photos can no longer be changed.', 409));
 
   const entry = (dispatch.photoFingerprints || []).find((f) => f.url === url);
-  if (!entry?.dupOf) return next(new AppError('Only photos flagged as duplicates can be removed.', 409));
+  if (!entry?.dupOf && isPhotoFromConfirmedRound(dispatch, url, entry)) {
+    return next(new AppError('This photo belongs to a dispatch round that is already confirmed — it can no longer be removed.', 409));
+  }
 
   const strip = (list) => (list || []).filter((u) => u !== url);
   dispatch.openBoxPhotos = strip(dispatch.openBoxPhotos);

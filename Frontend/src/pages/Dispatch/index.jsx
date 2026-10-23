@@ -22,6 +22,7 @@ import useTabAccess from '../../hooks/useTabAccess';
 import usePageAccess from '../../hooks/usePageAccess';
 import useDebouncedValue from '../../hooks/useDebouncedValue';
 import { buildDispatchGroupedProducts, summarizeDispatchVerification } from '../../utils/dispatchGrouping';
+import { isCreditTerms, creditPayLabel } from '../../utils/creditPayment';
 import {
   useGetDispatchesQuery,
   useGetTodaysDispatchesQuery,
@@ -105,10 +106,14 @@ const renderDeliveryDate = (v) => {
   );
 };
 
-const renderPaymentTag = (v) => {
+// `r` is the table row — normalized dispatch rows carry isCredit, /dispatch/stats rows carry the
+// raw paymentTerms. Credit orders read e.g. "Pending (Credit Payment)" (display only — `v` is
+// still what the Payment filters / Payment Pending card match on).
+const renderPaymentTag = (v, r) => {
   if (v === 'N/A') return <Tag color="default" style={{ borderRadius: 20, fontSize: 13, fontWeight: 600 }}>N/A</Tag>;
   const c = v === 'Paid' ? '#2e7d32' : v === 'Partial' ? '#c77700' : '#B11E6A';
-  return <Tag style={{ borderRadius: 20, fontSize: 13, background: `${c}22`, color: c, border: `1px solid ${c}44` }}>{v}</Tag>;
+  const isCredit = !!r && (r.isCredit || isCreditTerms(r.paymentTerms));
+  return <Tag style={{ borderRadius: 20, fontSize: 13, background: `${c}22`, color: c, border: `1px solid ${c}44`, whiteSpace: 'normal' }}>{creditPayLabel(v, isCredit)}</Tag>;
 };
 
 // Header stat cards. Each one's count AND its click-through list come from the same
@@ -454,6 +459,8 @@ export default function Dispatch() {
       boxes: d.boxes || 0,
       weight: d.weight || '—',
       payment: isSample ? 'N/A' : (d.orderPaymentStatus || 'Pending'),
+      // Credit payment terms — shown as "<status> (Credit Payment)" in the Payment column.
+      isCredit: !isSample && isCreditTerms(d.orderId?.paymentTerms, d.orderId?.leadId?.paymentTerms),
       // A Confirmed record that's still Partial Dispatch (some rows have pending counts
       // left) reads as "Partially Dispatched" rather than the generic "Ready to Dispatch" —
       // orders that go out fully in one round keep the original 3-state mapping unchanged.

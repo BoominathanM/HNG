@@ -430,6 +430,9 @@ exports.scanReceivedInvoice = asyncHandler(async (req, res, next) => {
       gst: si.gst || '',
       gstPercent,
       price: Number(si.rate) || 0,
+      // Line's own taxable amount as printed — lets the frontend fold it back into the
+      // order-scoped figures when this line is linked (via Item Code) to an ordered product.
+      amount: Number(si.amount) || 0,
       matchedItemId: inventoryMatch ? String(inventoryMatch._id) : null,
       matchedItemCode: inventoryMatch ? inventoryMatch.itemCode : null,
       matchedItemName: inventoryMatch ? inventoryMatch.itemName : null,

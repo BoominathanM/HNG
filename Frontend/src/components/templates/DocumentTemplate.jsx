@@ -537,6 +537,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
       const qty = ko.qty;
       const price = ko.price;
       const hasComponents = ko.components && ko.components.length > 0;
+      // AMOUNT shows the exact ko.kitTotal (not the 2-dp unit price × qty, which dropped paise).
       const kitUnitPrice = qty > 0 ? r2d(ko.kitTotal / qty) : 0;
       if (hasComponents) {
         html += `
@@ -549,7 +550,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
             <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
             <td style="padding:6px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
             <td style="padding:6px 10px;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
-            <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};font-size:11px;">${rs(kitUnitPrice * qty)}</td>
+            <td style="padding:6px 10px;text-align:right;font-weight:700;border-bottom:1px solid ${BORDER};font-size:11px;">${rs(ko.kitTotal)}</td>
           </tr>`;
         ko.components.forEach(comp => {
           html += `
@@ -576,7 +577,7 @@ function buildSectionRowsHtml(sections, ACCENT, LIGHT, BORDER, cfg) {
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;">${kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
             <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};border-right:1px solid ${BORDER};font-size:11px;"></td>
-            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${rs(kitUnitPrice * qty)}</td>
+            <td style="padding:6px 10px;text-align:right;border-bottom:1px solid ${BORDER};font-size:11px;">${rs(ko.kitTotal)}</td>
           </tr>`;
       }
     });
@@ -979,6 +980,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
               const qty = ko.qty;
               const price = ko.price;
               const hasComponents = ko.components && ko.components.length > 0;
+              // AMOUNT shows the exact ko.kitTotal (not the 2-dp unit price × qty, which dropped paise).
               const kitUnitPrice = qty > 0 ? r2d(ko.kitTotal / qty) : 0;
               return (
                 <React.Fragment key={`skit-${i}`}>
@@ -992,7 +994,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                       <td style={{ ...td, textAlign: 'right', fontWeight: 700 }}>{kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
                       <td style={{ ...td }}></td>
                       <td style={{ ...td }}></td>
-                      <td style={{ ...td, textAlign: 'right', fontWeight: 700, borderRight: 'none' }}>{rs(kitUnitPrice * qty)}</td>
+                      <td style={{ ...td, textAlign: 'right', fontWeight: 700, borderRight: 'none' }}>{rs(ko.kitTotal)}</td>
                     </tr>
                   ) : (
                     <tr style={{ background: cs.sub }}>
@@ -1002,7 +1004,7 @@ function SectionRowsReact({ sections, ACCENT, LIGHT, BORDER, cfg, td }) {
                       <td style={{ ...td, textAlign: 'right' }}>{kitUnitPrice > 0 ? kitUnitPrice.toLocaleString() : ''}</td>
                       <td style={{ ...td, textAlign: 'right' }}></td>
                       <td style={{ ...td, textAlign: 'right' }}></td>
-                      <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{rs(kitUnitPrice * qty)}</td>
+                      <td style={{ ...td, textAlign: 'right', borderRight: 'none' }}>{rs(ko.kitTotal)}</td>
                     </tr>
                   )}
                   {hasComponents && ko.components.map((comp, j) => (
